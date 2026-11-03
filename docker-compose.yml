@@ -7,6 +7,10 @@ services:
       HOST: 0.0.0.0
       PORT: 8080
       WARDEN_HOOK: ${WARDEN_HOOK:-pre-push}
+      GIT_AUTHOR_NAME: ${WARDEN_GIT_NAME:-Ghostline Warden}
+      GIT_AUTHOR_EMAIL: ${WARDEN_GIT_EMAIL:-ghostline-warden@localhost}
+      GIT_COMMITTER_NAME: ${WARDEN_GIT_NAME:-Ghostline Warden}
+      GIT_COMMITTER_EMAIL: ${WARDEN_GIT_EMAIL:-ghostline-warden@localhost}
     expose:
       - "8080"
     volumes:

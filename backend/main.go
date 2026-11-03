@@ -180,7 +180,12 @@ func runWarden(ctx context.Context, root string) scannerResult {
 	cmd := exec.CommandContext(ctx, resolved, "run", hook)
 	cmd.Dir = root
 	output, runErr := cmd.CombinedOutput()
-	return scannerResult{Name: "Warden " + hook + " gate", Status: scanStatus(runErr), Summary: fmt.Sprintf("Gate finished in %s", time.Since(started).Round(time.Millisecond)), Output: string(output), ExitCode: exitCode(runErr), FinishedAt: time.Now()}
+	status := wardenStatus(runErr, string(output))
+	summary := fmt.Sprintf("Gate finished in %s", time.Since(started).Round(time.Millisecond))
+	if status == "passed_unpublished" {
+		summary = "Validation passed; provenance could not be published. See Warden output for details."
+	}
+	return scannerResult{Name: "Warden " + hook + " gate", Status: status, Summary: summary, Output: string(output), ExitCode: exitCode(runErr), FinishedAt: time.Now()}
 }
 
 func scanStatus(err error) string {
@@ -188,6 +193,16 @@ func scanStatus(err error) string {
 		return "complete"
 	}
 	return "findings_or_error"
+}
+
+func wardenStatus(err error, output string) string {
+	if err == nil {
+		return "passed"
+	}
+	if strings.Contains(output, "checks passed; provenance incomplete") {
+		return "passed_unpublished"
+	}
+	return "failed"
 }
 func exitCode(err error) int {
 	if err == nil {
