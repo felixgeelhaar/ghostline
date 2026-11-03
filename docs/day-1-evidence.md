@@ -7,9 +7,10 @@ Status: implementation demo is ready; public submission and Qodo review evidence
 - Started the Vue frontend and Go/Gin backend with Docker Compose at `http://localhost:49080` (`GHOSTLINE_PORT=49080 docker compose up -d --build`).
 - Health endpoint returned `{"status":"ok"}`.
 - Imported the real public pull request [gin-gonic/gin#4354](https://github.com/gin-gonic/gin/pull/4354): “refactor(tree): replace string('/') with \"/\" in node.insertChild”. The API returned the repository, PR number, title, closed state, one commit, committed timestamp, and source URL. The timestamp is labeled as a commit timestamp in the UI.
-- Configured Warden in `.warden.yaml`: Go tests run before commits; Go tests, `go vet`, and frontend tests/build run before pushes. The Compose image includes Warden v0.46.1 and Nox v1.57.0, each fetched from a pinned release and checksum-verified.
+- Ran `go test ./...`, the frontend Vitest suite (4 tests), and the frontend production build successfully.
+- Configured Warden in `.warden.yaml`: Go tests run before commits; Go tests, `go vet`, and frontend tests/build run before pushes. The Compose image includes Warden v0.46.1 and Nox v1.57.0, each fetched from a pinned release and checksum-verified. Compose health checks gate frontend startup on backend readiness.
 - Ran the configured Warden pre-push gate in Compose. `go-test`, `go-vet`, and `frontend-verify` passed. Warden wrote local provenance but could not publish it because this checkout has no `origin`; the app reports `passed_unpublished` to preserve that distinction.
-- Ran Nox offline against the repository. It emitted 19 findings. Its report explicitly says advisory lookup was skipped offline, so this run does not establish that dependencies have no known advisories. Findings are inspectable in the scan result and remain distinct from PR/revision evidence.
+- The first Nox run reported 19 findings, including missing Compose service health checks. After adding health checks and making frontend startup wait for the backend, a fresh run reported 17 findings. The API reports `findings` and the count rather than conflating findings with a scanner error. Nox's report says advisory lookup was skipped offline, so this run does not establish that dependencies have no known advisories. Findings are inspectable in the scan result and remain distinct from PR/revision evidence.
 
 ## Review observation
 

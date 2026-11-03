@@ -51,3 +51,26 @@ func TestWardenStatus(t *testing.T) {
 		})
 	}
 }
+
+func TestNoxStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		output string
+		status string
+		count  int
+	}{
+		{name: "clean report", output: `{"findings":[]}`, status: "complete"},
+		{name: "report with findings", err: errors.New("exit status 1"), output: `{"findings":[{},{}]}`, status: "findings", count: 2},
+		{name: "scanner failed without report", err: errors.New("exit status 2"), output: "invalid configuration", status: "error"},
+		{name: "scanner failed with empty report", err: errors.New("exit status 2"), output: `{"findings":[]}`, status: "error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, count := noxStatus([]byte(tt.output), tt.err)
+			if status != tt.status || count != tt.count {
+				t.Fatalf("noxStatus() = (%q, %d), want (%q, %d)", status, count, tt.status, tt.count)
+			}
+		})
+	}
+}

@@ -157,7 +157,16 @@ func runNox(ctx context.Context, root string) scannerResult {
 	if report, readErr := os.ReadFile(filepath.Join(outputDir, "findings.json")); readErr == nil {
 		output = report
 	}
-	return scannerResult{Name: "Nox", Status: scanStatus(err), Summary: fmt.Sprintf("Completed in %s", time.Since(started).Round(time.Millisecond)), Output: string(output), ExitCode: exitCode(err), FinishedAt: time.Now()}
+	status, findingCount := noxStatus(output, err)
+	summary := fmt.Sprintf("Completed in %s", time.Since(started).Round(time.Millisecond))
+	if status == "findings" {
+		summary = fmt.Sprintf("%d findings · %s", findingCount, summary)
+	} else if status == "complete" {
+		summary = "No findings · " + summary
+	} else {
+		summary = "Nox did not produce a valid findings report. Inspect scanner output."
+	}
+	return scannerResult{Name: "Nox", Status: status, Summary: summary, Output: string(output), ExitCode: exitCode(err), FinishedAt: time.Now()}
 }
 
 func runWarden(ctx context.Context, root string) scannerResult {
@@ -188,11 +197,24 @@ func runWarden(ctx context.Context, root string) scannerResult {
 	return scannerResult{Name: "Warden " + hook + " gate", Status: status, Summary: summary, Output: string(output), ExitCode: exitCode(runErr), FinishedAt: time.Now()}
 }
 
-func scanStatus(err error) string {
-	if err == nil {
-		return "complete"
+func noxStatus(output []byte, runErr error) (string, int) {
+	var report struct {
+		Findings []json.RawMessage `json:"findings"`
 	}
-	return "findings_or_error"
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(output, &fields); err != nil {
+		return "error", 0
+	}
+	if _, ok := fields["findings"]; !ok || json.Unmarshal(output, &report) != nil {
+		return "error", 0
+	}
+	if len(report.Findings) > 0 {
+		return "findings", len(report.Findings)
+	}
+	if runErr != nil {
+		return "error", 0
+	}
+	return "complete", 0
 }
 
 func wardenStatus(err error, output string) string {
