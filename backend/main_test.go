@@ -62,6 +62,7 @@ func TestNoxStatus(t *testing.T) {
 	}{
 		{name: "clean report", output: `{"findings":[]}`, status: "complete"},
 		{name: "report with findings", err: errors.New("exit status 1"), output: `{"findings":[{},{}]}`, status: "findings", count: 2},
+		{name: "null findings is malformed", output: `{"findings":null}`, status: "error"},
 		{name: "scanner failed without report", err: errors.New("exit status 2"), output: "invalid configuration", status: "error"},
 		{name: "scanner failed with empty report", err: errors.New("exit status 2"), output: `{"findings":[]}`, status: "error"},
 	}

@@ -205,7 +205,7 @@ func noxStatus(output []byte, runErr error) (string, int) {
 	if err := json.Unmarshal(output, &fields); err != nil {
 		return "error", 0
 	}
-	if _, ok := fields["findings"]; !ok || json.Unmarshal(output, &report) != nil {
+	if _, ok := fields["findings"]; !ok || json.Unmarshal(output, &report) != nil || report.Findings == nil {
 		return "error", 0
 	}
 	if len(report.Findings) > 0 {
