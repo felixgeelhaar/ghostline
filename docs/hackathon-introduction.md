@@ -8,6 +8,8 @@ For Day 1, Ghostline imports a public GitHub pull request and presents its real 
 
 The first increment is deliberately narrow. The next step is to connect a genuine Qodo review to the change and trace its feedback across revisions, without claiming that sequence alone proves causation or correctness.
 
-Demo: [add the published repository and demo URL after hosting is selected]
+Repository: https://github.com/felixgeelhaar/ghostline
 
-Day 1 evidence: [link `docs/day-1-evidence.md` after publication]
+Implementation PR: https://github.com/felixgeelhaar/ghostline/pull/1
+
+Day 1 evidence: https://github.com/felixgeelhaar/ghostline/blob/feat/day-1-nox-status/docs/day-1-evidence.md
