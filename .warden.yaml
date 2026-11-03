@@ -1,0 +1,13 @@
+status:
+  enabled: true
+hooks:
+  pre_commit: true
+  pre_push: true
+commands:
+  go-test: "go test ./... -count=1"
+  go-vet: "go vet ./..."
+  frontend-verify: "cd frontend && npm ci && npm test && npm run build"
+steps:
+  pre_commit: [go-test]
+  pre_push: [go-test, go-vet, frontend-verify]
+parallel: true

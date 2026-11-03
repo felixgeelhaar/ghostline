@@ -1,0 +1,24 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      WARDEN_HOOK: ${WARDEN_HOOK:-pre-push}
+    expose:
+      - "8080"
+    volumes:
+      - ${SCAN_REPOSITORY_PATH:-./}:/scan-target
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      GHOSTLINE_API_URL: http://backend:8080
+    ports:
+      - "127.0.0.1:${GHOSTLINE_PORT:-5173}:5173"
+    depends_on:
+      - backend

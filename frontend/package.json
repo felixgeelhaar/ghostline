@@ -1,0 +1,9 @@
+{
+  "name": "ghostline-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {"dev":"vite --host 0.0.0.0", "build":"vue-tsc -b && vite build", "test":"vitest run", "preview":"vite preview"},
+  "dependencies": {"@vitejs/plugin-vue":"latest", "vite":"latest", "vue":"latest", "zod":"^4.1.12"},
+  "devDependencies": {"typescript":"latest", "vue-tsc":"latest", "vitest":"latest"}
+}
