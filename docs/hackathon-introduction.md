@@ -2,7 +2,7 @@
 
 Coding agents can produce changes quickly, while engineers still have to piece together what changed and which revision they are looking at. Ghostline is a change-focused control room for that work: it makes pull requests, review feedback, repairs, and validation easier to follow while keeping evidence tied to its source.
 
-For Day 1, Ghostline imports a public GitHub pull request and displays its real commits in a chronological timeline. A Go/Gin backend fetches GitHub data; a Vue 3 + TypeScript interface validates the URL with Zod. Docker Compose runs the demo, and repository checks run in GitHub Actions. The timeline labels commit timestamps accurately and does not present them as push or full pull-request event history.
+For Day 1, Ghostline imports a public GitHub pull request and displays its real commits in a chronological timeline. A Go/Gin backend fetches GitHub data; a Vue 3 + TypeScript interface validates the URL before import and uses Zod to validate the returned API response. Docker Compose runs the demo, and repository checks run in GitHub Actions. The timeline labels commit timestamps accurately and does not present them as push or full pull-request event history.
 
 The first increment is deliberately small. The next step is to connect Qodo review outcomes to the revisions they inspect, then show later repair and re-review events without claiming that timing alone proves causation or correctness.
 

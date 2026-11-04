@@ -3,7 +3,7 @@
 ## What works
 
 - Enter a public GitHub pull request URL and import its repository, number, title, state, source link, and commits through the Go/Gin API.
-- The Vue 3 + TypeScript interface validates the URL with Zod and presents the returned commits in chronological order.
+- The Vue 3 + TypeScript interface validates the URL before import and uses Zod to validate the returned API response, then presents commits in chronological order.
 - Commit times are labeled as commit times. They describe when a commit was authored, not when it was pushed or the complete event history of a pull request.
 - Docker Compose starts the frontend and backend; the frontend waits for backend health. The frontend binds to `0.0.0.0` on the configured port for access from the local network. This is a development/demo deployment, not a public hosted service.
 - The screenshot below was captured from the running Compose app after importing Ghostline PR #1 at head `597a1e9` (16 commits). The API returned the live PR and its commits.
@@ -23,7 +23,7 @@ Nox findings appear as workflow annotations; same-repository pull requests also 
 
 ## Qodo review observation
 
-Qodo caught an incorrect argument order in the Nox shell wrapper. Warden now invokes Nox directly, and the wrapper was removed. This was a useful review because it exposed a real integration defect at the boundary between the developer gate and the scanner. A later review comment still mentioned the deleted wrapper, so review feedback must be checked against the current diff before acting on it.
+Qodo caught an incorrect argument order in the Nox shell wrapper. Warden now invokes Nox directly, and the wrapper was removed. This exposed a real integration defect at the boundary between the developer gate and the scanner. A later review comment still mentioned the deleted wrapper, so review feedback must be checked against the current diff before acting on it. Qodo also correctly pointed out that URL validation is separate from Zod response validation; the description above now reflects that boundary.
 
 ## Scope and next increment
 
