@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	reviewsAvailable   = "available"
-	reviewsUnavailable = "unavailable"
+	reviewsAvailable    = "available"
+	reviewsUnavailable  = "unavailable"
+	maxQodoCommentPages = 5
 )
 
 type qodoReviewSet struct {
@@ -45,7 +46,7 @@ type githubIssueComment struct {
 }
 
 var (
-	qodoSummaryHeading  = regexp.MustCompile(`(?is)<h3>\s*PR Summary by Qodo\s*</h3>(.*?)(?:<code|$)`)
+	qodoSummaryHeading  = regexp.MustCompile(`(?is)<h3>\s*PR Summary by Qodo\s*</h3>(.*?)(?:<img[^>]*(?:Grey Divider|light-grey-line)[^>]*>|<details\b|$)`)
 	qodoFindingsHeading = regexp.MustCompile(`(?is)<h3>\s*Code Review by Qodo\s*</h3>`)
 	qodoFindingTitle    = regexp.MustCompile(`(?is)<summary>\s*\d+\.\s*(.*?)</summary>`)
 	qodoCommitMarker    = regexp.MustCompile(`(?i)<!--\s*(https://github\.com/[^\s]+/commit/([0-9a-f]{40}))\s*-->`)
@@ -55,7 +56,7 @@ var (
 func parseQodoReviews(comments []githubIssueComment) []qodoReview {
 	reviews := make([]qodoReview, 0)
 	for _, comment := range comments {
-		if !strings.EqualFold(comment.User.Login, "qodo-code-review[bot]") {
+		if !isQodoReviewer(comment.User.Login) {
 			continue
 		}
 
@@ -83,6 +84,15 @@ func parseQodoReviews(comments []githubIssueComment) []qodoReview {
 	return reviews
 }
 
+func isQodoReviewer(login string) bool {
+	switch strings.ToLower(login) {
+	case "qodo-code-review", "qodo-code-review[bot]", "qodo-free-for-open-source-projects[bot]":
+		return true
+	default:
+		return false
+	}
+}
+
 func cleanQodoText(value string) string {
 	value = htmlTag.ReplaceAllString(value, " ")
 	value = html.UnescapeString(value)
@@ -90,17 +100,17 @@ func cleanQodoText(value string) string {
 }
 
 func fetchQodoReviews(ctx context.Context, gh *githubClient, owner, repo string, number int) qodoReviewSet {
-	comments := make([]githubIssueComment, 0)
-	for page := 1; ; page++ {
+	reviews := make([]qodoReview, 0)
+	for page := 1; page <= maxQodoCommentPages; page++ {
 		var batch []githubIssueComment
 		path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=100&page=%d", url.PathEscape(owner), url.PathEscape(repo), number, page)
 		if err := gh.get(ctx, path, &batch); err != nil {
 			return qodoReviewSet{Availability: reviewsUnavailable, Reason: "Qodo review comments could not be loaded from GitHub.", Items: []qodoReview{}}
 		}
-		comments = append(comments, batch...)
+		reviews = append(reviews, parseQodoReviews(batch)...)
 		if len(batch) < 100 {
-			break
+			return qodoReviewSet{Availability: reviewsAvailable, Items: reviews}
 		}
 	}
-	return qodoReviewSet{Availability: reviewsAvailable, Items: parseQodoReviews(comments)}
+	return qodoReviewSet{Availability: reviewsUnavailable, Reason: "GitHub returned more comments than Ghostline scans for Qodo reviews; re-import after the comment history is reduced or use a supported Qodo review source.", Items: []qodoReview{}}
 }
