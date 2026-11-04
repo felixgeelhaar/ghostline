@@ -20,7 +20,7 @@ go test ./...
 go vet ./...
 ```
 
-Warden hooks run Go tests and a staged Nox scan before commits, then the full verification set and tracked-repository Nox scan before pushes. Pull requests run the same checks in GitHub Actions, plus the Nox repository scan.
+Warden hooks run Go tests and a tracked-repository Nox scan before commits, then the full verification set and another Nox scan before pushes. Pull requests run the same checks in GitHub Actions, plus the Nox repository scan.
 
 ## Structure and tests
 

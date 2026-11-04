@@ -6,10 +6,9 @@ hooks:
 commands:
   go-test: "go test ./... -count=1"
   go-vet: "go vet ./..."
-  nox-staged: "nox --format all --output .nox/results scan . --staged"
   nox-scan: "nox --format all --output .nox/results scan . --tracked-only"
   frontend-verify: "cd frontend && npm ci && npm test && npm run build"
 steps:
-  pre_commit: [go-test, nox-staged]
+  pre_commit: [go-test, nox-scan]
   pre_push: [go-test, go-vet, frontend-verify, nox-scan]
 parallel: true
