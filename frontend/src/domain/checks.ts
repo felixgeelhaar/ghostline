@@ -30,3 +30,21 @@ export function checkOutcome(check: Check): { label: string; tone: CheckTone } {
 export function isHeadCommit(checks: RevisionChecks, sha: string): boolean {
   return checks.headSha !== '' && checks.headSha === sha
 }
+
+const severity: CheckTone[] = ['fail', 'running', 'neutral', 'pass']
+const toneWord: Record<CheckTone, string> = { fail: 'failing', running: 'running', neutral: 'neutral', pass: 'passing' }
+
+// Failing checks first so the reason a revision is not ready is never buried mid-list.
+export function orderChecks(checks: Check[]): Check[] {
+  return [...checks].sort((a, b) => severity.indexOf(checkOutcome(a).tone) - severity.indexOf(checkOutcome(b).tone))
+}
+
+export function summarizeChecks(checks: Check[]): { tone: CheckTone; label: string } {
+  const counts = new Map<CheckTone, number>()
+  for (const check of checks) counts.set(checkOutcome(check).tone, (counts.get(checkOutcome(check).tone) ?? 0) + 1)
+  const passing = counts.get('pass') ?? 0
+  if (passing === checks.length) return { tone: 'pass', label: `${passing} of ${checks.length} passing` }
+  const present = severity.filter((tone) => counts.has(tone))
+  const tone = counts.has('fail') ? 'fail' : counts.has('running') ? 'running' : passing > 0 ? 'pass' : 'neutral'
+  return { tone, label: present.map((t) => `${counts.get(t)} ${toneWord[t]}`).join(' · ') }
+}
