@@ -33,6 +33,19 @@ export type RecurringFinding = {
   occurrences: FindingOccurrence[]
 }
 
+export type RevisionReviewSelection = {
+  matched: QodoReview[]
+  unmarked: QodoReview[]
+}
+
+export function reviewsForRevision(reviews: QodoReview[], sha?: string): RevisionReviewSelection {
+  if (!sha) return { matched: reviews, unmarked: [] }
+  return {
+    matched: reviews.filter((review) => review.commitSha?.toLowerCase() === sha.toLowerCase()),
+    unmarked: reviews.filter((review) => !review.commitSha),
+  }
+}
+
 export function findRecurringFindings(reviews: QodoReview[]): RecurringFinding[] {
   const grouped = new Map<string, RecurringFinding>()
   for (const review of reviews) {
