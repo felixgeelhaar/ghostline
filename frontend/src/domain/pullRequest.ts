@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { RevisionChecksSchema } from './checks'
+import { QodoReviewSetSchema } from './reviews'
 
 export const PullRequestSchema = z.object({
   repository: z.string(), owner: z.string(), repo: z.string(), number: z.number(),
@@ -7,6 +8,7 @@ export const PullRequestSchema = z.object({
   createdAt: z.string(), updatedAt: z.string(),
   commits: z.array(z.object({ sha: z.string(), shortSha: z.string(), message: z.string(), author: z.string(), committedAt: z.string(), url: z.string().url() })),
   checks: RevisionChecksSchema,
+  qodoReviews: QodoReviewSetSchema,
 })
 export type PullRequest = z.infer<typeof PullRequestSchema>
 
