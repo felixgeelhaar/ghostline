@@ -21,6 +21,7 @@ type fakeGitHub struct {
 	statusCode           int
 	rateLimited          bool
 	secondaryRateLimited bool
+	qodoComments         string
 }
 
 func (f fakeGitHub) serve(t *testing.T) *httptest.Server {
@@ -31,6 +32,16 @@ func (f fakeGitHub) serve(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("/repos/acme/app/pulls/7/commits", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`[{"sha":"` + olderSHA + `","html_url":"https://github.com/acme/app/commit/` + olderSHA + `","commit":{"message":"first","author":{"name":"A","date":"2026-11-01T10:00:00Z"}}},{"sha":"` + headSHA + `","html_url":"https://github.com/acme/app/commit/` + headSHA + `","commit":{"message":"second","author":{"name":"A","date":"2026-11-02T10:00:00Z"}}}]`))
+	})
+	mux.HandleFunc("/repos/acme/app/issues/7/comments", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("per_page") != "100" {
+			t.Errorf("Qodo comments requested without page size: %s", r.URL.RawQuery)
+		}
+		comments := f.qodoComments
+		if comments == "" {
+			comments = `[]`
+		}
+		_, _ = w.Write([]byte(comments))
 	})
 	mux.HandleFunc("/repos/acme/app/commits/"+f.headSHA+"/check-runs", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("filter") != "latest" {
@@ -62,6 +73,35 @@ func (f fakeGitHub) serve(t *testing.T) *httptest.Server {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func TestImportIncludesQodoReviewEvidence(t *testing.T) {
+	comments := `[{"id":17,"user":{"login":"qodo-code-review[bot]"},"created_at":"2026-11-04T09:00:00Z","html_url":"https://github.com/acme/app/pull/7#issuecomment-17","body":"<h3>Code Review by Qodo</h3><details><summary>1. Reject stale checks</summary></details><!-- https://github.com/acme/app/commit/` + headSHA + ` -->"}]`
+	srv := fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(), statuses: noStatuses, qodoComments: comments}.serve(t)
+
+	code, pr := importVia(t, srv)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if pr.Reviews.Availability != reviewsAvailable || len(pr.Reviews.Items) != 1 {
+		t.Fatalf("Qodo reviews = %+v", pr.Reviews)
+	}
+	review := pr.Reviews.Items[0]
+	if review.Kind != "findings" || review.CommitSHA != headSHA || review.URL != "https://github.com/acme/app/pull/7#issuecomment-17" || len(review.FindingTitles) != 1 || review.FindingTitles[0] != "Reject stale checks" {
+		t.Fatalf("unexpected review evidence: %+v", review)
+	}
+}
+
+func TestImportReportsNoQodoReviewWhenNoCommentsExist(t *testing.T) {
+	srv := fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(), statuses: noStatuses}.serve(t)
+
+	code, pr := importVia(t, srv)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if pr.Reviews.Availability != reviewsAvailable || pr.Reviews.Items == nil || len(pr.Reviews.Items) != 0 {
+		t.Fatalf("Qodo review state = %+v, want available empty evidence", pr.Reviews)
+	}
 }
 
 func importVia(t *testing.T, srv *httptest.Server) (int, pullRequest) {
