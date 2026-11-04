@@ -30,7 +30,7 @@ This repository's `.warden.yaml` configures Warden developer gates: Go tests and
 
 Pull requests also run GitHub Actions CI for Go tests/vetting and frontend tests/builds. Actions run with read-only repository permissions and are pinned to commit SHAs.
 
-The `Security scan` GitHub Actions workflow runs the pinned Nox marketplace action against pull request revisions and pushes to `main`, attests and retains generated reports with the workflow run, and fails on findings outside the committed Nox baseline. Incomplete scans fail except for Nox's currently unsupported OSV advisory lookup for Docker base images; that specific coverage gap remains visible in the report and workflow summary.
+The `Security scan` GitHub Actions workflow runs the pinned Nox marketplace action against pull request revisions and pushes to `main`, annotates findings on the check, posts inline finding comments and a summary issue comment on same-repository pull requests, attests and retains generated reports with the workflow run, and fails on findings outside the committed Nox baseline. Fork pull requests remain read-only and show findings in their check output and report artifact. Incomplete scans fail except for Nox's currently unsupported OSV advisory lookup for Docker base images; that specific coverage gap remains visible in the report and workflow summary.
 
 ## Docker Compose
 

@@ -19,7 +19,7 @@ The implementation PR is [#1](https://github.com/felixgeelhaar/ghostline/pull/1)
 - [Nox security scan passed](https://github.com/felixgeelhaar/ghostline/actions/runs/41791043197/job/126444229537).
 - `warden/gate` passed on the pull request.
 
-Nox findings are reported as security feedback; an incomplete scan fails the action. The accepted baseline items and tool coverage limits are documented in the repository. These checks are CI evidence for the cited PR revision; the running demo itself is available on the developer's local network and is not a public hosted URL. The Day 1 interface does not yet display GitHub check runs.
+Nox findings appear as workflow annotations; same-repository pull requests also receive inline finding comments and a summary issue comment. Fork pull requests remain read-only and retain the scan report as an artifact. An incomplete scan fails the action. The accepted baseline items and tool coverage limits are documented in the repository. These checks are CI evidence for the cited PR revision; the running demo itself is available on the developer's local network and is not a public hosted URL. The Day 1 interface does not yet display GitHub check runs.
 
 ## Qodo review observation
 
