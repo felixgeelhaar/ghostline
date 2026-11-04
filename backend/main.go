@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,16 +15,17 @@ import (
 )
 
 type pullRequest struct {
-	Repository string    `json:"repository"`
-	Owner      string    `json:"owner"`
-	Repo       string    `json:"repo"`
-	Number     int       `json:"number"`
-	Title      string    `json:"title"`
-	State      string    `json:"state"`
-	URL        string    `json:"url"`
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
-	Commits    []commit  `json:"commits"`
+	Repository string         `json:"repository"`
+	Owner      string         `json:"owner"`
+	Repo       string         `json:"repo"`
+	Number     int            `json:"number"`
+	Title      string         `json:"title"`
+	State      string         `json:"state"`
+	URL        string         `json:"url"`
+	CreatedAt  time.Time      `json:"createdAt"`
+	UpdatedAt  time.Time      `json:"updatedAt"`
+	Commits    []commit       `json:"commits"`
+	Checks     revisionChecks `json:"checks"`
 }
 
 type commit struct {
@@ -45,6 +44,9 @@ type githubPR struct {
 	HTMLURL   string `json:"html_url"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
+	Head      struct {
+		SHA string `json:"sha"`
+	} `json:"head"`
 }
 
 type githubCommit struct {
@@ -80,36 +82,9 @@ func parsePRURL(raw string) (string, string, int, error) {
 	return matches[1], matches[2], n, nil
 }
 
-func githubGet(ctx context.Context, path string, target any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com"+path, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "Ghostline-Day1")
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	client := &http.Client{Timeout: 12 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusNotFound {
-			return errors.New("not found")
-		}
-		if resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0" {
-			return errors.New("rate limit")
-		}
-		return fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
-	}
-	return json.NewDecoder(resp.Body).Decode(target)
-}
+type api struct{ gh *githubClient }
 
-func importPR(c *gin.Context) {
+func (a api) importPR(c *gin.Context) {
 	var body struct {
 		URL string `json:"url"`
 	}
@@ -124,14 +99,14 @@ func importPR(c *gin.Context) {
 	}
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(owner), url.PathEscape(repo), number)
 	var rawPR githubPR
-	if err := githubGet(c.Request.Context(), path, &rawPR); err != nil {
+	if err := a.gh.get(c.Request.Context(), path, &rawPR); err != nil {
 		respondGitHubError(c, err)
 		return
 	}
 	var rawCommits []githubCommit
 	for page := 1; ; page++ {
 		var batch []githubCommit
-		if err := githubGet(c.Request.Context(), fmt.Sprintf("%s/commits?per_page=100&page=%d", path, page), &batch); err != nil {
+		if err := a.gh.get(c.Request.Context(), fmt.Sprintf("%s/commits?per_page=100&page=%d", path, page), &batch); err != nil {
 			respondGitHubError(c, err)
 			return
 		}
@@ -156,26 +131,33 @@ func importPR(c *gin.Context) {
 		}
 		result.Commits = append(result.Commits, commit{SHA: sha, ShortSHA: short, Message: strings.SplitN(item.Commit.Message, "\n", 2)[0], Author: author, CommittedAt: date, URL: item.HTMLURL})
 	}
+	result.Checks = fetchRevisionChecks(c.Request.Context(), a.gh, owner, repo, rawPR.Head.SHA)
 	c.JSON(http.StatusOK, result)
 }
 
 func respondGitHubError(c *gin.Context, err error) {
+	var statusErr statusError
 	switch {
-	case err.Error() == "not found":
+	case errors.Is(err, errNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "Pull request not found. Check the URL and confirm the repository is public."})
-	case err.Error() == "rate limit":
+	case errors.Is(err, errRateLimit):
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "GitHub’s public API rate limit has been reached. Try again later or configure GITHUB_TOKEN."})
-	case strings.Contains(err.Error(), "status 5"):
+	case errors.As(err, &statusErr) && statusErr.code >= 500:
 		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub is having trouble right now. Try again shortly."})
 	default:
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Could not reach GitHub. Check your connection and try again."})
 	}
 }
 
-func main() {
+func newRouter(gh *githubClient) *gin.Engine {
 	r := gin.Default()
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
-	r.POST("/api/import", importPR)
+	r.POST("/api/import", api{gh: gh}.importPR)
+	return r
+}
+
+func main() {
+	r := newRouter(newGitHubClient())
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
