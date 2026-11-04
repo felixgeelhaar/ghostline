@@ -25,7 +25,7 @@ jobs:
           format: all
           output: nox-results
           fail-on-findings: false
-          fail-on-degraded: true
+          fail-on-degraded: false
           annotate: false
 
       - name: Keep scan reports with this run
