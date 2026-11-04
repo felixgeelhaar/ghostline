@@ -88,7 +88,9 @@ func fetchRevisionChecks(ctx context.Context, gh *githubClient, owner, repo, sha
 		result.Reason = checksUnavailableReason(err)
 		return result
 	}
-	items := append(runs, statuses...)
+	items := make([]check, 0, len(runs)+len(statuses))
+	items = append(items, runs...)
+	items = append(items, statuses...)
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Name < items[j].Name })
 	result.Availability = checksAvailable
 	result.Items = items

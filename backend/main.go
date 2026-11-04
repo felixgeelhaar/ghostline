@@ -98,41 +98,61 @@ func (a api) importPR(c *gin.Context) {
 		return
 	}
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(owner), url.PathEscape(repo), number)
-	var rawPR githubPR
-	if err := a.gh.get(c.Request.Context(), path, &rawPR); err != nil {
-		respondGitHubError(c, err)
-		return
-	}
-	var rawCommits []githubCommit
-	for page := 1; ; page++ {
-		var batch []githubCommit
-		if err := a.gh.get(c.Request.Context(), fmt.Sprintf("%s/commits?per_page=100&page=%d", path, page), &batch); err != nil {
+	const maxSnapshotAttempts = 2
+	for attempt := 0; attempt < maxSnapshotAttempts; attempt++ {
+		var rawPR githubPR
+		if err := a.gh.get(c.Request.Context(), path, &rawPR); err != nil {
 			respondGitHubError(c, err)
 			return
 		}
-		rawCommits = append(rawCommits, batch...)
-		if len(batch) < 100 {
-			break
+		var rawCommits []githubCommit
+		for page := 1; ; page++ {
+			var batch []githubCommit
+			if err := a.gh.get(c.Request.Context(), fmt.Sprintf("%s/commits?per_page=100&page=%d", path, page), &batch); err != nil {
+				respondGitHubError(c, err)
+				return
+			}
+			rawCommits = append(rawCommits, batch...)
+			if len(batch) < 100 {
+				break
+			}
 		}
+		checks := fetchRevisionChecks(c.Request.Context(), a.gh, owner, repo, rawPR.Head.SHA)
+
+		// GitHub requests are separate snapshots. Verify the head after fetching the
+		// timeline and checks so a force push cannot pair a new timeline with old checks.
+		var verifiedPR githubPR
+		if err := a.gh.get(c.Request.Context(), path, &verifiedPR); err != nil {
+			respondGitHubError(c, err)
+			return
+		}
+		if verifiedPR.Head.SHA != rawPR.Head.SHA {
+			if attempt+1 < maxSnapshotAttempts {
+				continue
+			}
+			c.JSON(http.StatusConflict, gin.H{"error": "This pull request changed while its timeline and checks were loading. Please import it again."})
+			return
+		}
+		rawPR = verifiedPR
+		created, _ := time.Parse(time.RFC3339, rawPR.CreatedAt)
+		updated, _ := time.Parse(time.RFC3339, rawPR.UpdatedAt)
+		result := pullRequest{Repository: owner + "/" + repo, Owner: owner, Repo: repo, Number: rawPR.Number, Title: rawPR.Title, State: rawPR.State, URL: rawPR.HTMLURL, CreatedAt: created, UpdatedAt: updated, Commits: make([]commit, 0, len(rawCommits)), Checks: checks}
+		for _, item := range rawCommits {
+			date, _ := time.Parse(time.RFC3339, item.Commit.Author.Date)
+			author := item.Commit.Author.Name
+			if item.Author != nil && item.Author.Login != "" {
+				author = item.Author.Login
+			}
+			sha := item.SHA
+			short := sha
+			if len(short) > 7 {
+				short = short[:7]
+			}
+			result.Commits = append(result.Commits, commit{SHA: sha, ShortSHA: short, Message: strings.SplitN(item.Commit.Message, "\n", 2)[0], Author: author, CommittedAt: date, URL: item.HTMLURL})
+		}
+		c.JSON(http.StatusOK, result)
+		return
 	}
-	created, _ := time.Parse(time.RFC3339, rawPR.CreatedAt)
-	updated, _ := time.Parse(time.RFC3339, rawPR.UpdatedAt)
-	result := pullRequest{Repository: owner + "/" + repo, Owner: owner, Repo: repo, Number: rawPR.Number, Title: rawPR.Title, State: rawPR.State, URL: rawPR.HTMLURL, CreatedAt: created, UpdatedAt: updated, Commits: make([]commit, 0, len(rawCommits))}
-	for _, item := range rawCommits {
-		date, _ := time.Parse(time.RFC3339, item.Commit.Author.Date)
-		author := item.Commit.Author.Name
-		if item.Author != nil && item.Author.Login != "" {
-			author = item.Author.Login
-		}
-		sha := item.SHA
-		short := sha
-		if len(short) > 7 {
-			short = short[:7]
-		}
-		result.Commits = append(result.Commits, commit{SHA: sha, ShortSHA: short, Message: strings.SplitN(item.Commit.Message, "\n", 2)[0], Author: author, CommittedAt: date, URL: item.HTMLURL})
-	}
-	result.Checks = fetchRevisionChecks(c.Request.Context(), a.gh, owner, repo, rawPR.Head.SHA)
-	c.JSON(http.StatusOK, result)
 }
 
 func respondGitHubError(c *gin.Context, err error) {
