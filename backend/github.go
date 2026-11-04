@@ -49,7 +49,7 @@ func (g *githubClient) get(ctx context.Context, path string, target any) error {
 		if resp.StatusCode == http.StatusNotFound {
 			return errNotFound
 		}
-		if resp.StatusCode == http.StatusTooManyRequests || (resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0") {
+		if resp.StatusCode == http.StatusTooManyRequests || (resp.StatusCode == http.StatusForbidden && (resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.Header.Get("Retry-After") != "")) {
 			return errRateLimit
 		}
 		return statusError{code: resp.StatusCode}

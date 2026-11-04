@@ -17,7 +17,7 @@ export const RevisionChecksSchema = z.discriminatedUnion('availability', [
 export type RevisionChecks = z.infer<typeof RevisionChecksSchema>
 
 export type CheckTone = 'pass' | 'fail' | 'neutral' | 'running'
-const failing = new Set(['failure', 'error', 'timed_out', 'action_required', 'cancelled', 'startup_failure'])
+const failing = new Set(['failure', 'error', 'timed_out', 'action_required', 'cancelled', 'startup_failure', 'stale'])
 const passing = new Set(['success'])
 
 export function checkOutcome(check: Check): { label: string; tone: CheckTone } {
@@ -31,6 +31,11 @@ export function isHeadCommit(checks: RevisionChecks, sha: string): boolean {
   return checks.headSha !== '' && checks.headSha === sha
 }
 
+export function headCommitLabel(checks: RevisionChecks, sha: string): 'HEAD' | 'HEAD · CHECKED' | undefined {
+  if (!isHeadCommit(checks, sha)) return undefined
+  return checks.availability === 'available' && checks.items.length > 0 ? 'HEAD · CHECKED' : 'HEAD'
+}
+
 const severity: CheckTone[] = ['fail', 'running', 'neutral', 'pass']
 const toneWord: Record<CheckTone, string> = { fail: 'failing', running: 'running', neutral: 'neutral', pass: 'passing' }
 
@@ -40,11 +45,12 @@ export function orderChecks(checks: Check[]): Check[] {
 }
 
 export function summarizeChecks(checks: Check[]): { tone: CheckTone; label: string } {
+  if (checks.length === 0) return { tone: 'neutral', label: 'No checks reported' }
   const counts = new Map<CheckTone, number>()
   for (const check of checks) counts.set(checkOutcome(check).tone, (counts.get(checkOutcome(check).tone) ?? 0) + 1)
   const passing = counts.get('pass') ?? 0
   if (passing === checks.length) return { tone: 'pass', label: `${passing} of ${checks.length} passing` }
   const present = severity.filter((tone) => counts.has(tone))
-  const tone = counts.has('fail') ? 'fail' : counts.has('running') ? 'running' : passing > 0 ? 'pass' : 'neutral'
+  const tone = counts.has('fail') ? 'fail' : counts.has('running') ? 'running' : counts.has('neutral') ? 'neutral' : 'pass'
   return { tone, label: present.map((t) => `${counts.get(t)} ${toneWord[t]}`).join(' · ') }
 }
