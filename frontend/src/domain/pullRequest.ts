@@ -1,10 +1,12 @@
 import { z } from 'zod'
+import { RevisionChecksSchema } from './checks'
 
 export const PullRequestSchema = z.object({
   repository: z.string(), owner: z.string(), repo: z.string(), number: z.number(),
   title: z.string(), state: z.string(), url: z.string().url(),
   createdAt: z.string(), updatedAt: z.string(),
   commits: z.array(z.object({ sha: z.string(), shortSha: z.string(), message: z.string(), author: z.string(), committedAt: z.string(), url: z.string().url() })),
+  checks: RevisionChecksSchema,
 })
 export type PullRequest = z.infer<typeof PullRequestSchema>
 
