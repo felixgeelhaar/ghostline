@@ -1,6 +1,6 @@
 FROM golang:1.26-alpine@sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308
 WORKDIR /app
-COPY go.mod go.sum ./
+COPY --chown=65532:65532 go.mod go.sum ./
 RUN go mod download
 RUN apk add --no-cache curl
 COPY --chown=65532:65532 backend ./backend

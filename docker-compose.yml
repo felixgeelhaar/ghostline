@@ -14,6 +14,11 @@ services:
       timeout: 3s
       retries: 6
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
   frontend:
     build:
       context: ./frontend
@@ -31,3 +36,8 @@ services:
       timeout: 3s
       retries: 6
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
