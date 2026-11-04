@@ -17,14 +17,34 @@ jobs:
       - name: Check out revision
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Install Nox 1.57.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/nox_1.57.0_linux_amd64.tar.gz"
+          curl --fail --location --silent --show-error \
+            https://github.com/Nox-HQ/nox/releases/download/v1.57.0/nox_1.57.0_linux_amd64.tar.gz \
+            --output "$archive"
+          echo 'db25d1d9c8a7e17782a80ba12f152ed7ae0db05f67af73bf502d81ee3fee98dd  '"$archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/nox"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/nox"
+          "$RUNNER_TEMP/nox/nox" --version
+
       - name: Scan repository
-        uses: nox-hq/nox@24c7f00916ad15e99b6c44cdda8e55f05b869e43 # v0.4.2
-        with:
-          version: 1.57.0
-          format: all
-          output: nox-results
-          fail-on-findings: 'false'
-          fail-on-degraded: 'true'
+        shell: bash
+        run: |
+          set -uo pipefail
+          "$RUNNER_TEMP/nox/nox" --format all --output nox-results -q scan . || scan_exit=$?
+          scan_exit="${scan_exit:-0}"
+          if (( scan_exit > 1 )); then
+            echo "Nox could not complete the scan (exit $scan_exit)."
+            exit "$scan_exit"
+          fi
+          if (( scan_exit == 1 )); then
+            echo "Nox reported findings. See the attached reports; findings do not currently block merges."
+          else
+            echo "Nox completed without findings."
+          fi
 
       - name: Keep scan reports with this run
         if: always()

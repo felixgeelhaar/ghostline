@@ -26,7 +26,7 @@ Open the URL printed by Vite. Public GitHub API requests work without a token; s
 
 This repository's `.warden.yaml` configures Warden developer gates: Go tests before commits, then Go tests, `go vet`, and the frontend test/build before pushes. These hooks help contributors catch issues early. Hosted security and validation evidence should come from repository CI checks attached to a commit; the Day 1 Ghostline UI does not yet import or display those check runs.
 
-The `Security scan` GitHub Actions workflow runs Nox against pull request revisions, pushes to `main`, and manual dispatches. It retains the generated reports with the workflow run. Findings are reported but do not currently fail the check; an incomplete scan does fail so a scanner outage is not mistaken for a clean result.
+The `Security scan` GitHub Actions workflow runs Nox against pull request revisions, pushes to `main`, and manual dispatches. It verifies the pinned scanner archive and retains generated reports with the workflow run. Findings are reported but do not currently fail the check; scanner execution errors do.
 
 ## Docker Compose
 
