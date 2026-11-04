@@ -1,0 +1,35 @@
+name: Security scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nox:
+    name: Nox security scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Scan repository
+        uses: nox-hq/nox@24c7f00916ad15e99b6c44cdda8e55f05b869e43 # v0.4.2
+        with:
+          version: 1.57.0
+          format: all
+          output: nox-results
+          fail-on-findings: 'false'
+          fail-on-degraded: 'true'
+
+      - name: Keep scan reports with this run
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: nox-reports
+          path: nox-results/
+          if-no-files-found: warn

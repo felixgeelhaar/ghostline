@@ -8,14 +8,15 @@ Status: the implementation PR is public; Qodo review and hackathon-channel publi
 - Health endpoint returned `{"status":"ok"}`.
 - Imported the real public pull request [gin-gonic/gin#4354](https://github.com/gin-gonic/gin/pull/4354): “refactor(tree): replace string('/') with \"/\" in node.insertChild”. The API returned the repository, PR number, title, closed state, one commit, committed timestamp, and source URL. The timestamp is labeled as a commit timestamp in the UI.
 - Ran `go test ./...`, the frontend Vitest suite (4 tests), and the frontend production build successfully.
-- Configured Warden in `.warden.yaml`: Go tests run before commits; Go tests, `go vet`, and frontend tests/build run before pushes. The Compose image includes Warden v0.46.1 and Nox v1.57.0, each fetched from a pinned release and checksum-verified. Compose health checks gate frontend startup on backend readiness.
-- Ran the configured Warden pre-push gate in Compose. `go-test`, `go-vet`, and `frontend-verify` passed. Before the GitHub repository existed, the local scan correctly reported `passed_unpublished`. After creating the public repository, Warden passed and published provenance for both `main` and `feat/day-1-nox-status` pushes.
-- The first Nox run reported 19 findings, including missing Compose service health checks. After adding health checks and making frontend startup wait for the backend, a fresh run reported 17 findings. The API reports `findings` and the count rather than conflating findings with a scanner error. Nox's report says advisory lookup was skipped offline, so this run does not establish that dependencies have no known advisories. Findings are inspectable in the scan result and remain distinct from PR/revision evidence.
+- Configured Warden in `.warden.yaml`: Go tests run before commits; Go tests, `go vet`, and frontend tests/build run before pushes. Compose health checks gate frontend startup on backend readiness.
+- Added `.github/workflows/nox.yml` to scan each pull request revision and `main` pushes, retaining Nox reports as workflow artifacts. Findings are visible without blocking merges; an incomplete scan fails. The first hosted run is pending publication of this workflow.
+- A local Warden pre-push run passed `go-test`, `go-vet`, and `frontend-verify`. Local runs are contributor feedback only; they are not hosted, revision-linked evidence for a pull request.
+- An earlier local Nox experiment reported 19 findings, then 17 after Compose health checks were added. Advisory lookup was skipped in offline mode. These exploratory results are not presented as hosted scan results or as evidence about a particular PR revision.
 - After publishing `main`, GitHub reported 19 Dependabot alerts in Go modules. The implementation PR updates Gin and the affected Go modules above the patched versions; Go tests and `go vet` pass on the updated branch. `npm audit` reports zero vulnerabilities. Recheck the default branch after the PR is reviewed and merged; do not treat the current main-branch alerts as resolved yet.
 
 ## Review observation
 
-The useful engineering decision from this first scan was to treat validation and provenance publication as separate facts. A successful Warden gate is evidence that its configured checks passed locally, but without a remote the provenance note is not visible to other contributors. Ghostline exposes this as `passed_unpublished` rather than a plain success.
+The useful engineering decision was to keep contributor gates separate from hosted evidence. A local check can help its author, but only a repository CI result associated with the relevant commit can tell other contributors which revision was checked. Ghostline's current Day 1 UI does not yet import GitHub check runs.
 
 ## Still required for the hackathon submission
 

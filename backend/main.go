@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -111,132 +109,6 @@ func githubGet(ctx context.Context, path string, target any) error {
 	return json.NewDecoder(resp.Body).Decode(target)
 }
 
-type scannerResult struct {
-	Name       string    `json:"name"`
-	Status     string    `json:"status"`
-	Summary    string    `json:"summary"`
-	Output     string    `json:"output,omitempty"`
-	ExitCode   int       `json:"exitCode"`
-	FinishedAt time.Time `json:"finishedAt"`
-}
-
-func scanRepo(c *gin.Context) {
-	var body struct {
-		Path string `json:"path"`
-	}
-	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Path) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Choose a repository directory to scan."})
-		return
-	}
-	root, err := filepath.Abs(body.Path)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Repository path is invalid."})
-		return
-	}
-	info, err := os.Stat(root)
-	if err != nil || !info.IsDir() {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Repository directory was not found."})
-		return
-	}
-	results := []scannerResult{runNox(c.Request.Context(), root), runWarden(c.Request.Context(), root)}
-	c.JSON(http.StatusOK, gin.H{"repositoryPath": root, "results": results})
-}
-
-func runNox(ctx context.Context, root string) scannerResult {
-	started := time.Now()
-	bin, err := exec.LookPath("nox")
-	if err != nil {
-		return scannerResult{Name: "Nox", Status: "unavailable", Summary: "Nox CLI was not found on PATH.", FinishedAt: time.Now()}
-	}
-	outputDir, tempErr := os.MkdirTemp("", "ghostline-nox-")
-	if tempErr != nil {
-		return scannerResult{Name: "Nox", Status: "error", Summary: tempErr.Error(), FinishedAt: time.Now()}
-	}
-	defer os.RemoveAll(outputDir)
-	output, err := exec.CommandContext(ctx, bin, "scan", root, "--format", "json", "--output", outputDir, "--offline").CombinedOutput()
-	if report, readErr := os.ReadFile(filepath.Join(outputDir, "findings.json")); readErr == nil {
-		output = report
-	}
-	status, findingCount := noxStatus(output, err)
-	summary := fmt.Sprintf("Completed in %s", time.Since(started).Round(time.Millisecond))
-	if status == "findings" {
-		summary = fmt.Sprintf("%d findings · %s", findingCount, summary)
-	} else if status == "complete" {
-		summary = "No findings · " + summary
-	} else {
-		summary = "Nox did not produce a valid findings report. Inspect scanner output."
-	}
-	return scannerResult{Name: "Nox", Status: status, Summary: summary, Output: string(output), ExitCode: exitCode(err), FinishedAt: time.Now()}
-}
-
-func runWarden(ctx context.Context, root string) scannerResult {
-	started := time.Now()
-	bin := os.Getenv("WARDEN_COMMAND")
-	if bin == "" {
-		bin = "warden"
-	}
-	resolved, err := exec.LookPath(bin)
-	if err != nil {
-		return scannerResult{Name: "Warden pre-push gate", Status: "unavailable", Summary: "Warden CLI was not found on PATH.", FinishedAt: time.Now()}
-	}
-	hook := os.Getenv("WARDEN_HOOK")
-	if hook == "" {
-		hook = "pre-push"
-	}
-	if hook != "pre-push" && hook != "pre-commit" {
-		return scannerResult{Name: "Warden", Status: "error", Summary: "WARDEN_HOOK must be pre-push or pre-commit.", ExitCode: -1, FinishedAt: time.Now()}
-	}
-	cmd := exec.CommandContext(ctx, resolved, "run", hook)
-	cmd.Dir = root
-	output, runErr := cmd.CombinedOutput()
-	status := wardenStatus(runErr, string(output))
-	summary := fmt.Sprintf("Gate finished in %s", time.Since(started).Round(time.Millisecond))
-	if status == "passed_unpublished" {
-		summary = "Validation passed; provenance could not be published. See Warden output for details."
-	}
-	return scannerResult{Name: "Warden " + hook + " gate", Status: status, Summary: summary, Output: string(output), ExitCode: exitCode(runErr), FinishedAt: time.Now()}
-}
-
-func noxStatus(output []byte, runErr error) (string, int) {
-	var report struct {
-		Findings []json.RawMessage `json:"findings"`
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(output, &fields); err != nil {
-		return "error", 0
-	}
-	if _, ok := fields["findings"]; !ok || json.Unmarshal(output, &report) != nil || report.Findings == nil {
-		return "error", 0
-	}
-	if len(report.Findings) > 0 {
-		return "findings", len(report.Findings)
-	}
-	if runErr != nil {
-		return "error", 0
-	}
-	return "complete", 0
-}
-
-func wardenStatus(err error, output string) string {
-	if err == nil {
-		return "passed"
-	}
-	if strings.Contains(output, "checks passed; provenance incomplete") {
-		return "passed_unpublished"
-	}
-	return "failed"
-}
-func exitCode(err error) int {
-	if err == nil {
-		return 0
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode()
-	}
-	return -1
-}
-
 func importPR(c *gin.Context) {
 	var body struct {
 		URL string `json:"url"`
@@ -304,7 +176,6 @@ func main() {
 	r := gin.Default()
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	r.POST("/api/import", importPR)
-	r.POST("/api/scan", scanRepo)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

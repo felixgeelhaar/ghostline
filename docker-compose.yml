@@ -6,11 +6,6 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 8080
-      WARDEN_HOOK: ${WARDEN_HOOK:-pre-push}
-      GIT_AUTHOR_NAME: ${WARDEN_GIT_NAME:-Ghostline Warden}
-      GIT_AUTHOR_EMAIL: ${WARDEN_GIT_EMAIL:-ghostline-warden@localhost}
-      GIT_COMMITTER_NAME: ${WARDEN_GIT_NAME:-Ghostline Warden}
-      GIT_COMMITTER_EMAIL: ${WARDEN_GIT_EMAIL:-ghostline-warden@localhost}
     expose:
       - "8080"
     healthcheck:
@@ -19,9 +14,6 @@ services:
       timeout: 3s
       retries: 6
       start_period: 30s
-    volumes:
-      - ${SCAN_REPOSITORY_PATH:-./}:/scan-target
-
   frontend:
     build:
       context: ./frontend
@@ -29,7 +21,7 @@ services:
     environment:
       GHOSTLINE_API_URL: http://backend:8080
     ports:
-      - "127.0.0.1:${GHOSTLINE_PORT:-5173}:5173"
+      - "${GHOSTLINE_BIND_ADDRESS:-0.0.0.0}:${GHOSTLINE_PORT:-5173}:5173"
     depends_on:
       backend:
         condition: service_healthy

@@ -7,8 +7,6 @@ export const PullRequestSchema = z.object({
   commits: z.array(z.object({ sha: z.string(), shortSha: z.string(), message: z.string(), author: z.string(), committedAt: z.string(), url: z.string().url() })),
 })
 export type PullRequest = z.infer<typeof PullRequestSchema>
-export const ScanResponseSchema = z.object({ repositoryPath: z.string(), results: z.array(z.object({ name: z.string(), status: z.string(), summary: z.string(), output: z.string().optional(), exitCode: z.number(), finishedAt: z.string() })) })
-export type ScanResponse = z.infer<typeof ScanResponseSchema>
 
 export function validatePullRequestURL(value: string): string | undefined {
   try {
