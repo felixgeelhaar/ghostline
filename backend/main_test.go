@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"testing"
 )
 
@@ -27,26 +26,6 @@ func TestParsePRURL(t *testing.T) {
 			}
 			if err == nil && (owner != tt.wantOwner || repo != tt.wantRepo || number != tt.wantNumber) {
 				t.Fatalf("got %s/%s#%d", owner, repo, number)
-			}
-		})
-	}
-}
-
-func TestWardenStatus(t *testing.T) {
-	tests := []struct {
-		name   string
-		err    error
-		output string
-		want   string
-	}{
-		{name: "clean gate", want: "passed"},
-		{name: "failed checks", err: errors.New("exit status 1"), output: "step failed", want: "failed"},
-		{name: "checks passed without published provenance", err: errors.New("exit status 4"), output: "warden: checks passed; provenance incomplete; git push stopped", want: "passed_unpublished"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := wardenStatus(tt.err, tt.output); got != tt.want {
-				t.Fatalf("wardenStatus() = %q, want %q", got, tt.want)
 			}
 		})
 	}

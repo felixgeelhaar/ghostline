@@ -6,16 +6,19 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 8080
-      WARDEN_HOOK: ${WARDEN_HOOK:-pre-push}
-      GIT_AUTHOR_NAME: ${WARDEN_GIT_NAME:-Ghostline Warden}
-      GIT_AUTHOR_EMAIL: ${WARDEN_GIT_EMAIL:-ghostline-warden@localhost}
-      GIT_COMMITTER_NAME: ${WARDEN_GIT_NAME:-Ghostline Warden}
-      GIT_COMMITTER_EMAIL: ${WARDEN_GIT_EMAIL:-ghostline-warden@localhost}
     expose:
       - "8080"
-    volumes:
-      - ${SCAN_REPOSITORY_PATH:-./}:/scan-target
-
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
   frontend:
     build:
       context: ./frontend
@@ -23,6 +26,18 @@ services:
     environment:
       GHOSTLINE_API_URL: http://backend:8080
     ports:
-      - "127.0.0.1:${GHOSTLINE_PORT:-5173}:5173"
+      - "${GHOSTLINE_BIND_ADDRESS:-0.0.0.0}:${GHOSTLINE_PORT:-5173}:5173"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M

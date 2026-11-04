@@ -5,3 +5,7 @@ coverage/
 *.log
 *.tsbuildinfo
 bin/
+.nox/results/
+.env
+.env.*
+!.env.example

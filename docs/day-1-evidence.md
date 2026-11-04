@@ -1,24 +1,30 @@
 # Ghostline Day 1 delivery evidence
 
-Status: implementation demo is ready; public submission and Qodo review evidence are pending.
+## What works
 
-## Demonstrated
+- Enter a public GitHub pull request URL and import its repository, number, title, state, source link, and commits through the Go/Gin API.
+- The Vue 3 + TypeScript interface validates the URL before import and uses Zod to validate the returned API response, then presents commits in chronological order.
+- Commit times are labeled as commit times. They describe when a commit was authored, not when it was pushed or the complete event history of a pull request.
+- Docker Compose starts the frontend and backend; the frontend waits for backend health. The frontend binds to `0.0.0.0` on the configured port for access from the local network. This is a development/demo deployment, not a public hosted service.
+- The screenshot below was captured from the running Compose app after importing Ghostline PR #1 at head `597a1e9` (16 commits). The API returned the live PR and its commits.
 
-- Started the Vue frontend and Go/Gin backend with Docker Compose at `http://localhost:49080` (`GHOSTLINE_PORT=49080 docker compose up -d --build`).
-- Health endpoint returned `{"status":"ok"}`.
-- Imported the real public pull request [gin-gonic/gin#4354](https://github.com/gin-gonic/gin/pull/4354): “refactor(tree): replace string('/') with \"/\" in node.insertChild”. The API returned the repository, PR number, title, closed state, one commit, committed timestamp, and source URL. The timestamp is labeled as a commit timestamp in the UI.
-- Configured Warden in `.warden.yaml`: Go tests run before commits; Go tests, `go vet`, and frontend tests/build run before pushes. The Compose image includes Warden v0.46.1 and Nox v1.57.0, each fetched from a pinned release and checksum-verified.
-- Ran the configured Warden pre-push gate in Compose. `go-test`, `go-vet`, and `frontend-verify` passed. Warden wrote local provenance but could not publish it because this checkout has no `origin`; the app reports `passed_unpublished` to preserve that distinction.
-- Ran Nox offline against the repository. It emitted 19 findings. Its report explicitly says advisory lookup was skipped offline, so this run does not establish that dependencies have no known advisories. Findings are inspectable in the scan result and remain distinct from PR/revision evidence.
+![Ghostline showing the imported PR #1 and its commit timeline](assets/day-1-pr-timeline.png)
 
-## Review observation
+## Revision-linked checks
 
-The useful engineering decision from this first scan was to treat validation and provenance publication as separate facts. A successful Warden gate is evidence that its configured checks passed locally, but without a remote the provenance note is not visible to other contributors. Ghostline exposes this as `passed_unpublished` rather than a plain success.
+The implementation PR is [#1](https://github.com/felixgeelhaar/ghostline/pull/1), at head `597a1e9bd6c12b9c4cf63869094c22194a57c8f8` when these results were recorded. GitHub reported:
 
-## Still required for the hackathon submission
+- [Go checks passed](https://github.com/felixgeelhaar/ghostline/actions/runs/41791043175/job/126444230457).
+- [Frontend checks passed](https://github.com/felixgeelhaar/ghostline/actions/runs/41791043175/job/126444230619).
+- [Nox security scan passed](https://github.com/felixgeelhaar/ghostline/actions/runs/41791043197/job/126444229537).
+- `warden/gate` passed on the pull request.
 
-- Publish the repository and focused implementation PR to the selected GitHub owner.
-- Run and record a genuine Qodo review of that PR, including one concrete observation about its feedback.
-- Publish the hackathon introduction and this delivery evidence at the required destination.
+Nox findings appear as workflow annotations; same-repository pull requests also receive inline finding comments and a summary issue comment. Fork pull requests remain read-only and retain the scan report as an artifact. An incomplete scan fails the action. The accepted baseline items and tool coverage limits are documented in the repository. These checks are CI evidence for the cited PR revision; the running demo itself is available on the developer's local network and is not a public hosted URL. The Day 1 interface does not yet display GitHub check runs.
 
-No Qodo review or public submission is claimed by this document yet.
+## Qodo review observation
+
+Qodo caught an incorrect argument order in the Nox shell wrapper. Warden now invokes Nox directly, and the wrapper was removed. This exposed a real integration defect at the boundary between the developer gate and the scanner. A later review comment still mentioned the deleted wrapper, so review feedback must be checked against the current diff before acting on it. Qodo also correctly pointed out that URL validation is separate from Zod response validation; the description above now reflects that boundary.
+
+## Scope and next increment
+
+This delivery imports a public pull request and shows its commit history. It does not yet attach Qodo review findings or validation events to revisions, diagnose repair loops, or prove that a later commit fixed a finding. Those require source-backed events and are follow-up work.
