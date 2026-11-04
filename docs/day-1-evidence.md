@@ -6,17 +6,17 @@
 - The Vue 3 + TypeScript interface validates the URL with Zod and presents the returned commits in chronological order.
 - Commit times are labeled as commit times. They describe when a commit was authored, not when it was pushed or the complete event history of a pull request.
 - Docker Compose starts the frontend and backend; the frontend waits for backend health. The frontend binds to `0.0.0.0` on the configured port for access from the local network. This is a development/demo deployment, not a public hosted service.
-- The screenshot below was captured from the running Compose app after importing Ghostline PR #1; the API returned the live PR and its 15 commits.
+- The screenshot below was captured from the running Compose app after importing Ghostline PR #1 at head `597a1e9` (16 commits). The API returned the live PR and its commits.
 
 ![Ghostline showing the imported PR #1 and its commit timeline](assets/day-1-pr-timeline.png)
 
 ## Revision-linked checks
 
-The implementation PR is [#1](https://github.com/felixgeelhaar/ghostline/pull/1), at head `c7166df77e4031807a4bf9ce62c128b497e77be3` when these results were recorded. GitHub reported:
+The implementation PR is [#1](https://github.com/felixgeelhaar/ghostline/pull/1), at head `597a1e9bd6c12b9c4cf63869094c22194a57c8f8` when these results were recorded. GitHub reported:
 
-- [Go checks passed](https://github.com/felixgeelhaar/ghostline/actions/runs/41788813200/job/126437100704).
-- [Frontend checks passed](https://github.com/felixgeelhaar/ghostline/actions/runs/41788813200/job/126437101026).
-- [Nox security scan passed](https://github.com/felixgeelhaar/ghostline/actions/runs/41788813168/job/126437100341).
+- [Go checks passed](https://github.com/felixgeelhaar/ghostline/actions/runs/41791043175/job/126444230457).
+- [Frontend checks passed](https://github.com/felixgeelhaar/ghostline/actions/runs/41791043175/job/126444230619).
+- [Nox security scan passed](https://github.com/felixgeelhaar/ghostline/actions/runs/41791043197/job/126444229537).
 - `warden/gate` passed on the pull request.
 
 Nox findings are reported as security feedback; an incomplete scan fails the action. The accepted baseline items and tool coverage limits are documented in the repository. These checks are CI evidence for the cited PR revision; the running demo itself is available on the developer's local network and is not a public hosted URL. The Day 1 interface does not yet display GitHub check runs.
