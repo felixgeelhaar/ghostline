@@ -8,7 +8,7 @@ Ghostline is a change-centric engineering control room. The first slice imports 
 
 ## Run locally
 
-Requirements: Go 1.26+ and Node.js 22.12+.
+Requirements: Go 1.27.3+ and Node.js 22.12+.
 
 ```sh
 go run ./backend
@@ -26,11 +26,11 @@ Open the URL printed by Vite. Public GitHub API requests work without a token; s
 
 ## Repository checks
 
-This repository's `.warden.yaml` configures Warden developer gates: Go tests before commits, then Go tests, `go vet`, and the frontend test/build before pushes. Install Warden (for example, `go install go.klarlabs.de/warden@v0.46.1`), then run `warden init --hooks=pre-commit,pre-push` in a fresh checkout to activate the hooks. These hooks help contributors catch issues early. Hosted security and validation evidence should come from repository CI checks attached to a commit; the Day 1 Ghostline UI does not yet import or display those check runs.
+This repository's `.warden.yaml` configures Warden developer gates: Go tests and a staged Nox scan before commits, then Go tests, `go vet`, frontend tests/build, and a full tracked-repository Nox scan before pushes. Install Warden (for example, `go install go.klarlabs.de/warden@v0.46.1`) and Nox 1.57.0 from the [official release](https://github.com/Nox-HQ/nox/releases/tag/v1.57.0), placing its `nox` binary on `PATH`. Then run `warden init --hooks=pre-commit,pre-push` in a fresh checkout to activate the hooks. Nox uses the committed `.nox/baseline.json` to report known findings and fail on new ones. These hooks help contributors catch issues early. Hosted security and validation evidence should come from repository CI checks attached to a commit; the Day 1 Ghostline UI does not yet import or display those check runs.
 
 Pull requests also run GitHub Actions CI for Go tests/vetting and frontend tests/builds. Actions run with read-only repository permissions and are pinned to commit SHAs.
 
-The `Security scan` GitHub Actions workflow runs the pinned Nox marketplace action against pull request revisions and pushes to `main`, then retains generated reports with the workflow run. Findings do not currently fail the check. Incomplete scans fail except for Nox's currently unsupported OSV advisory lookup for Docker base images; that specific coverage gap remains visible in the report and workflow summary.
+The `Security scan` GitHub Actions workflow runs the pinned Nox marketplace action against pull request revisions and pushes to `main`, attests and retains generated reports with the workflow run, and fails on findings outside the committed Nox baseline. Incomplete scans fail except for Nox's currently unsupported OSV advisory lookup for Docker base images; that specific coverage gap remains visible in the report and workflow summary.
 
 ## Docker Compose
 

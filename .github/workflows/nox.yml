@@ -7,6 +7,9 @@ on:
 
 permissions:
   contents: read
+  attestations: write
+  id-token: write
+  artifact-metadata: write
 
 jobs:
   nox:
@@ -24,9 +27,15 @@ jobs:
           version: 1.57.0
           format: all
           output: nox-results
-          fail-on-findings: false
+          fail-on-findings: true
           fail-on-degraded: false
           annotate: false
+
+      - name: Attest Nox reports
+        if: always() && steps.nox.outputs.findings-file != ''
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: nox-results/*
 
       - name: Enforce scan completeness
         if: always()
