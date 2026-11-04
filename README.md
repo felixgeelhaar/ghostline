@@ -2,11 +2,13 @@
 
 **See the work. Trace the decisions. Take control.**
 
+[![CI](https://github.com/felixgeelhaar/ghostline/actions/workflows/ci.yml/badge.svg)](https://github.com/felixgeelhaar/ghostline/actions/workflows/ci.yml) [![Security scan](https://github.com/felixgeelhaar/ghostline/actions/workflows/nox.yml/badge.svg)](https://github.com/felixgeelhaar/ghostline/actions/workflows/nox.yml)
+
 Ghostline is a change-centric engineering control room. The first slice imports a public GitHub pull request and shows its commit timeline, with commit timestamps clearly distinguished from push or pull-request event chronology. Checks belong in repository CI, where their results can be tied to the revision they actually scanned; Ghostline does not scan a developer's local filesystem.
 
 ## Run locally
 
-Requirements: Go 1.26+ and Node.js 20+.
+Requirements: Go 1.26+ and Node.js 22.12+.
 
 ```sh
 go run ./backend
@@ -16,7 +18,7 @@ In another terminal:
 
 ```sh
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
@@ -25,6 +27,8 @@ Open the URL printed by Vite. Public GitHub API requests work without a token; s
 ## Repository checks
 
 This repository's `.warden.yaml` configures Warden developer gates: Go tests before commits, then Go tests, `go vet`, and the frontend test/build before pushes. These hooks help contributors catch issues early. Hosted security and validation evidence should come from repository CI checks attached to a commit; the Day 1 Ghostline UI does not yet import or display those check runs.
+
+Pull requests also run GitHub Actions CI for Go tests/vetting and frontend tests/builds. Actions run with read-only repository permissions and are pinned to commit SHAs.
 
 The `Security scan` GitHub Actions workflow runs Nox against pull request revisions, pushes to `main`, and manual dispatches. It verifies the pinned scanner archive and retains generated reports with the workflow run. Findings are reported but do not currently fail the check; scanner execution errors do.
 
@@ -44,3 +48,5 @@ cd frontend && npm test && npm run build
 ```
 
 The frontend is organized by domain, application use cases, and presentation. Zod validates API responses at the boundary.
+
+See [Contributing](CONTRIBUTING.md) for the local workflow and [Security](SECURITY.md) for private vulnerability reporting.
