@@ -24,7 +24,6 @@ export type FindingTrace = {
   summary: {
     commentCount: number
     markedRevisionCount: number
-    distinctRevisionCount: number
     unmarkedCommentCount: number
     focusableRevisionCount: number
     candidateRevisionCount: number
@@ -82,24 +81,22 @@ export function buildFindingTrace(finding: RecurringFinding, commits: RevisionRe
 
   const marked = occurrences.filter((occurrence) => occurrence.commitSha)
   const unmarkedCommentCount = occurrences.length - marked.length
-  const distinctRevisionCount = new Set(occurrences.flatMap((occurrence) => occurrence.revision ? [occurrence.revision.sha.toLowerCase()] : [])).size
   const outsidePrRevisionCount = new Set(occurrences.flatMap((occurrence) => occurrence.commitSha && !occurrence.revision ? [occurrence.commitSha.toLowerCase()] : [])).size
   const focusableRevisionCount = new Set(occurrences.flatMap((occurrence) => occurrence.revision ? [occurrence.revision.sha.toLowerCase()] : [])).size
   const revisionSpans = buildRevisionSpans(occurrences, commits)
   const candidateRevisionCount = revisionSpans.reduce((count, span) => count + span.candidateRevisions.length, 0)
   const hasIncompleteRevisionCoverage = unmarkedCommentCount > 0 || outsidePrRevisionCount > 0
-  const revisionSignalLabel = distinctRevisionCount > 1
-    ? `DISTINCT PR REVISIONS${hasIncompleteRevisionCoverage ? ' · INCOMPLETE COVERAGE' : ''}`
-    : distinctRevisionCount === 1
-      ? `SAME PR REVISION${hasIncompleteRevisionCoverage ? ' · INCOMPLETE COVERAGE' : ''}`
+  const revisionSignalBaseLabel = focusableRevisionCount > 1
+    ? 'DISTINCT PR REVISIONS'
+    : focusableRevisionCount === 1
+      ? 'SAME PR REVISION'
       : outsidePrRevisionCount > 0
         ? 'MARKED REVISIONS OUTSIDE IMPORT'
         : 'NO REVIEW REVISION MARKERS'
-  const revisionGaps = [
-    unmarkedCommentCount ? `${unmarkedCommentCount} comment${unmarkedCommentCount === 1 ? ' has' : 's have'} no revision marker` : '',
-    outsidePrRevisionCount ? `${outsidePrRevisionCount} marked revision${outsidePrRevisionCount === 1 ? ' is' : 's are'} outside this imported PR` : '',
-  ].filter(Boolean)
-  const revisionSignalDetail = `${occurrences.length} separate Qodo comments; ${distinctRevisionCount} imported PR revision${distinctRevisionCount === 1 ? '' : 's'} marked.${revisionGaps.length ? ` ${revisionGaps.join('; ')}.` : ''} This signal does not establish a repair attempt or whether the defect persisted.`
+  const revisionSignalLabel = revisionSignalBaseLabel === 'NO REVIEW REVISION MARKERS' || !hasIncompleteRevisionCoverage
+    ? revisionSignalBaseLabel
+    : `${revisionSignalBaseLabel} · INCOMPLETE COVERAGE`
+  const revisionSignalDetail = 'This label describes explicit revision markers only. It does not establish a repair attempt or whether the defect persisted.'
 
   let nextStep: string
   if (candidateRevisionCount > 0) {
@@ -120,12 +117,11 @@ export function buildFindingTrace(finding: RecurringFinding, commits: RevisionRe
     summary: {
       commentCount: occurrences.length,
       markedRevisionCount: marked.length,
-      distinctRevisionCount,
       unmarkedCommentCount,
       focusableRevisionCount,
       candidateRevisionCount,
     evidence: `This finding title, matched after normalizing case and whitespace, appears in ${occurrences.length} separate Qodo comments.`,
-      revisionCoverage: `${marked.length} comment${marked.length === 1 ? '' : 's'} include an explicit revision marker; ${distinctRevisionCount} focusable PR revision${distinctRevisionCount === 1 ? '' : 's'}${outsidePrRevisionCount ? ` and ${outsidePrRevisionCount} marked revision${outsidePrRevisionCount === 1 ? '' : 's'} outside the imported PR commit list` : ''}; ${unmarkedCommentCount} unmarked comment${unmarkedCommentCount === 1 ? ' is' : 's are'} reported.`,
+      revisionCoverage: `${marked.length} comment${marked.length === 1 ? '' : 's'} include an explicit revision marker; ${focusableRevisionCount} focusable PR revision${focusableRevisionCount === 1 ? '' : 's'}${outsidePrRevisionCount ? ` and ${outsidePrRevisionCount} marked revision${outsidePrRevisionCount === 1 ? '' : 's'} outside the imported PR commit list` : ''}; ${unmarkedCommentCount} unmarked comment${unmarkedCommentCount === 1 ? ' is' : 's are'} reported.`,
       revisionSignal: { label: revisionSignalLabel, detail: revisionSignalDetail },
       nextStep,
     },

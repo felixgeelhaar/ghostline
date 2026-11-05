@@ -66,9 +66,11 @@ Ghostline reports that state instead of inventing an interval. These candidates
 are based only on GitHub PR commit-list order; they are not verified repair
 attempts and do not establish causality. A repeated title is a signal to inspect,
 not proof the same defect persisted. Deep Trace labels whether the matched comments
-point to the same imported PR revision, distinct imported revisions, or incomplete
-revision coverage. That label describes available markers only; it does not say
-whether an agent attempted a repair. A finding disappearing from a later Qodo
+point to the same imported PR revision, distinct imported revisions, marked
+revisions outside the import, or no marked revision. It appends an incomplete
+coverage label when the available markers do not cover the matched comments. The
+signal describes available markers only; it does not say whether an agent attempted
+a repair. A finding disappearing from a later Qodo
 review is not proof it was fixed, and a Qodo outcome is not independent
 verification. Inspect the linked comments and candidate patches, then use
 relevant checks for the exact revision you intend to ship.
