@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { interventionPrompt, type FindingTrace } from '../domain/trace'
 
 defineProps<{ trace: FindingTrace }>()
@@ -9,6 +9,9 @@ const emit = defineEmits<{
 }>()
 
 const copyStatus = ref('')
+const heading = ref<HTMLHeadingElement | null>(null)
+
+onMounted(() => heading.value?.focus())
 
 function date(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
@@ -30,9 +33,9 @@ async function copyGuidance(trace: FindingTrace) {
     <header class="trace-heading">
       <div>
         <p class="eyebrow">DEEP TRACE / NORMALIZED QODO TITLE MATCH</p>
-        <h4 id="deep-trace-title">{{ trace.title }}</h4>
+        <h4 id="deep-trace-title" ref="heading" tabindex="-1">{{ trace.title }}</h4>
       </div>
-      <button type="button" class="trace-close" @click="emit('close')">CLOSE TRACE</button>
+      <button type="button" class="trace-close" aria-label="Close Deep Trace" @click="emit('close')">CLOSE TRACE</button>
     </header>
 
     <section class="intervention-summary" aria-labelledby="intervention-title">
