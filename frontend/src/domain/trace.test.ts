@@ -68,8 +68,13 @@ describe('Qodo finding trace', () => {
     expect(trace.occurrences.map((occurrence) => occurrence.sourceUrl)).toEqual([firstComment, secondComment, 'https://github.com/acme/app/pull/7#issuecomment-103'])
     expect(trace.summary).toMatchObject({ commentCount: 3, markedRevisionCount: 2, unmarkedCommentCount: 1 })
     expect(trace.occurrences[2]?.revisionInPullRequest).toBe(false)
-    expect(trace.summary.distinctRevisionCount).toBe(2)
+    expect(trace.summary.focusableRevisionCount).toBe(2)
+    expect(trace.summary).not.toHaveProperty('distinctRevisionCount')
     expect(trace.summary.revisionCoverage).toContain('2 focusable PR revisions')
+    expect(trace.summary.revisionSignal).toMatchObject({
+      label: 'DISTINCT PR REVISIONS · INCOMPLETE COVERAGE',
+      detail: expect.stringContaining('does not establish a repair attempt or whether the defect persisted'),
+    })
     expect(trace.revisionSpans).toHaveLength(2)
     expect(trace.revisionSpans[0]).toMatchObject({ status: 'intervening', fromReviewId: 101, toReviewId: 102 })
     expect(trace.revisionSpans[0]?.candidateRevisions.map((revision) => revision.sha)).toEqual([middleSha])
@@ -130,6 +135,11 @@ describe('Qodo finding trace', () => {
 
   it('renders the focused trace, actionable context, and only focusable PR revisions', async () => {
     const html = await renderToString(createSSRApp(DeepTrace, { trace }))
+    expect(html).toContain('REVISION SIGNAL')
+    expect(html).toContain('aria-labelledby="revision-signal-title"')
+    expect(html).toContain('id="revision-signal-title"')
+    expect(html).toContain('DISTINCT PR REVISIONS · INCOMPLETE COVERAGE')
+    expect(html).toContain('This label describes explicit revision markers only. It does not establish a repair attempt or whether the defect persisted.')
     expect(html).toContain('INTERVENTION SUMMARY')
     expect(html).toContain('Inspect the 1 candidate PR revision')
     expect(html).toContain('issuecomment-101')
@@ -154,7 +164,7 @@ describe('Qodo finding trace', () => {
     expect(html.match(/FOCUS REVISION/g)).toBeNull()
     expect(html.match(/REVISION MARKED · NOT IN IMPORTED PR COMMIT LIST/g)).toHaveLength(2)
     expect(outsidePullRequest.summary.nextStep).toContain('confirm the relevant code revision manually')
-    expect(outsidePullRequest.summary.distinctRevisionCount).toBe(0)
+    expect(outsidePullRequest.summary.focusableRevisionCount).toBe(0)
     expect(outsidePullRequest.summary.revisionCoverage).toContain('0 focusable PR revisions')
   })
 
@@ -180,5 +190,40 @@ describe('Qodo finding trace', () => {
     expect(buildRevisionSpans([occurrence(1, firstSha, commits[0]), occurrence(2, secondSha, commits[2])], commits)[0]?.status).toBe('intervening')
     expect(buildRevisionSpans([occurrence(1, secondSha, commits[2]), occurrence(2, firstSha, commits[0])], commits)[0]?.status).toBe('out_of_order')
     expect(buildRevisionSpans([occurrence(1, 'd'.repeat(40)), occurrence(2)], commits)[0]?.status).toBe('unavailable')
+  })
+
+  it('labels repeats on one revision and repeats with no revision markers without implying a repair', () => {
+    const sameRevision = buildFindingTrace({
+      ...recurring,
+      occurrences: recurring.occurrences.slice(0, 2).map((item) => ({ ...item, commitSha: firstSha, commitUrl: `https://github.com/acme/app/commit/${firstSha}` })),
+    }, commits)
+    const unmarked = buildFindingTrace({
+      ...recurring,
+      occurrences: recurring.occurrences.map(({ commitSha: _sha, commitUrl: _url, ...item }) => item),
+    }, commits)
+
+    expect(sameRevision.summary.revisionSignal.label).toBe('SAME PR REVISION')
+    expect(sameRevision.summary.revisionSignal.detail).not.toContain('separate Qodo comments')
+    expect(unmarked.summary.revisionSignal.label).toBe('NO REVIEW REVISION MARKERS')
+    expect(unmarked.summary.revisionSignal.detail).toContain('explicit revision markers only')
+    expect(unmarked.summary.revisionSignal.detail).toContain('does not establish a repair attempt')
+  })
+
+  it('marks mixed outside-import and unmarked revisions as incomplete without repeating coverage counts', () => {
+    const outsideRevision = 'e'.repeat(40)
+    const mixedCoverage = buildFindingTrace({
+      ...recurring,
+      occurrences: [
+        { ...recurring.occurrences[0]!, commitSha: outsideRevision, commitUrl: `https://github.com/acme/app/commit/${outsideRevision}` },
+        { ...recurring.occurrences[1]!, commitSha: undefined, commitUrl: undefined },
+      ],
+    }, commits)
+
+    expect(mixedCoverage.summary.revisionSignal.label).toBe('MARKED REVISIONS OUTSIDE IMPORT · INCOMPLETE COVERAGE')
+    expect(mixedCoverage.summary.revisionSignal.detail).toContain('does not establish a repair attempt or whether the defect persisted')
+    expect(mixedCoverage.summary.revisionSignal.detail).not.toContain('separate Qodo comments')
+    expect(mixedCoverage.summary.revisionSignal.detail).not.toContain('imported PR revision')
+    expect(mixedCoverage.summary.revisionCoverage).toContain('1 marked revision outside the imported PR commit list')
+    expect(mixedCoverage.summary.revisionCoverage).toContain('1 unmarked comment')
   })
 })
