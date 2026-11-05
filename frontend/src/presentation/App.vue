@@ -41,18 +41,20 @@ async function loadPR() {
   finally { loading.value = false }
 }
 async function focusRevision(sha: string) {
+  const importedPR = pr.value
+  if (!importedPR) return
   selectedRevision.value = sha
   focusedChecks.value = undefined
   checksError.value = ''
   checksLoading.value = false
   const request = ++revisionRequest
-  if (sha === pr.value?.checks.revisionSha) {
-    focusedChecks.value = pr.value.checks
+  if (sha === importedPR.checks.revisionSha) {
+    focusedChecks.value = importedPR.checks
     return
   }
   checksLoading.value = true
   try {
-    const checks = await fetchRevisionChecks(url.value, sha)
+    const checks = await fetchRevisionChecks(importedPR.url, sha)
     if (request === revisionRequest && selectedRevision.value === sha) focusedChecks.value = checks
   } catch (e) {
     if (request === revisionRequest && selectedRevision.value === sha) checksError.value = e instanceof Error ? e.message : 'Could not load checks for this revision.'

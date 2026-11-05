@@ -70,6 +70,36 @@ async function copyGuidance(trace: FindingTrace) {
       </li>
     </ol>
 
+    <section class="revision-spans" aria-labelledby="revision-spans-title">
+      <h5 id="revision-spans-title" class="trace-events-title">CANDIDATE PR REVISIONS · COMMIT-LIST SPANS</h5>
+      <ol class="trace-events revision-span-list">
+        <li v-for="span in trace.revisionSpans" :key="`${span.fromReviewId}:${span.toReviewId}`">
+          <div class="trace-event-meta">
+            <span><a :href="span.fromCommentUrl" target="_blank" rel="noreferrer">QODO COMMENT #{{ span.fromReviewId }} ↗</a> → <a :href="span.toCommentUrl" target="_blank" rel="noreferrer">QODO COMMENT #{{ span.toReviewId }} ↗</a></span>
+          </div>
+          <p v-if="span.fromRevision && span.toRevision" class="review-revision">
+            REVIEWED ANCHORS
+            <a :href="span.fromRevision.url" target="_blank" rel="noreferrer">{{ span.fromRevision.shortSha }} ↗</a>
+            →
+            <a :href="span.toRevision.url" target="_blank" rel="noreferrer">{{ span.toRevision.shortSha }} ↗</a>
+          </p>
+          <p v-if="span.status === 'unavailable'" class="checks-note">Span unavailable: one or both comments do not mark a revision in this PR’s imported commit list.</p>
+          <p v-else-if="span.status === 'same_revision'" class="checks-note">Both comments mark the same PR revision; there is no revision interval to inspect.</p>
+          <p v-else-if="span.status === 'out_of_order'" class="checks-note">Marked revisions run backward in GitHub’s PR commit-list order, so Ghostline does not infer a span.</p>
+          <p v-else-if="span.status === 'adjacent'" class="checks-note">These marked revisions are adjacent in GitHub’s PR commit list; no candidate commit appears between them.</p>
+          <template v-else>
+            <p class="checks-note">The commits below appear between these reviewed revision anchors in GitHub’s PR commit-list order. Inspect them as candidates; these are not verified repairs.</p>
+            <ul class="review-followups-list">
+              <li v-for="revision in span.candidateRevisions" :key="revision.sha">
+                <span><a :href="revision.url" target="_blank" rel="noreferrer">{{ revision.shortSha }} ↗</a> {{ revision.message }}</span>
+                <button type="button" :aria-label="`Focus candidate PR revision ${revision.shortSha}`" @click="emit('focusRevision', revision.sha)">FOCUS</button>
+              </li>
+            </ul>
+          </template>
+        </li>
+      </ol>
+    </section>
+
     <p class="footnote">The title match and Qodo comment timestamps are observed evidence. They do not establish causation, a repair attempt, or a successful fix.</p>
     <p class="trace-boundary">Ghostline observes published review comments. Use your existing IDE or coding agent to inspect and guide the work.</p>
   </section>

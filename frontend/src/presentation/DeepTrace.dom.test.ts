@@ -2,8 +2,9 @@
 import { createApp, defineComponent, h, nextTick, ref } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PullRequest } from '../domain/pullRequest'
-import type { FindingTrace, TracedOccurrence } from '../domain/trace'
+import { buildRevisionSpans, type FindingTrace, type TracedOccurrence } from '../domain/trace'
 import { importPullRequest } from '../application/importPullRequest'
+import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import App from './App.vue'
 import DeepTrace from './DeepTrace.vue'
 
@@ -14,6 +15,8 @@ const shaA = 'a'.repeat(40)
 const shaB = 'b'.repeat(40)
 const commitA = { sha: shaA, shortSha: 'aaaaaaa', message: 'First', author: 'A', committedAt: '2026-11-04T09:00:00Z', url: `https://github.com/acme/app/commit/${shaA}` }
 const commitB = { sha: shaB, shortSha: 'bbbbbbb', message: 'Second', author: 'A', committedAt: '2026-11-04T10:00:00Z', url: `https://github.com/acme/app/commit/${shaB}` }
+const shaMiddle = 'c'.repeat(40)
+const commitMiddle = { sha: shaMiddle, shortSha: 'ccccccc', message: 'Candidate change', author: 'A', committedAt: '2026-11-04T09:30:00Z', url: `https://github.com/acme/app/commit/${shaMiddle}` }
 const reviews = [
   { id: 201, provider: 'Qodo' as const, sourceType: 'github_issue_comment' as const, sourceAuthor: 'qodo-code-review[bot]', kind: 'findings' as const, findings: [
     { id: '201:1', title: 'Finding one', categories: [], sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-201' },
@@ -28,7 +31,7 @@ const reviews = [
 const pullRequest: PullRequest = {
   repository: 'acme/app', owner: 'acme', repo: 'app', number: 7, title: 'Keyboard trace test', state: 'open',
   url: 'https://github.com/acme/app/pull/7', createdAt: '2026-11-04T08:00:00Z', updatedAt: '2026-11-04T11:00:00Z',
-  commits: [commitA, commitB],
+  commits: [commitA, commitMiddle, commitB],
   checks: { availability: 'available', revisionSha: shaB, revisionShortSha: 'bbbbbbb', revisionUrl: commitB.url, items: [] },
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: reviews },
 }
@@ -46,7 +49,8 @@ function occurrence(id: number, sha: string): TracedOccurrence {
 function findingTrace(id: string, title: string): FindingTrace {
   return {
     id, title, occurrences: [occurrence(301, shaA), occurrence(302, shaB)],
-    summary: { commentCount: 2, markedRevisionCount: 2, distinctRevisionCount: 2, unmarkedCommentCount: 0, focusableRevisionCount: 2,
+    revisionSpans: buildRevisionSpans([occurrence(301, shaA), occurrence(302, shaB)], [commitA, commitMiddle, commitB]),
+    summary: { commentCount: 2, markedRevisionCount: 2, distinctRevisionCount: 2, unmarkedCommentCount: 0, focusableRevisionCount: 2, candidateRevisionCount: 1,
       evidence: `The normalized title ${title} appears in 2 comments.`, revisionCoverage: '2 comments across 2 focusable PR revisions.', nextStep: `Inspect ${title} evidence.` },
   }
 }
@@ -138,5 +142,48 @@ describe('Deep Trace browser interactions', () => {
     current.value = findingTrace('two', 'Finding two')
     await settleVue()
     expect(host.querySelector('[role="status"]')?.textContent).toBe('')
+  })
+
+  it('focuses a candidate revision from the explicit PR-order span', async () => {
+    const current = findingTrace('one', 'Finding one')
+    let focusedSha = ''
+    const Parent = defineComponent({ setup: () => () => h(DeepTrace, { trace: current, onFocusRevision: (sha: string) => { focusedSha = sha } }) })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(Parent)
+    mounted.mount(host)
+
+    host.querySelector<HTMLButtonElement>('[aria-label="Focus candidate PR revision ccccccc"]')!.click()
+    await settleVue()
+    expect(focusedSha).toBe(shaMiddle)
+  })
+
+  it('fetches candidate revision checks from the imported pull request after the URL field changes', async () => {
+    vi.mocked(importPullRequest).mockResolvedValue(pullRequest)
+    vi.mocked(fetchRevisionChecks).mockResolvedValue({
+      availability: 'available', revisionSha: shaMiddle, revisionShortSha: 'ccccccc',
+      revisionUrl: commitMiddle.url, items: [],
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = 'https://github.com/acme/app/pull/7'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelectorAll('.trace-open')).toHaveLength(2))
+
+    input.value = 'https://github.com/other/repo/pull/99'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.trace-open')!.click()
+    await settleVue()
+    host.querySelector<HTMLButtonElement>('[aria-label="Focus candidate PR revision ccccccc"]')!.click()
+    await vi.waitFor(() => expect(fetchRevisionChecks).toHaveBeenCalled())
+
+    expect(fetchRevisionChecks).toHaveBeenCalledWith('https://github.com/acme/app/pull/7', shaMiddle)
   })
 })
