@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { QodoReviewSetSchema, findRecurringFindings, laterRevisionsToInspect, qodoReviewState, reviewsForRevision } from './reviews'
+import { QodoReviewSetSchema, findRecurringFindings, laterRevisionsToInspect, qodoReviewState, reviewCountSummary, reviewsForRevision } from './reviews'
 
 const sha = 'a'.repeat(40)
 
@@ -14,7 +14,7 @@ describe('Qodo review evidence', () => {
         sourceType: 'github_issue_comment',
         sourceAuthor: 'qodo-code-review[bot]',
         kind: 'findings',
-        findings: [{ id: '17:1', title: 'Reject stale checks', category: '🐞 Bug', lifecycle: '⭐ New', severity: 'Medium', actionLevel: 'Remediation recommended', description: 'Checks from the previous revision can appear current.', sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-17' }],
+        findings: [{ id: '17:1', title: 'Reject stale checks', categories: ['🐞 Bug', '⛨ Security'], lifecycle: '⭐ New', severity: 'Medium', actionLevel: 'Remediation recommended', description: 'Checks from the previous revision can appear current.', sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-17' }],
         commitSha: sha,
         commitUrl: `https://github.com/acme/app/commit/${sha}`,
         createdAt: '2026-11-04T09:00:00Z',
@@ -24,6 +24,7 @@ describe('Qodo review evidence', () => {
     expect(reviews.items[0]?.commitSha).toBe(sha)
     expect(reviews.items[0]?.findings[0]?.description).toContain('previous revision')
     expect(reviews.items[0]?.sourceType).toBe('github_issue_comment')
+    expect(reviews.items[0]?.findings[0]?.categories).toEqual(['🐞 Bug', '⛨ Security'])
     expect(qodoReviewState(reviews)).toBe('recorded')
   })
 
@@ -75,6 +76,8 @@ describe('Qodo review evidence', () => {
     const fullHistory = reviewsForRevision(reviews)
     expect(fullHistory.matched.map((review) => review.id)).toEqual([1, 2])
     expect(fullHistory.unmarked.map((review) => review.id)).toEqual([3])
+    expect(reviewCountSummary(reviews)).toBe('3 COMMENTS')
+    expect(reviewCountSummary(reviews, sha)).toBe('1 MATCHED · 1 CONTEXT')
   })
 
   it('offers later PR revisions as unconfirmed follow-up context only', () => {

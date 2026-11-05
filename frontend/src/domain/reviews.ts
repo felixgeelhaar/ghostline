@@ -4,7 +4,7 @@ const fullSha = z.string().regex(/^[0-9a-f]{40}$/)
 const QodoFindingSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
-  category: z.string().optional(),
+  categories: z.array(z.string()).default([]),
   lifecycle: z.string().optional(),
   severity: z.string().optional(),
   actionLevel: z.string().optional(),
@@ -71,6 +71,12 @@ export function reviewsForRevision(reviews: QodoReview[], sha?: string): Revisio
     matched: reviews.filter((review) => review.commitSha?.toLowerCase() === sha.toLowerCase()),
     unmarked: reviews.filter((review) => !review.commitSha),
   }
+}
+
+export function reviewCountSummary(reviews: QodoReview[], sha?: string): string {
+  if (!sha) return `${reviews.length} COMMENTS`
+  const selection = reviewsForRevision(reviews, sha)
+  return `${selection.matched.length} MATCHED · ${selection.unmarked.length} CONTEXT`
 }
 
 export function findRecurringFindings(reviews: QodoReview[]): RecurringFinding[] {

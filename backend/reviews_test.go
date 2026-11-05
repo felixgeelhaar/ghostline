@@ -11,8 +11,8 @@ import (
 
 func TestParseQodoReviewComments(t *testing.T) {
 	comments := []githubIssueComment{
-		{ID: 17, User: githubUser{Login: "qodo-code-review"}, CreatedAt: time.Date(2026, 11, 4, 9, 0, 0, 0, time.UTC), HTMLURL: "https://github.com/acme/app/pull/7#issuecomment-17", Body: `<h3>Code Review by Qodo</h3><br/><details><summary><img alt="Medium"><img alt="Remediation recommended">View medium (1)</summary><details><summary>  1.  Reject stale checks <code>🐞 Bug</code><code>⭐ New</code></summary><br/><details><summary>Description</summary><br/><pre>Checks from the previous revision can appear current.</pre></details></details><details><summary>2. Empty findings</summary></details></details><!-- https://github.com/acme/app/commit/` + headSHA + ` -->`},
-		{ID: 18, User: githubUser{Login: "qodo-free-for-open-source-projects[bot]"}, CreatedAt: time.Date(2026, 11, 4, 9, 1, 0, 0, time.UTC), HTMLURL: "https://github.com/acme/app/pull/7#issuecomment-18", Body: `<h3>PR Summary by Qodo</h3>Keep the latest revision aligned with <code>headSha</code> after import.<img src="https://www.qodo.ai/wp-content/uploads/2025/11/light-grey-line.svg" alt="Grey Divider"><code>✨ Enhancement</code><!-- https://github.com/acme/app/commit/` + olderSHA + ` -->`},
+		{ID: 17, User: githubUser{Login: "qodo-code-review"}, CreatedAt: time.Date(2026, 11, 4, 9, 0, 0, 0, time.UTC), HTMLURL: "https://github.com/acme/app/pull/7#issuecomment-17", Body: `<h3>Code Review by Qodo</h3><br/><details><summary><img alt="Medium"><img alt="Remediation recommended">View medium (1)</summary><details><summary>  1.  Reject stale checks <code>🐞 Bug</code><code>⛨ Security</code><code>⭐ New</code></summary><br/><details><summary>Description</summary><br/><pre>Checks from the previous revision can appear current.</pre></details></details><details><summary>2. Empty findings</summary></details></details><!-- https://github.com/acme/app/commit/` + headSHA + ` -->`},
+		{ID: 18, User: githubUser{Login: "qodo-free-for-open-source-projects[bot]"}, CreatedAt: time.Date(2026, 11, 4, 9, 1, 0, 0, time.UTC), HTMLURL: "https://github.com/acme/app/pull/7#issuecomment-18", Body: `<h3>PR Summary by Qodo</h3>Keep the latest revision aligned with <code>headSha</code> after import.<img src="https://www.qodo.ai/wp-content/uploads/2025/11/light-grey-line.svg" alt="decorative"><code>✨ Enhancement</code><!-- https://github.com/acme/app/commit/` + olderSHA + ` -->`},
 		{ID: 19, User: githubUser{Login: "github-actions[bot]"}, Body: `<h3>Code Review by Qodo</h3><summary>1. Do not include</summary>`},
 		{ID: 20, User: githubUser{Login: "felixgeelhaar"}, Body: `<h3>PR Summary by Qodo</h3>Do not include`},
 		{ID: 21, User: githubUser{Login: "qodo-code-review[bot]"}, Body: "/agentic_review"},
@@ -32,11 +32,19 @@ func TestParseQodoReviewComments(t *testing.T) {
 		t.Fatalf("findings = %#v", got[0].Findings)
 	}
 	firstFinding := got[0].Findings[0]
-	if firstFinding.ID != "17:1" || firstFinding.Category != "🐞 Bug" || firstFinding.Lifecycle != "⭐ New" || firstFinding.Severity != "Medium" || firstFinding.ActionLevel != "Remediation recommended" || firstFinding.Description != "Checks from the previous revision can appear current." || firstFinding.SourceURL != comments[0].HTMLURL {
+	if firstFinding.ID != "17:1" || strings.Join(firstFinding.Categories, ",") != "🐞 Bug,⛨ Security" || firstFinding.Lifecycle != "⭐ New" || firstFinding.Severity != "Medium" || firstFinding.ActionLevel != "Remediation recommended" || firstFinding.Description != "Checks from the previous revision can appear current." || firstFinding.SourceURL != comments[0].HTMLURL {
 		t.Fatalf("unexpected structured finding: %+v", firstFinding)
 	}
 	if got[1].Kind != "summary" || got[1].Summary != "Keep the latest revision aligned with headSha after import." || got[1].CommitSHA != olderSHA {
 		t.Fatalf("unexpected summary evidence: %+v", got[1])
+	}
+}
+
+func TestQodoSummaryStopsAtDividerSourceEvenWithoutDescriptiveAlt(t *testing.T) {
+	comments := []githubIssueComment{{ID: 25, User: githubUser{Login: "qodo-free-for-open-source-projects[bot]"}, Body: `<h3>PR Summary by Qodo</h3>Keep checks revision-specific.<img src="https://www.qodo.ai/light-grey-line.svg" alt="divider"><code>Post-divider category</code>`}}
+	got, _ := parseQodoReviews(comments)
+	if len(got) != 1 || got[0].Summary != "Keep checks revision-specific." {
+		t.Fatalf("summary crossed divider or was not parsed: %+v", got)
 	}
 }
 

@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { checkOutcome, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
-import { findRecurringFindings, reviewsForRevision } from '../domain/reviews'
+import { findRecurringFindings, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import { validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import ReviewCard from './ReviewCard.vue'
 
@@ -22,6 +22,7 @@ const checksSummary = computed(() => summarizeChecks(orderedChecks.value))
 const recurringFindings = computed(() => findRecurringFindings(pr.value?.qodoReviews.items ?? []))
 const visibleCommits = computed(() => pr.value?.commits.filter((commit) => !selectedRevision.value || commit.sha === selectedRevision.value) ?? [])
 const selectedReviews = computed(() => reviewsForRevision(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
+const reviewCount = computed(() => reviewCountSummary(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
 const glyph: Record<CheckTone, string> = { pass: '✓', fail: '✕', running: '●', neutral: '–' }
 
 async function loadPR() {
@@ -90,7 +91,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
       <p class="footnote">Commit timestamps come from Git commit metadata. They do not establish push time or complete pull request event chronology.</p>
 
       <section class="qodo-reviews" aria-labelledby="qodo-reviews-title">
-        <h3 id="qodo-reviews-title" class="section-title"><span>QODO REVIEW EVIDENCE <span v-if="selectedRevision">· MATCHED REVISION</span></span><span v-if="pr.qodoReviews.availability === 'available'">{{ selectedReviews.matched.length }} COMMENTS</span></h3>
+        <h3 id="qodo-reviews-title" class="section-title"><span>QODO REVIEW EVIDENCE <span v-if="selectedRevision">· MATCHED REVISION</span></span><span v-if="pr.qodoReviews.availability === 'available'">{{ reviewCount }}</span></h3>
         <p v-if="pr.qodoReviews.availability === 'unavailable'" class="checks-note warn" role="status"><strong>Qodo review unavailable.</strong> {{ pr.qodoReviews.reason }}</p>
         <p v-else-if="pr.qodoReviews.items.length === 0 && pr.qodoReviews.unrecognizedCommentCount > 0" class="checks-note warn" role="status"><strong>{{ pr.qodoReviews.unrecognizedCommentCount }} Qodo comment{{ pr.qodoReviews.unrecognizedCommentCount === 1 ? '' : 's' }} not parsed as review output.</strong> Ghostline recognized only the published summary and code-review formats. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect the pull request on GitHub ↗</a></p>
         <p v-else-if="pr.qodoReviews.items.length === 0" class="checks-note" role="status"><strong>No recognized Qodo review comment found.</strong> Ghostline found no published Qodo summary or code-review comment in the GitHub issue-comment feed.</p>

@@ -18,7 +18,7 @@ function date(value: string) {
   <p v-if="review.kind === 'findings' && review.findings.length === 0" class="checks-note warn" role="status"><strong>Finding details unavailable.</strong> Ghostline recognized the Qodo review comment but could not extract its findings. Open the source comment for the complete review.</p>
   <ul v-if="review.findings.length" class="finding-list"><li v-for="finding in review.findings" :key="finding.id">
     <div class="finding-heading"><strong>{{ finding.title }}</strong><span v-if="finding.severity">{{ finding.severity }}</span></div>
-    <p class="finding-labels">{{ [finding.category, finding.lifecycle, finding.actionLevel].filter(Boolean).join(' · ') }}</p>
+    <p class="finding-labels">{{ [...finding.categories, finding.lifecycle, finding.actionLevel].filter(Boolean).join(' · ') }}</p>
     <p v-if="finding.description" class="finding-description">{{ finding.description }}</p>
     <a class="review-source" :href="finding.sourceUrl" target="_blank" rel="noreferrer">SOURCE FINDING ↗</a>
   </li></ul>

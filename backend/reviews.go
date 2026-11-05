@@ -18,10 +18,10 @@ const (
 )
 
 type qodoReviewSet struct {
-	Availability              string       `json:"availability"`
-	Reason                    string       `json:"reason,omitempty"`
-	UnrecognizedCommentCount  int          `json:"unrecognizedCommentCount"`
-	Items                     []qodoReview `json:"items"`
+	Availability             string       `json:"availability"`
+	Reason                   string       `json:"reason,omitempty"`
+	UnrecognizedCommentCount int          `json:"unrecognizedCommentCount"`
+	Items                    []qodoReview `json:"items"`
 }
 
 type qodoReview struct {
@@ -39,14 +39,14 @@ type qodoReview struct {
 }
 
 type qodoFinding struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Category    string `json:"category,omitempty"`
-	Lifecycle   string `json:"lifecycle,omitempty"`
-	Severity    string `json:"severity,omitempty"`
-	ActionLevel string `json:"actionLevel,omitempty"`
-	Description string `json:"description,omitempty"`
-	SourceURL   string `json:"sourceUrl"`
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Categories  []string `json:"categories"`
+	Lifecycle   string   `json:"lifecycle,omitempty"`
+	Severity    string   `json:"severity,omitempty"`
+	ActionLevel string   `json:"actionLevel,omitempty"`
+	Description string   `json:"description,omitempty"`
+	SourceURL   string   `json:"sourceUrl"`
 }
 
 type githubUser struct {
@@ -158,13 +158,19 @@ func nodeText(root *html.Node) string {
 func qodoSummaryText(heading *html.Node) string {
 	var text strings.Builder
 	for node := heading.NextSibling; node != nil; node = node.NextSibling {
-		if node.Type == html.ElementNode && (node.Data == "details" || node.Data == "img" && strings.Contains(strings.ToLower(attribute(node, "alt")), "grey divider")) {
+		if node.Type == html.ElementNode && (node.Data == "details" || node.Data == "img" && isQodoDivider(node)) {
 			break
 		}
 		text.WriteString(nodeText(node))
 		text.WriteByte(' ')
 	}
 	return cleanQodoText(text.String())
+}
+
+func isQodoDivider(node *html.Node) bool {
+	alt := strings.ToLower(attribute(node, "alt"))
+	src := strings.ToLower(attribute(node, "src"))
+	return strings.Contains(alt, "grey divider") || strings.Contains(src, "light-grey-line")
 }
 
 func qodoFindings(root *html.Node, commentID int64, sourceURL string) []qodoFinding {
@@ -202,15 +208,15 @@ func qodoFindingFromSummary(summary *html.Node, commentID int64, ordinal int, so
 		}
 	}
 	readHeading(summary)
-	finding := qodoFinding{ID: fmt.Sprintf("%d:%d", commentID, ordinal), Title: qodoFindingOrdinal.ReplaceAllString(cleanQodoText(title.String()), ""), SourceURL: sourceURL}
+	finding := qodoFinding{ID: fmt.Sprintf("%d:%d", commentID, ordinal), Title: qodoFindingOrdinal.ReplaceAllString(cleanQodoText(title.String()), ""), Categories: []string{}, SourceURL: sourceURL}
 	for _, code := range codes {
 		value := cleanQodoText(code)
 		switch {
 		case strings.Contains(strings.ToLower(value), "new"), strings.Contains(strings.ToLower(value), "existing"), strings.Contains(strings.ToLower(value), "resolved"):
 			finding.Lifecycle = value
 		default:
-			if finding.Category == "" {
-				finding.Category = value
+			if !containsString(finding.Categories, value) {
+				finding.Categories = append(finding.Categories, value)
 			}
 		}
 	}
@@ -219,6 +225,15 @@ func qodoFindingFromSummary(summary *html.Node, commentID int64, ordinal int, so
 		finding.Severity, finding.ActionLevel = findingLabels(summary)
 	}
 	return finding
+}
+
+func containsString(values []string, value string) bool {
+	for _, existing := range values {
+		if existing == value {
+			return true
+		}
+	}
+	return false
 }
 
 func ancestorFindingDetails(node *html.Node) *html.Node {
