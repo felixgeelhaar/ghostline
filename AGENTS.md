@@ -2,7 +2,7 @@
 
 ## Project
 
-Ghostline is a change-centric engineering control room. The current slice imports a public GitHub pull request and shows its metadata and commits in a Vue timeline, backed by a small Go/Gin API. The timeline is based on commit data; it is not a complete pull-request event history. Keep evidence tied to the source and revision that actually produced it.
+Ghostline is a change-centric engineering control room. It imports public GitHub pull requests and displays their metadata, commits, and source-linked Qodo review feedback in a Vue timeline backed by a small Go/Gin API. Review findings retain the source comment and inspected revision where available; later PR commits are only candidate context, not proof of repairs. The timeline is based on commit data, not a complete pull-request event history. Keep evidence tied to the source and revision that actually produced it.
 
 ## Setup and verification
 

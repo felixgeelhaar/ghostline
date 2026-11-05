@@ -4,7 +4,7 @@ Coding agents can produce changes quickly, while engineers still have to piece t
 
 For Day 1, Ghostline imports a public GitHub pull request and displays its real commits in a chronological timeline. A Go/Gin backend fetches GitHub data; a Vue 3 + TypeScript interface validates the URL before import and uses Zod to validate the returned API response. Docker Compose runs the demo, and repository checks run in GitHub Actions. The timeline labels commit timestamps accurately and does not present them as push or full pull-request event history.
 
-The first increment is deliberately small. The next step is to connect Qodo review outcomes to the revisions they inspect, then show later repair and re-review events without claiming that timing alone proves causation or correctness.
+The first increment was deliberately small. Ghostline now imports Qodo's published review comments alongside the revisions they explicitly identify, preserves finding details and source links, and offers later PR revisions as context to inspect. Commit order is not proof of repair, and Qodo feedback remains separate from independent verification.
 
 Repository: https://github.com/felixgeelhaar/ghostline  
 Implementation PR: https://github.com/felixgeelhaar/ghostline/pull/1  
