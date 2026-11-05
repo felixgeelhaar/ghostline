@@ -51,13 +51,19 @@ titles, categories, lifecycle labels, severity/action labels, and descriptions
 are extracted from the published review. A comment without a commit marker is
 shown as unmarked context, not assigned to the current PR head.
 
-When a review names a revision that appears in the pull request's commit list,
-Ghostline offers later commits in that list as revisions to inspect. The link is
-derived from PR commit-list order; it does not claim that a later commit
-addresses or repairs a finding. A finding disappearing from a later Qodo review
-is not proof that it was fixed, and a Qodo outcome is not independent
-verification. Inspect the linked comment and revision, then use the relevant
-checks for the exact code revision.
+When the same finding title appears in separate Qodo comments and both adjacent
+comments explicitly mark revisions that appear in the imported pull request's
+commit list, Ghostline lists the commits between those revision anchors as
+candidates to inspect. It links each source comment and revision, and can focus
+the exact candidate SHA in the timeline. If an anchor is missing, outside the
+imported commit list, unchanged, adjacent, or reversed in commit-list order,
+Ghostline reports that state instead of inventing an interval. These candidates
+are based only on GitHub PR commit-list order; they are not verified repair
+attempts and do not establish causality. A repeated title is a signal to inspect,
+not proof the same defect persisted. A finding disappearing from a later Qodo
+review is not proof it was fixed, and a Qodo outcome is not independent
+verification. Inspect the linked comments and candidate patches, then use
+relevant checks for the exact revision you intend to ship.
 
 This is a GitHub-comment integration, not a private Qodo findings API. If Qodo
 changes its published comment format or omits evidence, Ghostline should show
