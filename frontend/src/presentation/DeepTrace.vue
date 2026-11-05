@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { interventionPrompt, type FindingTrace } from '../domain/trace'
 
-defineProps<{ trace: FindingTrace }>()
+const props = defineProps<{ trace: FindingTrace }>()
 const emit = defineEmits<{
   close: []
   focusRevision: [sha: string]
@@ -12,6 +12,7 @@ const copyStatus = ref('')
 const heading = ref<HTMLHeadingElement | null>(null)
 
 onMounted(() => heading.value?.focus())
+watch(() => props.trace.id, () => { copyStatus.value = '' })
 
 function date(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
@@ -56,7 +57,7 @@ async function copyGuidance(trace: FindingTrace) {
           <span>COMMENT #{{ occurrence.reviewId }}</span>
           <time :datetime="occurrence.createdAt">{{ date(occurrence.createdAt) }}</time>
         </div>
-        <p v-if="occurrence.categories.length" class="finding-labels">{{ [...occurrence.categories, occurrence.lifecycle, occurrence.severity, occurrence.actionLevel].filter(Boolean).join(' · ') }}</p>
+        <p v-if="[...occurrence.categories, occurrence.lifecycle, occurrence.severity, occurrence.actionLevel].some(Boolean)" class="finding-labels">{{ [...occurrence.categories, occurrence.lifecycle, occurrence.severity, occurrence.actionLevel].filter(Boolean).join(' · ') }}</p>
         <p v-if="occurrence.description" class="finding-description">{{ occurrence.description }}</p>
         <p v-if="occurrence.commitSha && occurrence.revisionInPullRequest" class="review-revision">REVIEWED PR REVISION <a v-if="occurrence.commitUrl" :href="occurrence.commitUrl" target="_blank" rel="noreferrer">{{ occurrence.commitSha.slice(0, 7) }} ↗</a><span v-else>{{ occurrence.commitSha.slice(0, 7) }}</span></p>
         <p v-else-if="occurrence.commitSha" class="review-revision unmarked">REVISION MARKED · NOT IN IMPORTED PR COMMIT LIST <a v-if="occurrence.commitUrl" :href="occurrence.commitUrl" target="_blank" rel="noreferrer">{{ occurrence.commitSha.slice(0, 7) }} ↗</a></p>

@@ -37,7 +37,8 @@ export function buildFindingTrace(finding: RecurringFinding, commits: RevisionRe
 
   const marked = occurrences.filter((occurrence) => occurrence.commitSha)
   const unmarkedCommentCount = occurrences.length - marked.length
-  const distinctRevisionCount = new Set(marked.map((occurrence) => occurrence.commitSha?.toLowerCase())).size
+  const distinctRevisionCount = new Set(occurrences.flatMap((occurrence) => occurrence.revision ? [occurrence.revision.sha.toLowerCase()] : [])).size
+  const outsidePrRevisionCount = new Set(occurrences.flatMap((occurrence) => occurrence.commitSha && !occurrence.revision ? [occurrence.commitSha.toLowerCase()] : [])).size
   const focusableRevisionCount = new Set(occurrences.flatMap((occurrence) => occurrence.revision ? [occurrence.revision.sha.toLowerCase()] : [])).size
 
   let nextStep: string
@@ -60,7 +61,7 @@ export function buildFindingTrace(finding: RecurringFinding, commits: RevisionRe
       unmarkedCommentCount,
       focusableRevisionCount,
     evidence: `This finding title, matched after normalizing case and whitespace, appears in ${occurrences.length} separate Qodo comments.`,
-      revisionCoverage: `${marked.length} comment${marked.length === 1 ? '' : 's'} include an explicit revision marker across ${distinctRevisionCount} revision${distinctRevisionCount === 1 ? '' : 's'}; ${unmarkedCommentCount} comment${unmarkedCommentCount === 1 ? '' : 's'} are unmarked.`,
+      revisionCoverage: `${marked.length} comment${marked.length === 1 ? '' : 's'} include an explicit revision marker; ${distinctRevisionCount} focusable PR revision${distinctRevisionCount === 1 ? '' : 's'}${outsidePrRevisionCount ? ` and ${outsidePrRevisionCount} marked revision${outsidePrRevisionCount === 1 ? '' : 's'} outside the imported PR commit list` : ''}; ${unmarkedCommentCount} unmarked comment${unmarkedCommentCount === 1 ? ' is' : 's are'} reported.`,
       nextStep,
     },
   }
@@ -80,8 +81,9 @@ export function interventionPrompt(trace: FindingTrace): string {
     'Investigate this case- and whitespace-normalized match using the linked source evidence.',
     '',
     'The normalized title was matched across separate comments. This text match is a signal to inspect, not proof that the same defect persisted.',
+    trace.summary.nextStep,
     sources,
     '',
-    'Inspect the source comments and affected code. If a repair was attempted, compare that patch directly and run relevant checks on the revision intended for shipping. This trace does not prove that a repair happened or explain why the comments differ. Keep unmarked comments unattributed to a revision.',
+    'The trace does not prove that a repair happened or explain why the comments differ. Keep unmarked comments unattributed to a revision.',
   ].join('\n')
 }
