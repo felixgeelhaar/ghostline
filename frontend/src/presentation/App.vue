@@ -62,8 +62,10 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
 </script>
 
 <template>
-  <main class="shell">
+  <div class="shell">
+    <a class="skip-link" href="#main-content">Skip to main content</a>
     <header class="topbar"><a class="brand" href="#"><span class="brand-mark">G</span><span>GHOSTLINE<small>ENGINEERING CONTROL ROOM</small></span></a><span class="live"><i></i> SYSTEM READY</span></header>
+    <main id="main-content" tabindex="-1">
     <section class="hero"><p class="eyebrow">CHANGE INTELLIGENCE / 001</p><h1>See the work.<br><em>Trace the decisions.</em></h1><p class="lede">Import a pull request to inspect its revision history. Commit timestamps show when commits were authored, not when they were pushed.</p></section>
     <section class="import-panel"><label for="pr-url">GITHUB PULL REQUEST</label><div class="input-row"><span class="prefix">↗</span><input id="pr-url" v-model="url" placeholder="https://github.com/owner/repo/pull/123" @keyup.enter="loadPR"><button :disabled="loading" @click="loadPR">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button></div><p v-if="error" class="error" role="alert">{{ error }}</p></section>
     <section v-if="pr" class="change-card">
@@ -98,6 +100,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         <p class="footnote">Review comments are evidence from Qodo at the linked revision. A finding missing from a later review does not by itself prove the change was fixed.</p>
       </section>
     </section>
+    </main>
     <footer><span>GHOSTLINE // DAY 01</span><span>EVERY SIGNAL HAS A SOURCE.</span></footer>
-  </main>
+  </div>
 </template>
