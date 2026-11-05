@@ -65,6 +65,11 @@ export type RecurringFinding = {
   occurrences: FindingOccurrence[]
 }
 
+export function noOpenFindingsNote(review: Pick<QodoReview, 'commitSha'>): string {
+  if (!review.commitSha) return 'This comment has no revision marker. Treat it as context only; it does not establish the state of the current revision.'
+  return 'This records the review outcome for the linked revision; it is not an independent correctness guarantee.'
+}
+
 export type RevisionReviewSelection = {
   matched: QodoReview[]
   unmarked: QodoReview[]

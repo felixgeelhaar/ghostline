@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { QodoReviewSetSchema, findRecurringFindings, laterRevisionsToInspect, qodoReviewState, reviewCountSummary, reviewsForRevision } from './reviews'
+import { QodoReviewSetSchema, findRecurringFindings, laterRevisionsToInspect, noOpenFindingsNote, qodoReviewState, reviewCountSummary, reviewsForRevision } from './reviews'
 
 const sha = 'a'.repeat(40)
 
@@ -44,6 +44,12 @@ describe('Qodo review evidence', () => {
 
     expect(qodoReviewState(reviews)).toBe('recorded')
     expect(findRecurringFindings(reviews.items)).toEqual([])
+    expect(noOpenFindingsNote(reviews.items[0]!)).toContain('linked revision')
+  })
+
+  it('keeps unmarked clean-review feedback scoped to context only', () => {
+    expect(noOpenFindingsNote({ commitSha: undefined })).toContain('no revision marker')
+    expect(noOpenFindingsNote({ commitSha: undefined })).toContain('does not establish the state of the current revision')
   })
 
   it('rejects malformed commit references', () => {
