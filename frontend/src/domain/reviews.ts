@@ -46,13 +46,21 @@ export function laterRevisionsToInspect(review: Pick<QodoReview, 'commitSha'>, c
 
 export type FindingOccurrence = {
   reviewId: number
+  findingId: string
   createdAt: string
   url: string
+  sourceUrl: string
+  categories: string[]
+  description?: string
+  severity?: string
+  lifecycle?: string
+  actionLevel?: string
   commitSha?: string
   commitUrl?: string
 }
 
 export type RecurringFinding = {
+  id: string
   title: string
   occurrences: FindingOccurrence[]
 }
@@ -89,11 +97,18 @@ export function findRecurringFindings(reviews: QodoReview[]): RecurringFinding[]
       const normalized = title.trim().replace(/\s+/g, ' ').toLowerCase()
       if (!normalized || seenInReview.has(normalized)) continue
       seenInReview.add(normalized)
-      const groupedFinding = grouped.get(normalized) ?? { title: title.trim().replace(/\s+/g, ' '), occurrences: [] }
+      const groupedFinding = grouped.get(normalized) ?? { id: normalized, title: title.trim().replace(/\s+/g, ' '), occurrences: [] }
       groupedFinding.occurrences.push({
         reviewId: review.id,
+        findingId: finding.id,
         createdAt: review.createdAt,
         url: review.url,
+        sourceUrl: finding.sourceUrl,
+        categories: finding.categories,
+        ...(finding.description ? { description: finding.description } : {}),
+        ...(finding.severity ? { severity: finding.severity } : {}),
+        ...(finding.lifecycle ? { lifecycle: finding.lifecycle } : {}),
+        ...(finding.actionLevel ? { actionLevel: finding.actionLevel } : {}),
         ...(review.commitSha ? { commitSha: review.commitSha } : {}),
         ...(review.commitUrl ? { commitUrl: review.commitUrl } : {}),
       })
