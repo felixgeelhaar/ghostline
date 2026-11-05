@@ -1,0 +1,14 @@
+[github_app]
+# Add source-linked summaries and review feedback to each published or updated PR.
+pr_commands = ["/agentic_describe", "/agentic_review"]
+
+[config]
+issues_user_guidelines = """
+Use the linked issue and its acceptance criteria as the source of functional expectations.
+Follow the repository's AGENTS.md. Report actionable findings with a concrete code path
+and impact. Treat timestamps as ordering evidence only, not proof of causation.
+"""
+
+[qodo_describe_agent]
+# Expose Qodo's review effort estimate in the GitHub pull request list.
+publish_review_time_estimate_labels = true
