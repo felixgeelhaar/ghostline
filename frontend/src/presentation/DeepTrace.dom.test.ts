@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PullRequest } from '../domain/pullRequest'
 import { buildRevisionSpans, type FindingTrace, type TracedOccurrence } from '../domain/trace'
 import { importPullRequest } from '../application/importPullRequest'
+import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import App from './App.vue'
 import DeepTrace from './DeepTrace.vue'
 
@@ -155,5 +156,34 @@ describe('Deep Trace browser interactions', () => {
     host.querySelector<HTMLButtonElement>('[aria-label="Focus candidate PR revision ccccccc"]')!.click()
     await settleVue()
     expect(focusedSha).toBe(shaMiddle)
+  })
+
+  it('fetches candidate revision checks from the imported pull request after the URL field changes', async () => {
+    vi.mocked(importPullRequest).mockResolvedValue(pullRequest)
+    vi.mocked(fetchRevisionChecks).mockResolvedValue({
+      availability: 'available', revisionSha: shaMiddle, revisionShortSha: 'ccccccc',
+      revisionUrl: commitMiddle.url, items: [],
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = 'https://github.com/acme/app/pull/7'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelectorAll('.trace-open')).toHaveLength(2))
+
+    input.value = 'https://github.com/other/repo/pull/99'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.trace-open')!.click()
+    await settleVue()
+    host.querySelector<HTMLButtonElement>('[aria-label="Focus candidate PR revision ccccccc"]')!.click()
+    await vi.waitFor(() => expect(fetchRevisionChecks).toHaveBeenCalled())
+
+    expect(fetchRevisionChecks).toHaveBeenCalledWith('https://github.com/acme/app/pull/7', shaMiddle)
   })
 })
