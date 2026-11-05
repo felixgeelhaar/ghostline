@@ -51,6 +51,11 @@ titles, categories, lifecycle labels, severity/action labels, and descriptions
 are extracted from the published review. A comment without a commit marker is
 shown as unmarked context, not assigned to the current PR head.
 
+When a comment marks a revision present in the imported PR, its card can also
+list later commits from GitHub's PR commit list for inspection. They are later
+revisions only; their position does not show that they are repair attempts or
+that they address the review.
+
 When the same finding title appears in separate Qodo comments and both adjacent
 comments explicitly mark revisions that appear in the imported pull request's
 commit list, Ghostline lists the commits between those revision anchors as
