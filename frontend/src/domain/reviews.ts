@@ -16,7 +16,7 @@ const QodoReviewSchema = z.object({
   provider: z.literal('Qodo'),
   sourceType: z.literal('github_issue_comment'),
   sourceAuthor: z.string().min(1),
-  kind: z.enum(['summary', 'findings']),
+  kind: z.enum(['summary', 'findings', 'no_open_findings']),
   summary: z.string().optional(),
   findings: z.array(QodoFindingSchema),
   commitSha: fullSha.optional(),

@@ -12,9 +12,10 @@ function date(value: string) {
 </script>
 
 <template>
-  <div class="review-meta"><strong>{{ review.kind === 'findings' ? 'Code review findings' : 'Pull request summary' }}</strong><time>{{ date(review.createdAt) }}</time></div>
+  <div class="review-meta"><strong>{{ review.kind === 'findings' ? 'Code review findings' : review.kind === 'no_open_findings' ? 'No open findings reported' : 'Pull request summary' }}</strong><time>{{ date(review.createdAt) }}</time></div>
   <p class="review-provenance">OBSERVED · {{ review.provider }} via GitHub issue comment #{{ review.id }} · {{ review.sourceAuthor }}</p>
   <p v-if="review.summary" class="review-summary">{{ review.summary }}</p>
+  <p v-if="review.kind === 'no_open_findings'" class="checks-note" role="status"><strong>Qodo reported no open findings in this comment.</strong> This records the review outcome for the linked revision; it is not an independent correctness guarantee.</p>
   <p v-if="review.kind === 'findings' && review.findings.length === 0" class="checks-note warn" role="status"><strong>Finding details unavailable.</strong> Ghostline recognized the Qodo review comment but could not extract its findings. Open the source comment for the complete review.</p>
   <ul v-if="review.findings.length" class="finding-list"><li v-for="finding in review.findings" :key="finding.id">
     <div class="finding-heading"><strong>{{ finding.title }}</strong><span v-if="finding.severity">{{ finding.severity }}</span></div>
