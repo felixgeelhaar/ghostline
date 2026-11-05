@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { QodoReviewSetSchema, findRecurringFindings, laterRevisionsToInspect, qodoReviewState, reviewCountSummary, reviewsForRevision } from './reviews'
+import { QodoReviewSetSchema, findRecurringFindings, laterRevisionsToInspect, noOpenFindingsNote, qodoReviewState, reviewCountSummary, reviewsForRevision } from './reviews'
 
 const sha = 'a'.repeat(40)
 
@@ -33,6 +33,23 @@ describe('Qodo review evidence', () => {
     expect(qodoReviewState(QodoReviewSetSchema.parse({ availability: 'unavailable', reason: 'not loaded', unrecognizedCommentCount: 0, items: [] }))).toBe('unavailable')
     expect(qodoReviewState(QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 1, items: [] }))).toBe('unrecognized')
     expect(qodoReviewState(QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 1, items: [{ id: 1, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'summary', findings: [], createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-1' }] }))).toBe('partial')
+  })
+
+  it('preserves an explicit no-open-findings review as distinct evidence', () => {
+    const reviews = QodoReviewSetSchema.parse({
+      availability: 'available',
+      unrecognizedCommentCount: 0,
+      items: [{ id: 26, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'no_open_findings', findings: [], commitSha: sha, commitUrl: `https://github.com/acme/app/commit/${sha}`, createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-26' }],
+    })
+
+    expect(qodoReviewState(reviews)).toBe('recorded')
+    expect(findRecurringFindings(reviews.items)).toEqual([])
+    expect(noOpenFindingsNote(reviews.items[0]!)).toContain('linked revision')
+  })
+
+  it('keeps unmarked clean-review feedback scoped to context only', () => {
+    expect(noOpenFindingsNote({ commitSha: undefined })).toContain('no revision marker')
+    expect(noOpenFindingsNote({ commitSha: undefined })).toContain('does not establish the state of the current revision')
   })
 
   it('rejects malformed commit references', () => {

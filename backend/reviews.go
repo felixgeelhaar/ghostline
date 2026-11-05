@@ -62,9 +62,10 @@ type githubIssueComment struct {
 }
 
 var (
-	qodoCommitMarker       = regexp.MustCompile(`(?i)<!--\s*(https://github\.com/[^\s]+/commit/([0-9a-f]{40}))\s*-->`)
-	qodoFindingOrdinal     = regexp.MustCompile(`^\s*\d+\.\s*`)
-	qodoFindingHeadingText = regexp.MustCompile(`^\s*\d+\.`)
+	qodoCommitMarker        = regexp.MustCompile(`(?i)<!--\s*(https://github\.com/[^\s]+/commit/([0-9a-f]{40}))\s*-->`)
+	qodoFindingOrdinal      = regexp.MustCompile(`^\s*\d+\.\s*`)
+	qodoFindingHeadingText  = regexp.MustCompile(`^\s*\d+\.`)
+	qodoNonzeroFindingGroup = regexp.MustCompile(`(?i)^view\s+.+\(\s*[1-9]\d*\s*\)$`)
 )
 
 func parseQodoReviews(comments []githubIssueComment) ([]qodoReview, int) {
@@ -97,8 +98,12 @@ func parseQodoReviews(comments []githubIssueComment) ([]qodoReview, int) {
 			review.Kind = "summary"
 			review.Summary = qodoSummaryText(heading)
 		case "Code Review by Qodo":
-			review.Kind = "findings"
 			review.Findings = qodoFindings(doc, comment.ID, comment.HTMLURL)
+			if len(review.Findings) == 0 && qodoReportsNoOpenFindings(nodeText(doc)) && !qodoHasNonzeroFindingGroup(doc) {
+				review.Kind = "no_open_findings"
+			} else {
+				review.Kind = "findings"
+			}
 		default:
 			unrecognized++
 			continue
@@ -111,6 +116,17 @@ func parseQodoReviews(comments []githubIssueComment) ([]qodoReview, int) {
 		reviews = append(reviews, review)
 	}
 	return reviews, unrecognized
+}
+
+func qodoHasNonzeroFindingGroup(root *html.Node) bool {
+	return findNode(root, func(node *html.Node) bool {
+		return node.Type == html.ElementNode && node.Data == "summary" && qodoNonzeroFindingGroup.MatchString(nodeText(node))
+	}) != nil
+}
+
+func qodoReportsNoOpenFindings(value string) bool {
+	text := strings.ToLower(cleanQodoText(value))
+	return strings.Contains(text, "no open findings for this group") || strings.Contains(text, "great, no issues found")
 }
 
 func isQodoReviewer(login string) bool {

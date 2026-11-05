@@ -16,7 +16,7 @@ const QodoReviewSchema = z.object({
   provider: z.literal('Qodo'),
   sourceType: z.literal('github_issue_comment'),
   sourceAuthor: z.string().min(1),
-  kind: z.enum(['summary', 'findings']),
+  kind: z.enum(['summary', 'findings', 'no_open_findings']),
   summary: z.string().optional(),
   findings: z.array(QodoFindingSchema),
   commitSha: fullSha.optional(),
@@ -63,6 +63,11 @@ export type RecurringFinding = {
   id: string
   title: string
   occurrences: FindingOccurrence[]
+}
+
+export function noOpenFindingsNote(review: Pick<QodoReview, 'commitSha'>): string {
+  if (!review.commitSha) return 'This comment has no revision marker. Treat it as context only; it does not establish the state of the current revision.'
+  return 'This records the review outcome for the linked revision; it is not an independent correctness guarantee.'
 }
 
 export type RevisionReviewSelection = {

@@ -40,6 +40,24 @@ func TestParseQodoReviewComments(t *testing.T) {
 	}
 }
 
+func TestParseQodoCleanReviewAsNoOpenFindings(t *testing.T) {
+	comments := []githubIssueComment{{ID: 26, User: githubUser{Login: "qodo-code-review[bot]"}, HTMLURL: "https://github.com/acme/app/pull/7#issuecomment-26", Body: `<h3>Code Review by Qodo</h3><p>Nice, no open findings for this group</p><!-- https://github.com/acme/app/commit/` + headSHA + ` -->`}}
+
+	got, unrecognized := parseQodoReviews(comments)
+	if unrecognized != 0 || len(got) != 1 || got[0].Kind != "no_open_findings" || got[0].CommitSHA != headSHA || len(got[0].Findings) != 0 {
+		t.Fatalf("clean review was not preserved as source-backed no-open-findings evidence: reviews=%+v unrecognized=%d", got, unrecognized)
+	}
+}
+
+func TestParseQodoDoesNotMarkUnreadableFindingGroupAsClean(t *testing.T) {
+	comments := []githubIssueComment{{ID: 27, User: githubUser{Login: "qodo-code-review[bot]"}, HTMLURL: "https://github.com/acme/app/pull/7#issuecomment-27", Body: `<h3>Code Review by Qodo</h3><p>Nice, no open findings for this group</p><details><summary>View medium (1)</summary><details><summary>Concern: stale result details</summary></details></details>`}}
+
+	got, unrecognized := parseQodoReviews(comments)
+	if unrecognized != 0 || len(got) != 1 || got[0].Kind != "findings" {
+		t.Fatalf("a non-empty, unparsed finding group must not look clean: reviews=%+v unrecognized=%d", got, unrecognized)
+	}
+}
+
 func TestQodoSummaryStopsAtDividerSourceEvenWithoutDescriptiveAlt(t *testing.T) {
 	comments := []githubIssueComment{{ID: 25, User: githubUser{Login: "qodo-free-for-open-source-projects[bot]"}, Body: `<h3>PR Summary by Qodo</h3>Keep checks revision-specific.<img src="https://www.qodo.ai/light-grey-line.svg" alt="divider"><code>Post-divider category</code>`}}
 	got, _ := parseQodoReviews(comments)
