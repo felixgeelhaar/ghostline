@@ -51,7 +51,9 @@ function findingTrace(id: string, title: string): FindingTrace {
     id, title, occurrences: [occurrence(301, shaA), occurrence(302, shaB)],
     revisionSpans: buildRevisionSpans([occurrence(301, shaA), occurrence(302, shaB)], [commitA, commitMiddle, commitB]),
     summary: { commentCount: 2, markedRevisionCount: 2, distinctRevisionCount: 2, unmarkedCommentCount: 0, focusableRevisionCount: 2, candidateRevisionCount: 1,
-      evidence: `The normalized title ${title} appears in 2 comments.`, revisionCoverage: '2 comments across 2 focusable PR revisions.', nextStep: `Inspect ${title} evidence.` },
+      evidence: `The normalized title ${title} appears in 2 comments.`, revisionCoverage: '2 comments across 2 focusable PR revisions.',
+      revisionSignal: { label: 'DISTINCT PR REVISIONS', detail: 'The same title appears on 2 revisions; this does not establish a repair attempt.' },
+      nextStep: `Inspect ${title} evidence.` },
   }
 }
 
@@ -136,6 +138,7 @@ describe('Deep Trace browser interactions', () => {
     mounted = createApp(Parent)
     mounted.mount(host)
 
+    expect(host.querySelector('.revision-signal')?.textContent).toContain('DISTINCT PR REVISIONS')
     host.querySelector<HTMLButtonElement>('.trace-copy')!.click()
     await settleVue()
     expect(host.querySelector('[role="status"]')?.textContent).toContain('Guidance copied')

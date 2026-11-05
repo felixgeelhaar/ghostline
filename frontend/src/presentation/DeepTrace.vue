@@ -41,6 +41,11 @@ async function copyGuidance(trace: FindingTrace) {
 
     <section class="intervention-summary" aria-labelledby="intervention-title">
       <h5 id="intervention-title">INTERVENTION SUMMARY</h5>
+      <div class="revision-signal" aria-label="Revision signal">
+        <span>REVISION SIGNAL</span>
+        <strong>{{ trace.summary.revisionSignal.label }}</strong>
+        <p>{{ trace.summary.revisionSignal.detail }}</p>
+      </div>
       <p><strong>{{ trace.summary.evidence }}</strong></p>
       <p>{{ trace.summary.revisionCoverage }}</p>
       <p>{{ trace.summary.nextStep }}</p>
