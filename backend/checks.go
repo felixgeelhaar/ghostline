@@ -23,15 +23,15 @@ var (
 	errRevisionMismatch = errors.New("GitHub returned checks for a different revision")
 )
 
-// revisionChecks holds the checks GitHub reports for exactly one commit: the
-// pull request's head at import time. Checks from other commits are never mixed in.
+// revisionChecks holds only the checks GitHub reports for the requested commit.
+// The revision may be the PR head or a focused historical commit.
 type revisionChecks struct {
-	HeadSHA      string  `json:"headSha"`
-	HeadShortSHA string  `json:"headShortSha"`
-	HeadURL      string  `json:"headUrl"`
-	Availability string  `json:"availability"`
-	Reason       string  `json:"reason,omitempty"`
-	Items        []check `json:"items"`
+	RevisionSHA      string  `json:"revisionSha"`
+	RevisionShortSHA string  `json:"revisionShortSha"`
+	RevisionURL      string  `json:"revisionUrl"`
+	Availability     string  `json:"availability"`
+	Reason           string  `json:"reason,omitempty"`
+	Items            []check `json:"items"`
 }
 
 type check struct {
@@ -68,14 +68,14 @@ type githubCombinedStatus struct {
 }
 
 func fetchRevisionChecks(ctx context.Context, gh *githubClient, owner, repo, sha string) revisionChecks {
-	result := revisionChecks{HeadSHA: sha, Availability: checksUnavailable, Items: []check{}}
+	result := revisionChecks{RevisionSHA: sha, Availability: checksUnavailable, Items: []check{}}
 	if !fullSHA.MatchString(sha) {
-		result.HeadSHA = ""
-		result.Reason = "GitHub did not identify the pull request's head commit, so its checks cannot be shown."
+		result.RevisionSHA = ""
+		result.Reason = "GitHub did not identify this revision, so its checks cannot be shown."
 		return result
 	}
-	result.HeadShortSHA = sha[:7]
-	result.HeadURL = fmt.Sprintf("https://github.com/%s/%s/commit/%s", url.PathEscape(owner), url.PathEscape(repo), sha)
+	result.RevisionShortSHA = sha[:7]
+	result.RevisionURL = fmt.Sprintf("https://github.com/%s/%s/commit/%s", url.PathEscape(owner), url.PathEscape(repo), sha)
 	commitPath := fmt.Sprintf("/repos/%s/%s/commits/%s", url.PathEscape(owner), url.PathEscape(repo), sha)
 
 	runs, err := fetchCheckRuns(ctx, gh, commitPath, sha)

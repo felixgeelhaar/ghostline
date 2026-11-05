@@ -156,6 +156,27 @@ func (a api) importPR(c *gin.Context) {
 	}
 }
 
+func (a api) loadRevisionChecks(c *gin.Context) {
+	var body struct {
+		URL string `json:"url"`
+		SHA string `json:"sha"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Provide a GitHub pull request URL and a full commit SHA."})
+		return
+	}
+	owner, repo, _, err := parsePRURL(body.URL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !fullSHA.MatchString(body.SHA) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The revision must be a full 40-character commit SHA."})
+		return
+	}
+	c.JSON(http.StatusOK, fetchRevisionChecks(c.Request.Context(), a.gh, owner, repo, body.SHA))
+}
+
 func respondGitHubError(c *gin.Context, err error) {
 	var statusErr statusError
 	switch {
@@ -174,6 +195,7 @@ func newRouter(gh *githubClient) *gin.Engine {
 	r := gin.Default()
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	r.POST("/api/import", api{gh: gh}.importPR)
+	r.POST("/api/checks", api{gh: gh}.loadRevisionChecks)
 	return r
 }
 

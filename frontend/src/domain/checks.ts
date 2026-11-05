@@ -9,10 +9,10 @@ export const CheckSchema = z.object({
 })
 export type Check = z.infer<typeof CheckSchema>
 
-// Checks always describe one commit: the pull request head GitHub reported at import time.
+// Checks always describe one exact commit reported by GitHub.
 export const RevisionChecksSchema = z.discriminatedUnion('availability', [
-  z.object({ availability: z.literal('available'), headSha: fullSha, headShortSha: z.string(), headUrl: webURL, items: z.array(CheckSchema) }),
-  z.object({ availability: z.literal('unavailable'), reason: z.string().min(1), headSha: z.union([fullSha, z.literal('')]), headShortSha: z.string(), headUrl: z.union([webURL, z.literal('')]), items: z.array(CheckSchema).length(0) }),
+  z.object({ availability: z.literal('available'), revisionSha: fullSha, revisionShortSha: z.string(), revisionUrl: webURL, items: z.array(CheckSchema) }),
+  z.object({ availability: z.literal('unavailable'), reason: z.string().min(1), revisionSha: z.union([fullSha, z.literal('')]), revisionShortSha: z.string(), revisionUrl: z.union([webURL, z.literal('')]), items: z.array(CheckSchema).length(0) }),
 ])
 export type RevisionChecks = z.infer<typeof RevisionChecksSchema>
 
@@ -28,7 +28,7 @@ export function checkOutcome(check: Check): { label: string; tone: CheckTone } {
 }
 
 export function isHeadCommit(checks: RevisionChecks, sha: string): boolean {
-  return checks.headSha !== '' && checks.headSha === sha
+  return checks.revisionSha !== '' && checks.revisionSha === sha
 }
 
 export function headCommitLabel(checks: RevisionChecks, sha: string): 'HEAD' | 'HEAD · CHECKED' | undefined {

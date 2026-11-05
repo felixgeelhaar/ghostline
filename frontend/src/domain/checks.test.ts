@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { checkOutcome, headCommitLabel, isHeadCommit, orderChecks, RevisionChecksSchema, summarizeChecks, type Check, type RevisionChecks } from './checks'
 
 const head = 'a'.repeat(40)
-const checks: RevisionChecks = { headSha: head, headShortSha: 'aaaaaaa', headUrl: `https://github.com/acme/app/commit/${head}`, availability: 'available', items: [] }
+const checks: RevisionChecks = { revisionSha: head, revisionShortSha: 'aaaaaaa', revisionUrl: `https://github.com/acme/app/commit/${head}`, availability: 'available', items: [] }
 
 describe('checkOutcome', () => {
   it('uses the conclusion of a completed check', () => expect(checkOutcome({ name: 'go', kind: 'check_run', status: 'completed', conclusion: 'success' })).toEqual({ label: 'success', tone: 'pass' }))
@@ -17,15 +17,15 @@ describe('isHeadCommit', () => {
   it('matches only the commit the checks describe', () => {
     expect(isHeadCommit(checks, head)).toBe(true)
     expect(isHeadCommit(checks, 'b'.repeat(40))).toBe(false)
-    expect(isHeadCommit({ ...checks, headSha: '' }, '')).toBe(false)
+    expect(isHeadCommit({ ...checks, revisionSha: '' }, '')).toBe(false)
   })
 })
 
 describe('RevisionChecksSchema', () => {
-  it('rejects checks that are not tied to a full commit SHA', () => expect(RevisionChecksSchema.safeParse({ ...checks, headSha: 'abc' }).success).toBe(false))
+  it('rejects checks that are not tied to a full commit SHA', () => expect(RevisionChecksSchema.safeParse({ ...checks, revisionSha: 'abc' }).success).toBe(false))
   it('rejects unavailable checks without an explanation', () => expect(RevisionChecksSchema.safeParse({ ...checks, availability: 'unavailable' }).success).toBe(false))
   it('rejects non-web check links', () => expect(RevisionChecksSchema.safeParse({ ...checks, items: [{ name: 'x', kind: 'commit_status', status: 'pending', url: 'javascript:alert(1)' }] }).success).toBe(false))
-  it('accepts unavailable checks without a head revision when explained', () => expect(RevisionChecksSchema.safeParse({ headSha: '', headShortSha: '', headUrl: '', availability: 'unavailable', reason: 'No head commit.', items: [] }).success).toBe(true))
+  it('accepts unavailable checks without a revision when explained', () => expect(RevisionChecksSchema.safeParse({ revisionSha: '', revisionShortSha: '', revisionUrl: '', availability: 'unavailable', reason: 'No revision.', items: [] }).success).toBe(true))
 })
 
 const run = (name: string, status: string, conclusion?: string): Check => ({ name, kind: 'check_run', status, conclusion })

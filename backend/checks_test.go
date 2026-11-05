@@ -149,7 +149,7 @@ func TestImportReturnsChecksForHeadCommit(t *testing.T) {
 		t.Fatalf("status = %d", code)
 	}
 	got := pr.Checks
-	if got.HeadSHA != headSHA || got.HeadShortSHA != "aaaaaaa" || got.HeadURL != "https://github.com/acme/app/commit/"+headSHA {
+	if got.RevisionSHA != headSHA || got.RevisionShortSHA != "aaaaaaa" || got.RevisionURL != "https://github.com/acme/app/commit/"+headSHA {
 		t.Fatalf("unexpected head revision: %+v", got)
 	}
 	if got.Availability != checksAvailable || got.Reason != "" {
@@ -171,6 +171,55 @@ func TestImportReturnsChecksForHeadCommit(t *testing.T) {
 	}
 }
 
+func TestFocusedRevisionChecksEndpointFetchesRequestedSHA(t *testing.T) {
+	requestedSHA := olderSHA
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/app/commits/" + requestedSHA + "/check-runs":
+			_, _ = w.Write([]byte(checkRunsJSON(checkRun("historical-build", requestedSHA, "completed", "success"))))
+		case "/repos/acme/app/commits/" + requestedSHA + "/status":
+			_, _ = w.Write([]byte(`{"sha":"` + requestedSHA + `","total_count":1,"statuses":[{"context":"legacy-ci","state":"failure","target_url":"https://ci.example/run/7"}]}`))
+		default:
+			t.Errorf("unexpected GitHub request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	gin.SetMode(gin.TestMode)
+	router := newRouter(&githubClient{baseURL: server.URL, http: server.Client()})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/checks", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7","sha":"`+requestedSHA+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	var got revisionChecks
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode checks: %v", err)
+	}
+	if got.RevisionSHA != requestedSHA || got.Availability != checksAvailable || len(got.Items) != 2 {
+		t.Fatalf("checks = %+v, want results for requested revision", got)
+	}
+	if got.Items[0].Name != "historical-build" || got.Items[1].Name != "legacy-ci" {
+		t.Fatalf("checks = %+v, want checks from requested revision", got.Items)
+	}
+}
+
+func TestFocusedRevisionChecksEndpointRejectsInvalidSHA(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := newRouter(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/checks", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7","sha":"`+"bad"+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+}
+
 func TestImportReportsMissingAndUnavailableChecks(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -185,7 +234,7 @@ func TestImportReportsMissingAndUnavailableChecks(t *testing.T) {
 		{"status endpoint down", fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(), statusCode: http.StatusBadGateway}, checksUnavailable, "could not be loaded"},
 		{"check run for older commit", fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(checkRun("go", olderSHA, "completed", "success")), statuses: noStatuses}, checksUnavailable, "different commit"},
 		{"status for older commit", fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(), statuses: `{"sha":"` + olderSHA + `","total_count":0,"statuses":[]}`}, checksUnavailable, "different commit"},
-		{"malformed head", fakeGitHub{headSHA: "not-a-sha"}, checksUnavailable, "head commit"},
+		{"malformed head", fakeGitHub{headSHA: "not-a-sha"}, checksUnavailable, "revision"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -246,8 +295,8 @@ func TestImportRetriesWhenPullRequestHeadChanges(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("status = %d", code)
 	}
-	if pr.Checks.HeadSHA != newHeadSHA || pr.Commits[len(pr.Commits)-1].SHA != newHeadSHA {
-		t.Fatalf("checks and timeline must describe the latest head: checks=%s commits=%+v", pr.Checks.HeadSHA, pr.Commits)
+	if pr.Checks.RevisionSHA != newHeadSHA || pr.Commits[len(pr.Commits)-1].SHA != newHeadSHA {
+		t.Fatalf("checks and timeline must describe the latest head: checks=%s commits=%+v", pr.Checks.RevisionSHA, pr.Commits)
 	}
 	if prReads != 4 || commitReads != 2 {
 		t.Fatalf("expected a single retry after head changed; PR reads=%d commit reads=%d", prReads, commitReads)
