@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "skills": {
+    "qodo-codebase-wisdom": {
+      "source": "qodo-ai/qodo-skills",
+      "ref": "9af23a9cb380d54d3d4fee667a9e0e4c9ce809cb",
+      "sourceType": "github",
+      "skillPath": "skills/qodo-codebase-wisdom/SKILL.md",
+      "computedHash": "88b08b0af07a8dac71a005fd3682f2cd21bbd5713507a24f9fe31e9898b7d2b4"
+    },
+    "qodo-get-rules": {
+      "source": "qodo-ai/qodo-skills",
+      "ref": "9af23a9cb380d54d3d4fee667a9e0e4c9ce809cb",
+      "sourceType": "github",
+      "skillPath": "skills/qodo-get-rules/SKILL.md",
+      "computedHash": "b29723a57aa2e4c77b7d625857feb7523c6b7c993f3e66b2e3b8a363adf1225a"
+    },
+    "qodo-manage-standards": {
+      "source": "qodo-ai/qodo-skills",
+      "ref": "9af23a9cb380d54d3d4fee667a9e0e4c9ce809cb",
+      "sourceType": "github",
+      "skillPath": "skills/qodo-manage-standards/SKILL.md",
+      "computedHash": "f1524bc679345585ef1cb0527c10b852b6a7b7be217aa0adaa7daa1bbd82df93"
+    },
+    "qodo-review": {
+      "source": "qodo-ai/qodo-skills",
+      "ref": "9af23a9cb380d54d3d4fee667a9e0e4c9ce809cb",
+      "sourceType": "github",
+      "skillPath": "skills/qodo-review/SKILL.md",
+      "computedHash": "fb60abb05fb311a1b61249f229e74cbc6fb4776b9897ef322ae0721aa67267c0"
+    },
+    "qodo-review-notes": {
+      "source": "qodo-ai/qodo-skills",
+      "ref": "9af23a9cb380d54d3d4fee667a9e0e4c9ce809cb",
+      "sourceType": "github",
+      "skillPath": "skills/qodo-review-notes/SKILL.md",
+      "computedHash": "9e6d58230d54b4eaccb1f6bdb8bf2521bcd88a2f347ca309978a2bab28b77441"
+    },
+    "qodo-review-resolver": {
+      "source": "qodo-ai/qodo-skills",
+      "ref": "9af23a9cb380d54d3d4fee667a9e0e4c9ce809cb",
+      "sourceType": "github",
+      "skillPath": "skills/qodo-review-resolver/SKILL.md",
+      "computedHash": "d8cdfeafc4f35461ff805fe95648c7ad01310a2f2afaadebb4a540dddaf3bd26"
+    },
+    "qodo-setup": {
+      "source": "qodo-ai/qodo-skills",
+      "ref": "9af23a9cb380d54d3d4fee667a9e0e4c9ce809cb",
+      "sourceType": "github",
+      "skillPath": "skills/qodo-setup/SKILL.md",
+      "computedHash": "e5efbad7bf5421a787548a0414627e68db669afc5f512c5997271514681daa25"
+    }
+  }
+}
