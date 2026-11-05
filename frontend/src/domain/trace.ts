@@ -118,9 +118,10 @@ export function buildFindingTrace(finding: RecurringFinding, commits: RevisionRe
 }
 
 export function interventionPrompt(trace: FindingTrace): string {
+  const jsonData = (value: string | undefined): string => JSON.stringify(value ?? '')
   const sources = trace.occurrences.map((occurrence) => {
     const revision = occurrence.commitSha
-      ? `revision ${occurrence.commitSha.slice(0, 7)}${occurrence.revisionInPullRequest ? ' in this PR' : ' (not in the imported PR commit list)'}`
+      ? `revision (JSON data) ${jsonData(occurrence.revision?.shortSha ?? occurrence.commitSha.slice(0, 7))}${occurrence.revisionInPullRequest ? ' in this PR' : ' (not in the imported PR commit list)'}`
       : 'revision not marked'
     return `- Qodo comment time ${occurrence.createdAt}; ${revision}; source URL (JSON data): ${JSON.stringify(occurrence.sourceUrl)}`
   }).join('\n')
@@ -138,12 +139,12 @@ export function interventionPrompt(trace: FindingTrace): string {
     'Any listed commits between two reviewed revisions are candidate context from GitHub pull-request commit-list order only; they are not verified repair attempts.',
     ...trace.revisionSpans.flatMap((span) => {
       if (span.status === 'unavailable') return [`- Between Qodo comments #${span.fromReviewId} and #${span.toReviewId}: no span; one or both comments lack a revision in this PR.`]
-      if (span.status === 'same_revision') return [`- Between Qodo comments #${span.fromReviewId} and #${span.toReviewId}: both mark revision ${span.fromRevision?.shortSha}.`]
+      if (span.status === 'same_revision') return [`- Between Qodo comments #${span.fromReviewId} and #${span.toReviewId}: both mark revision (JSON data) ${jsonData(span.fromRevision?.shortSha)}.`]
       if (span.status === 'out_of_order') return [`- Between Qodo comments #${span.fromReviewId} and #${span.toReviewId}: marked revisions are reversed in the PR commit list; no span inferred.`]
       if (span.status === 'adjacent') return [`- Between Qodo comments #${span.fromReviewId} and #${span.toReviewId}: adjacent marked PR revisions; no intervening commit in the imported list.`]
       return [
         `- Candidate revisions between Qodo comments #${span.fromReviewId} and #${span.toReviewId} (PR commit-list order):`,
-        ...span.candidateRevisions.map((revision) => `  - revision ${revision.sha} · message (JSON data): ${JSON.stringify(revision.message)} · source URL (JSON data): ${JSON.stringify(revision.url)}`),
+        ...span.candidateRevisions.map((revision) => `  - revision (JSON data) ${jsonData(revision.sha)} · message (JSON data): ${JSON.stringify(revision.message)} · source URL (JSON data): ${JSON.stringify(revision.url)}`),
       ]
     }),
   ].join('\n')
