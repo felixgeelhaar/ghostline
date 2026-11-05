@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { QodoReviewSetSchema, findRecurringFindings, qodoReviewState, reviewsForRevision } from './reviews'
+import { QodoReviewSetSchema, findRecurringFindings, laterRevisionsToInspect, qodoReviewState, reviewsForRevision } from './reviews'
 
 const sha = 'a'.repeat(40)
 
@@ -7,10 +7,14 @@ describe('Qodo review evidence', () => {
   it('accepts source-linked findings tied to the reviewed commit', () => {
     const reviews = QodoReviewSetSchema.parse({
       availability: 'available',
+      unrecognizedCommentCount: 0,
       items: [{
         id: 17,
+        provider: 'Qodo',
+        sourceType: 'github_issue_comment',
+        sourceAuthor: 'qodo-code-review[bot]',
         kind: 'findings',
-        findingTitles: ['Reject stale checks'],
+        findings: [{ id: '17:1', title: 'Reject stale checks', category: '🐞 Bug', lifecycle: '⭐ New', severity: 'Medium', actionLevel: 'Remediation recommended', description: 'Checks from the previous revision can appear current.', sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-17' }],
         commitSha: sha,
         commitUrl: `https://github.com/acme/app/commit/${sha}`,
         createdAt: '2026-11-04T09:00:00Z',
@@ -18,25 +22,30 @@ describe('Qodo review evidence', () => {
       }],
     })
     expect(reviews.items[0]?.commitSha).toBe(sha)
+    expect(reviews.items[0]?.findings[0]?.description).toContain('previous revision')
+    expect(reviews.items[0]?.sourceType).toBe('github_issue_comment')
     expect(qodoReviewState(reviews)).toBe('recorded')
   })
 
   it('distinguishes no Qodo review from unavailable GitHub evidence', () => {
-    expect(qodoReviewState(QodoReviewSetSchema.parse({ availability: 'available', items: [] }))).toBe('none')
-    expect(qodoReviewState(QodoReviewSetSchema.parse({ availability: 'unavailable', reason: 'not loaded', items: [] }))).toBe('unavailable')
+    expect(qodoReviewState(QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 0, items: [] }))).toBe('none')
+    expect(qodoReviewState(QodoReviewSetSchema.parse({ availability: 'unavailable', reason: 'not loaded', unrecognizedCommentCount: 0, items: [] }))).toBe('unavailable')
+    expect(qodoReviewState(QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 1, items: [] }))).toBe('unrecognized')
+    expect(qodoReviewState(QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 1, items: [{ id: 1, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'summary', findings: [], createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-1' }] }))).toBe('partial')
   })
 
   it('rejects malformed commit references', () => {
-    expect(() => QodoReviewSetSchema.parse({ availability: 'available', items: [{ id: 1, kind: 'findings', findingTitles: [], commitSha: 'bad', commitUrl: 'https://github.com/acme/app/commit/bad', createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-1' }] })).toThrow()
+    expect(() => QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 0, items: [{ id: 1, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [], commitSha: 'bad', commitUrl: 'https://github.com/acme/app/commit/bad', createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-1' }] })).toThrow()
   })
 
   it('only reports exact findings repeated across distinct Qodo comments with source revisions', () => {
     const reviews = QodoReviewSetSchema.parse({
       availability: 'available',
+      unrecognizedCommentCount: 0,
       items: [
-        { id: 1, kind: 'findings', findingTitles: ['Reject stale checks', 'Reject stale checks'], commitSha: sha, commitUrl: `https://github.com/acme/app/commit/${sha}`, createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-1' },
-        { id: 2, kind: 'summary', findingTitles: ['Reject stale checks'], createdAt: '2026-11-04T09:01:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-2' },
-        { id: 3, kind: 'findings', findingTitles: [' reject stale checks '], commitSha: 'b'.repeat(40), commitUrl: `https://github.com/acme/app/commit/${'b'.repeat(40)}`, createdAt: '2026-11-04T09:02:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-3' },
+        { id: 1, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [{ id: '1:1', title: 'Reject stale checks', sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-1' }, { id: '1:2', title: 'Reject stale checks', sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-1' }], commitSha: sha, commitUrl: `https://github.com/acme/app/commit/${sha}`, createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-1' },
+        { id: 2, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'summary', findings: [], createdAt: '2026-11-04T09:01:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-2' },
+        { id: 3, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [{ id: '3:1', title: ' reject stale checks ', sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-3' }], commitSha: 'b'.repeat(40), commitUrl: `https://github.com/acme/app/commit/${'b'.repeat(40)}`, createdAt: '2026-11-04T09:02:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-3' },
       ],
     })
 
@@ -52,16 +61,42 @@ describe('Qodo review evidence', () => {
   it('focuses Qodo evidence on an exact revision and keeps unmarked comments separate', () => {
     const reviews = QodoReviewSetSchema.parse({
       availability: 'available',
+      unrecognizedCommentCount: 0,
       items: [
-        { id: 1, kind: 'findings', findingTitles: ['Current finding'], commitSha: sha, commitUrl: `https://github.com/acme/app/commit/${sha}`, createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-1' },
-        { id: 2, kind: 'summary', findingTitles: [], commitSha: 'b'.repeat(40), commitUrl: `https://github.com/acme/app/commit/${'b'.repeat(40)}`, createdAt: '2026-11-04T09:01:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-2' },
-        { id: 3, kind: 'summary', findingTitles: [], createdAt: '2026-11-04T09:02:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-3' },
+        { id: 1, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [{ id: '1:1', title: 'Current finding', sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-1' }], commitSha: sha, commitUrl: `https://github.com/acme/app/commit/${sha}`, createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-1' },
+        { id: 2, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'summary', findings: [], commitSha: 'b'.repeat(40), commitUrl: `https://github.com/acme/app/commit/${'b'.repeat(40)}`, createdAt: '2026-11-04T09:01:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-2' },
+        { id: 3, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'summary', findings: [], createdAt: '2026-11-04T09:02:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-3' },
       ],
     }).items
 
     const selected = reviewsForRevision(reviews, sha)
     expect(selected.matched.map((review) => review.id)).toEqual([1])
     expect(selected.unmarked.map((review) => review.id)).toEqual([3])
-    expect(reviewsForRevision(reviews).matched).toEqual(reviews)
+    const fullHistory = reviewsForRevision(reviews)
+    expect(fullHistory.matched.map((review) => review.id)).toEqual([1, 2])
+    expect(fullHistory.unmarked.map((review) => review.id)).toEqual([3])
+  })
+
+  it('offers later PR revisions as unconfirmed follow-up context only', () => {
+    const review = {
+      id: 17,
+      provider: 'Qodo' as const,
+      sourceType: 'github_issue_comment' as const,
+      sourceAuthor: 'qodo-code-review[bot]',
+      kind: 'findings' as const,
+      findings: [],
+      commitSha: sha,
+      commitUrl: `https://github.com/acme/app/commit/${sha}`,
+      createdAt: '2026-11-04T09:00:00Z',
+      url: 'https://github.com/acme/app/pull/7#issuecomment-17',
+    }
+    const commits = [
+      { sha, shortSha: 'aaaaaaa', message: 'Review target', author: 'A', committedAt: '2026-11-04T08:00:00Z', url: `https://github.com/acme/app/commit/${sha}` },
+      { sha: 'b'.repeat(40), shortSha: 'bbbbbbb', message: 'Possible follow-up', author: 'A', committedAt: '2026-11-04T10:00:00Z', url: `https://github.com/acme/app/commit/${'b'.repeat(40)}` },
+    ]
+
+    expect(laterRevisionsToInspect(review, commits)).toEqual([{ ...commits[1], relationBasis: 'github_pr_commit_order' }])
+    expect(laterRevisionsToInspect({ ...review, commitSha: undefined }, commits)).toEqual([])
+    expect(laterRevisionsToInspect({ ...review, commitSha: 'c'.repeat(40) }, commits)).toEqual([])
   })
 })

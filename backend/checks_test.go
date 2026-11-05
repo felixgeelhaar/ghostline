@@ -83,11 +83,11 @@ func TestImportIncludesQodoReviewEvidence(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("status = %d", code)
 	}
-	if pr.Reviews.Availability != reviewsAvailable || len(pr.Reviews.Items) != 1 {
+	if pr.Reviews.Availability != reviewsAvailable || len(pr.Reviews.Items) != 1 || pr.Reviews.UnrecognizedCommentCount != 0 {
 		t.Fatalf("Qodo reviews = %+v", pr.Reviews)
 	}
 	review := pr.Reviews.Items[0]
-	if review.Kind != "findings" || review.CommitSHA != headSHA || review.URL != "https://github.com/acme/app/pull/7#issuecomment-17" || len(review.FindingTitles) != 1 || review.FindingTitles[0] != "Reject stale checks" {
+	if review.Provider != "Qodo" || review.SourceType != "github_issue_comment" || review.SourceAuthor != "qodo-code-review[bot]" || review.Kind != "findings" || review.CommitSHA != headSHA || review.URL != "https://github.com/acme/app/pull/7#issuecomment-17" || len(review.Findings) != 1 || review.Findings[0].Title != "Reject stale checks" || review.Findings[0].SourceURL != review.URL {
 		t.Fatalf("unexpected review evidence: %+v", review)
 	}
 }
@@ -99,8 +99,21 @@ func TestImportReportsNoQodoReviewWhenNoCommentsExist(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("status = %d", code)
 	}
-	if pr.Reviews.Availability != reviewsAvailable || pr.Reviews.Items == nil || len(pr.Reviews.Items) != 0 {
+	if pr.Reviews.Availability != reviewsAvailable || pr.Reviews.Items == nil || len(pr.Reviews.Items) != 0 || pr.Reviews.UnrecognizedCommentCount != 0 {
 		t.Fatalf("Qodo review state = %+v, want available empty evidence", pr.Reviews)
+	}
+}
+
+func TestImportDistinguishesUnrecognizedQodoCommentsFromNoReview(t *testing.T) {
+	comments := `[{"id":19,"user":{"login":"qodo-code-review[bot]"},"created_at":"2026-11-04T09:00:00Z","html_url":"https://github.com/acme/app/pull/7#issuecomment-19","body":"Qodo review output with an unfamiliar format"}]`
+	srv := fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(), statuses: noStatuses, qodoComments: comments}.serve(t)
+
+	code, pr := importVia(t, srv)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if pr.Reviews.Availability != reviewsAvailable || len(pr.Reviews.Items) != 0 || pr.Reviews.UnrecognizedCommentCount != 1 {
+		t.Fatalf("Qodo review state = %+v, want one unrecognized Qodo comment", pr.Reviews)
 	}
 }
 

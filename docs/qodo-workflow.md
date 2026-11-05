@@ -42,6 +42,28 @@ Run Ghostline's tests, build, Warden gates, and Nox scan independently. Qodo
 review feedback is not a correctness guarantee, and security findings remain
 owned by Nox.
 
+## Review evidence in Ghostline
+
+For public pull requests, Ghostline reads Qodo's published GitHub issue
+comments. Each imported review preserves the GitHub comment ID, author, source
+URL, comment timestamp, and Qodo's explicit commit marker when present. Finding
+titles, categories, lifecycle labels, severity/action labels, and descriptions
+are extracted from the published review. A comment without a commit marker is
+shown as unmarked context, not assigned to the current PR head.
+
+When a review names a revision that appears in the pull request's commit list,
+Ghostline offers later commits in that list as revisions to inspect. The link is
+derived from PR commit-list order; it does not claim that a later commit
+addresses or repairs a finding. A finding disappearing from a later Qodo review
+is not proof that it was fixed, and a Qodo outcome is not independent
+verification. Inspect the linked comment and revision, then use the relevant
+checks for the exact code revision.
+
+This is a GitHub-comment integration, not a private Qodo findings API. If Qodo
+changes its published comment format or omits evidence, Ghostline should show
+what it can attribute and surface the original source rather than fill in
+missing review details.
+
 ## Features to evaluate in the Qodo workspace
 
 The repository config cannot activate organization or workspace settings.
