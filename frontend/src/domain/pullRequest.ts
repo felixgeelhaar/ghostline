@@ -36,11 +36,16 @@ function matchesGitHubPath(value: string, expectedPath: string): boolean {
   try {
     const url = new URL(value)
     if (url.protocol !== 'https:' || url.hostname !== 'github.com' || url.username || url.password || url.search || url.hash) return false
-    const path = url.pathname.replace(/\/+$/, '').slice(1)
+    const encodedPath = url.pathname.replace(/\/+$/, '')
+    if (/%(?:2f|5c)/i.test(encodedPath)) return false
+    const path = encodedPath.slice(1)
       .split('/')
-      .map((segment) => decodeURIComponent(segment).toLowerCase())
+      .map((segment) => decodeURIComponent(segment))
+    if (path.some((segment) => segment.includes('/') || segment.includes('\\'))) return false
+    const normalizedPath = path
+      .map((segment) => segment.toLowerCase())
       .join('/')
-    return path === expectedPath.toLowerCase()
+    return normalizedPath === expectedPath.toLowerCase()
   } catch {
     return false
   }

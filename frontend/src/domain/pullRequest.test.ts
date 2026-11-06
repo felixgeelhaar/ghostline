@@ -40,6 +40,8 @@ describe('PullRequestSchema source links', () => {
     ['a different repository', { url: 'https://github.com/acme/other/pull/12' }],
     ['a different PR number', { url: 'https://github.com/acme/ghostline/pull/13' }],
     ['a PR URL with a query string', { url: 'https://github.com/acme/ghostline/pull/12?redirect=1' }],
+    ['an encoded slash in the owner', { url: 'https://github.com/acme%2Fghostline/pull/12' }],
+    ['an encoded slash in the repository', { url: 'https://github.com/acme/ghostline%2Fother/pull/12' }],
   ])('rejects a PR URL with %s', (_reason, override) => {
     expect(PullRequestSchema.safeParse({ ...validPullRequest, ...override }).success).toBe(false)
   })
@@ -50,6 +52,11 @@ describe('PullRequestSchema source links', () => {
     ['a different commit SHA', 'https://github.com/acme/ghostline/commit/' + 'b'.repeat(40)],
   ])('rejects a commit URL with %s', (_reason, url) => {
     const candidate = { ...validPullRequest, commits: [{ ...validPullRequest.commits[0], url }] }
+    expect(PullRequestSchema.safeParse(candidate).success).toBe(false)
+  })
+
+  it('rejects an encoded slash inside a commit path segment', () => {
+    const candidate = { ...validPullRequest, commits: [{ ...validPullRequest.commits[0], url: `https://github.com/acme%2Fghostline/commit/${'a'.repeat(40)}` }] }
     expect(PullRequestSchema.safeParse(candidate).success).toBe(false)
   })
 })

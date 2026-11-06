@@ -48,6 +48,15 @@ type githubPR struct {
 	Head      struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
+	Base struct {
+		Repo struct {
+			Name     string `json:"name"`
+			FullName string `json:"full_name"`
+			Owner    struct {
+				Login string `json:"login"`
+			} `json:"owner"`
+		} `json:"repo"`
+	} `json:"base"`
 }
 
 type githubCommit struct {
@@ -106,6 +115,12 @@ func (a api) importPR(c *gin.Context) {
 			respondGitHubError(c, err)
 			return
 		}
+		canonicalOwner, canonicalRepo := rawPR.Base.Repo.Owner.Login, rawPR.Base.Repo.Name
+		if canonicalOwner == "" || canonicalRepo == "" {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned incomplete repository identity for this pull request."})
+			return
+		}
+		path = fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(canonicalOwner), url.PathEscape(canonicalRepo), rawPR.Number)
 		var rawCommits []githubCommit
 		for page := 1; ; page++ {
 			var batch []githubCommit
@@ -118,7 +133,7 @@ func (a api) importPR(c *gin.Context) {
 				break
 			}
 		}
-		checks := fetchRevisionChecks(c.Request.Context(), a.gh, owner, repo, rawPR.Head.SHA)
+		checks := fetchRevisionChecks(c.Request.Context(), a.gh, canonicalOwner, canonicalRepo, rawPR.Head.SHA)
 
 		// GitHub requests are separate snapshots. Verify the head after fetching the
 		// timeline and checks so a force push cannot pair a new timeline with old checks.
@@ -137,7 +152,7 @@ func (a api) importPR(c *gin.Context) {
 		rawPR = verifiedPR
 		created, _ := time.Parse(time.RFC3339, rawPR.CreatedAt)
 		updated, _ := time.Parse(time.RFC3339, rawPR.UpdatedAt)
-		result := pullRequest{Repository: owner + "/" + repo, Owner: owner, Repo: repo, Number: rawPR.Number, Title: rawPR.Title, State: rawPR.State, URL: rawPR.HTMLURL, CreatedAt: created, UpdatedAt: updated, Commits: make([]commit, 0, len(rawCommits)), Checks: checks, Reviews: fetchQodoReviews(c.Request.Context(), a.gh, owner, repo, number)}
+		result := pullRequest{Repository: canonicalOwner + "/" + canonicalRepo, Owner: canonicalOwner, Repo: canonicalRepo, Number: rawPR.Number, Title: rawPR.Title, State: rawPR.State, URL: rawPR.HTMLURL, CreatedAt: created, UpdatedAt: updated, Commits: make([]commit, 0, len(rawCommits)), Checks: checks, Reviews: fetchQodoReviews(c.Request.Context(), a.gh, canonicalOwner, canonicalRepo, rawPR.Number)}
 		for _, item := range rawCommits {
 			date, _ := time.Parse(time.RFC3339, item.Commit.Author.Date)
 			author := item.Commit.Author.Name
