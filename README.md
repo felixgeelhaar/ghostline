@@ -6,7 +6,7 @@
 
 Ghostline is a change-centric engineering control room. The first slice imports a public GitHub pull request and shows its commit timeline, with commit timestamps clearly distinguished from push or pull-request event chronology. It also shows the checks GitHub reports for the pull request's head commit — check runs and commit statuses, each with its status and GitHub link — and says explicitly when that commit has no checks or when they could not be loaded. Checks from earlier commits are never shown as validation of the head revision. Checks belong in repository CI, where their results can be tied to the revision they actually scanned; Ghostline does not scan a developer's local filesystem.
 
-See the [project guide](docs/project-guide.md) for the product specification, architecture overview, and complete setup path.
+See the [project guide](docs/project-guide.md) for the product specification, architecture overview, and complete setup path. The [threat model](docs/threat-model.md) records current trust boundaries and hosting limitations.
 
 ## Run locally
 

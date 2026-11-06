@@ -74,3 +74,5 @@ cd frontend && npm ci && npm test && npm run build
 Warden configures pre-commit and pre-push gates in `.warden.yaml`. It runs the Go checks, frontend verification, and tracked-repository Nox scan. Install Warden and Nox as described in the [README](../README.md#repository-checks), then enable hooks in a fresh checkout with `warden init --hooks=pre-commit,pre-push`.
 
 For detailed Qodo setup and review-evidence semantics, see [Qodo workflow](qodo-workflow.md). Repository rules for agents are in [AGENTS.md](../AGENTS.md).
+
+For current trust boundaries, abuse cases, and hosting limitations, see the [threat model](threat-model.md).
