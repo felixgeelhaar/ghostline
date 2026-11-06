@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/felixgeelhaar/ghostline/backend/internal/domain"
 	"github.com/gin-gonic/gin"
 )
 
@@ -115,12 +116,12 @@ func (a api) importPR(c *gin.Context) {
 			respondGitHubError(c, err)
 			return
 		}
-		canonicalOwner, canonicalRepo := rawPR.Base.Repo.Owner.Login, rawPR.Base.Repo.Name
-		if canonicalOwner == "" || canonicalRepo == "" {
+		identity, err := domain.NewRepositoryIdentity(rawPR.Base.Repo.Owner.Login, rawPR.Base.Repo.Name)
+		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned incomplete repository identity for this pull request."})
 			return
 		}
-		path = fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(canonicalOwner), url.PathEscape(canonicalRepo), rawPR.Number)
+		path = fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(identity.Owner), url.PathEscape(identity.Name), rawPR.Number)
 		var rawCommits []githubCommit
 		for page := 1; ; page++ {
 			var batch []githubCommit
@@ -133,7 +134,7 @@ func (a api) importPR(c *gin.Context) {
 				break
 			}
 		}
-		checks := fetchRevisionChecks(c.Request.Context(), a.gh, canonicalOwner, canonicalRepo, rawPR.Head.SHA)
+		checks := fetchRevisionChecks(c.Request.Context(), a.gh, identity.Owner, identity.Name, rawPR.Head.SHA)
 
 		// GitHub requests are separate snapshots. Verify the head after fetching the
 		// timeline and checks so a force push cannot pair a new timeline with old checks.
@@ -142,17 +143,24 @@ func (a api) importPR(c *gin.Context) {
 			respondGitHubError(c, err)
 			return
 		}
-		if verifiedPR.Head.SHA != rawPR.Head.SHA {
+		verifiedIdentity, err := domain.NewRepositoryIdentity(verifiedPR.Base.Repo.Owner.Login, verifiedPR.Base.Repo.Name)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned incomplete repository identity for this pull request."})
+			return
+		}
+		if verifiedPR.Head.SHA != rawPR.Head.SHA || !identity.Equal(verifiedIdentity) {
 			if attempt+1 < maxSnapshotAttempts {
+				path = fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(verifiedIdentity.Owner), url.PathEscape(verifiedIdentity.Name), verifiedPR.Number)
 				continue
 			}
 			c.JSON(http.StatusConflict, gin.H{"error": "This pull request changed while its timeline and checks were loading. Please import it again."})
 			return
 		}
 		rawPR = verifiedPR
+		identity = verifiedIdentity
 		created, _ := time.Parse(time.RFC3339, rawPR.CreatedAt)
 		updated, _ := time.Parse(time.RFC3339, rawPR.UpdatedAt)
-		result := pullRequest{Repository: canonicalOwner + "/" + canonicalRepo, Owner: canonicalOwner, Repo: canonicalRepo, Number: rawPR.Number, Title: rawPR.Title, State: rawPR.State, URL: rawPR.HTMLURL, CreatedAt: created, UpdatedAt: updated, Commits: make([]commit, 0, len(rawCommits)), Checks: checks, Reviews: fetchQodoReviews(c.Request.Context(), a.gh, canonicalOwner, canonicalRepo, rawPR.Number)}
+		result := pullRequest{Repository: identity.FullName(), Owner: identity.Owner, Repo: identity.Name, Number: rawPR.Number, Title: rawPR.Title, State: rawPR.State, URL: rawPR.HTMLURL, CreatedAt: created, UpdatedAt: updated, Commits: make([]commit, 0, len(rawCommits)), Checks: checks, Reviews: fetchQodoReviews(c.Request.Context(), a.gh, identity.Owner, identity.Name, rawPR.Number)}
 		for _, item := range rawCommits {
 			date, _ := time.Parse(time.RFC3339, item.Commit.Author.Date)
 			author := item.Commit.Author.Name

@@ -14,6 +14,19 @@ describe('importPullRequest', () => {
     }), { status: 200 })))
 
     await expect(importPullRequest('https://github.com/acme/ghostline/pull/12'))
-      .rejects.toThrow('GitHub returned pull request data that did not match its repository identity. Please retry the import.')
+      .rejects.toThrow('GitHub returned pull request data that did not pass validation. Please retry the import.')
+  })
+
+  it('does not blame repository links when another field fails validation', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      repository: 'acme/ghostline', owner: 'acme', repo: 'ghostline', number: 12,
+      title: 'Trust source links', state: 'open', url: 'https://github.com/acme/ghostline/pull/12',
+      createdAt: '2026-11-06T08:00:00Z', updatedAt: '2026-11-06T08:00:00Z', commits: [],
+      checks: { availability: 'unavailable', reason: 'Not configured', revisionSha: '', revisionShortSha: '', revisionUrl: '', items: [] },
+      qodoReviews: null,
+    }), { status: 200 })))
+
+    await expect(importPullRequest('https://github.com/acme/ghostline/pull/12'))
+      .rejects.toThrow('GitHub returned pull request data that did not pass validation. Please retry the import.')
   })
 })

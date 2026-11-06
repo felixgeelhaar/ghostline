@@ -78,3 +78,66 @@ func TestImportPRUsesCanonicalRepositoryReturnedByGitHub(t *testing.T) {
 		}
 	}
 }
+
+func TestImportRetriesWhenRepositoryChangesDuringSnapshot(t *testing.T) {
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	var requests []string
+	oldPullReads := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Path)
+		switch r.URL.Path {
+		case "/repos/old-owner/old-repo/pulls/12":
+			oldPullReads++
+			owner, repo := "old-owner", "old-repo"
+			if oldPullReads == 2 {
+				owner, repo = "new-owner", "new-repo"
+			}
+			writePRResponse(t, w, owner, repo, sha)
+		case "/repos/new-owner/new-repo/pulls/12":
+			writePRResponse(t, w, "new-owner", "new-repo", sha)
+		case "/repos/old-owner/old-repo/pulls/12/commits", "/repos/new-owner/new-repo/pulls/12/commits":
+			_, _ = w.Write([]byte("[]"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	router := newRouter(&githubClient{baseURL: srv.URL, http: srv.Client()})
+	request := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(`{"url":"https://github.com/old-owner/old-repo/pull/12"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var result pullRequest
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Repository != "new-owner/new-repo" || result.URL != "https://github.com/new-owner/new-repo/pull/12" || result.Checks.RevisionURL != "https://github.com/new-owner/new-repo/commit/"+sha {
+		t.Fatalf("response combined stale and canonical repository identity: %+v", result)
+	}
+	if oldPullReads != 2 {
+		t.Fatalf("old repository pull request reads = %d, want two snapshots before retry", oldPullReads)
+	}
+	foundRetryOnCanonicalPath := false
+	for _, path := range requests {
+		if path == "/repos/new-owner/new-repo/pulls/12" {
+			foundRetryOnCanonicalPath = true
+		}
+	}
+	if !foundRetryOnCanonicalPath {
+		t.Fatalf("retry did not use the canonical repository path: %v", requests)
+	}
+}
+
+func writePRResponse(t *testing.T, w http.ResponseWriter, owner, repo, sha string) {
+	t.Helper()
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"number": 12, "title": "Renamed repository", "state": "open",
+		"html_url":   "https://github.com/" + owner + "/" + repo + "/pull/12",
+		"created_at": "2026-11-06T08:00:00Z", "updated_at": "2026-11-06T08:00:00Z",
+		"head": map[string]string{"sha": sha},
+		"base": map[string]any{"repo": map[string]any{"name": repo, "owner": map[string]string{"login": owner}}},
+	})
+}
