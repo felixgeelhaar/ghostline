@@ -26,6 +26,9 @@ git -C "$run_one" remote add origin "$remote"
 git -C "$run_one" push --set-upstream origin main >/dev/null
 git clone --branch main "$remote" "$run_two" >/dev/null 2>&1
 published_main="$(git --git-dir="$remote" rev-parse refs/heads/main)"
+remote_ref="refs/heads/ghostline-automation/locks/day-4"
+# Match the API lock protocol's persistent idle ref before a scheduled run.
+git --git-dir="$remote" update-ref "$remote_ref" "$published_main"
 printf 'unpublished local work\n' > "$run_one/unpublished.txt"
 git -C "$run_one" add unpublished.txt
 git -C "$run_one" commit -m "Unpublished local work must not be pushed by lock" >/dev/null
@@ -57,13 +60,14 @@ if [[ "$one_status" == "$two_status" ]]; then
   cat "$tmp_dir/outcomes/one.err" "$tmp_dir/outcomes/two.err" >&2
   exit 1
 fi
-remote_ref="refs/heads/ghostline-automation/locks/day-4"
 if [[ "$one_status" == acquired ]]; then
   winner_dir="$run_one"
+  winner_run_id="run-one-01"
   winner_sha="$(cat "$tmp_dir/outcomes/one.sha")"
   loser_dir="$run_two"
 else
   winner_dir="$run_two"
+  winner_run_id="run-two-01"
   winner_sha="$(cat "$tmp_dir/outcomes/two.sha")"
   loser_dir="$run_one"
 fi
@@ -74,20 +78,20 @@ if git --git-dir="$remote" cat-file -e "$(git -C "$run_one" rev-parse HEAD)^{com
   exit 1
 fi
 
-if (cd "$loser_dir" && bash "$lock_script" release 4 "$(printf '0%.0s' {1..40})" >/dev/null 2>&1); then
+if (cd "$loser_dir" && bash "$lock_script" release 4 wrong-run-02 "$winner_sha" >/dev/null 2>&1); then
   echo "a non-owner unexpectedly released the day lock" >&2
   exit 1
 fi
-(cd "$winner_dir" && bash "$lock_script" release 4 "$winner_sha")
-if git --git-dir="$remote" show-ref --verify --quiet "$remote_ref"; then
-  echo "day lock still exists after release" >&2
+(cd "$winner_dir" && bash "$lock_script" release 4 "$winner_run_id" "$winner_sha")
+if [[ "$(git --git-dir="$remote" rev-parse "$remote_ref")" != "$published_main" ]]; then
+  echo "day lock did not return to the saved idle ref after release" >&2
   exit 1
 fi
 
 second_lock="$(cd "$run_two" && bash "$lock_script" acquire 4 run-two-02)"
-(cd "$run_two" && bash "$lock_script" release 4 "$second_lock")
-if git --git-dir="$remote" show-ref --verify --quiet "$remote_ref"; then
-  echo "day lock still exists after the second release" >&2
+(cd "$run_two" && bash "$lock_script" release 4 run-two-02 "$second_lock")
+if [[ "$(git --git-dir="$remote" rev-parse "$remote_ref")" != "$published_main" ]]; then
+  echo "day lock did not return to the saved idle ref after the second release" >&2
   exit 1
 fi
 
