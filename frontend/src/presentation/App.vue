@@ -38,7 +38,7 @@ const glyph: Record<CheckTone, string> = { pass: '✓', fail: '✕', running: '�
 async function loadPR() {
   error.value = validatePullRequestURL(url.value) ?? ''
   if (error.value) return
-  loading.value = true; pr.value = undefined; selectedRevision.value = ''; selectedTraceId.value = ''; traceTrigger = undefined; focusedChecks.value = undefined; checksError.value = ''; checksLoading.value = false; copyResult.value = undefined; revisionRequest++
+  loading.value = true; pr.value = undefined; selectedRevision.value = ''; selectedTraceId.value = ''; traceTrigger = undefined; focusedChecks.value = undefined; checksError.value = ''; checksLoading.value = false; copyResult.value = undefined; copyRequest++; revisionRequest++
   try { pr.value = await importPullRequest(url.value) } catch (e) { error.value = e instanceof Error ? e.message : 'Could not load the pull request.' }
   finally { loading.value = false }
 }
@@ -64,9 +64,12 @@ async function focusRevision(sha: string) {
     if (request === revisionRequest) checksLoading.value = false
   }
 }
+let copyRequest = 0
 async function copySha(sha: string) {
+  const request = ++copyRequest
   copyResult.value = undefined
-  copyResult.value = await copyRevisionSha(sha, navigator.clipboard)
+  const result = await copyRevisionSha(sha, navigator.clipboard)
+  if (request === copyRequest) copyResult.value = result
 }
 function clearFocus() {
   revisionRequest++

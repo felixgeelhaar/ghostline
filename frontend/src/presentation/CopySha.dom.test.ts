@@ -82,4 +82,22 @@ describe('copy full commit SHA from the revision timeline', () => {
     await vi.waitFor(() => expect(host!.querySelector('.copy-status')?.textContent).toContain('Clipboard access was denied'))
     expect(host!.querySelector('.copy-status')?.textContent).toContain(shaA)
   })
+
+  it('announces only the most recent copy when an earlier write finishes last', async () => {
+    let finishFirst: () => void = () => {}
+    const writeText = vi.fn()
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirst = resolve }))
+      .mockResolvedValueOnce(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    await importFixture()
+
+    host!.querySelector<HTMLButtonElement>(`[aria-label="Copy full SHA for revision a1b2c3d"]`)!.click()
+    host!.querySelector<HTMLButtonElement>(`[aria-label="Copy full SHA for revision bbbbbbb"]`)!.click()
+    await vi.waitFor(() => expect(host!.querySelector('.copy-status')?.textContent).toContain('Copied full SHA for revision bbbbbbb.'))
+    finishFirst()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await nextTick()
+    expect(host!.querySelector('.copy-status')?.textContent).toContain('Copied full SHA for revision bbbbbbb.')
+    expect(host!.querySelector('.copy-status')?.textContent).not.toContain('a1b2c3d')
+  })
 })
