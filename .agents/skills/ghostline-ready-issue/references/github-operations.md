@@ -6,9 +6,10 @@ Use the repository's normal `gh` CLI and Git remotes. The scheduled job must not
 
 - Read repository/default branch metadata with `gh api repos/felixgeelhaar/ghostline`.
 - Read the published default-branch ref with `gh api repos/felixgeelhaar/ghostline/git/ref/heads/main`; retain `object.sha` as the published SHA.
-- Refresh local `origin/main` with `git fetch --no-tags https://github.com/felixgeelhaar/ghostline.git main`, then compare `FETCH_HEAD` to the published SHA. Stop if they differ.
-- Search oldest eligible issues with `gh issue list --repo felixgeelhaar/ghostline --state open --label ready-for-agent --limit 100 --json number,title,body,author,authorAssociation,labels,createdAt,url` and sort by `createdAt` ascending. Read complete issue content with `gh issue view N --repo felixgeelhaar/ghostline --json number,title,body,author,authorAssociation,state,labels,url`.
-- Inspect PRs with `gh pr list --repo felixgeelhaar/ghostline --state open --limit 100 --json number,title,body,author,authorAssociation,headRefName,headRefOid,url`. For the selected PR, use `gh pr view N --repo felixgeelhaar/ghostline --json headRefOid,baseRefOid,state,url` to bind review/check evidence to its current revision.
+- Refresh local `origin/main` with `git fetch --no-tags https://github.com/felixgeelhaar/ghostline.git +refs/heads/main:refs/remotes/origin/main`, then compare `git rev-parse origin/main` to the published SHA. Stop if they differ. Create the issue worktree from that verified `origin/main` SHA, never from a ref you did not just verify.
+- Search oldest eligible issues with `gh issue list --repo felixgeelhaar/ghostline --state open --label ready-for-agent --limit 1000 --json number,title,body,author,authorAssociation,labels,createdAt,url` and sort by `createdAt` ascending. Read complete issue content with `gh issue view N --repo felixgeelhaar/ghostline --json number,title,body,author,authorAssociation,state,labels,url`.
+- Inspect PRs with `gh pr list --repo felixgeelhaar/ghostline --state open --limit 1000 --json number,title,body,author,authorAssociation,headRefName,headRefOid,url`. For the selected PR, use `gh pr view N --repo felixgeelhaar/ghostline --json headRefOid,baseRefOid,state,url` to bind review/check evidence to its current revision.
+- A list read is authoritative only when it returns fewer records than its `--limit`. If either list returns exactly 1000 records, stop and report that the queue is too large to read completely; never select an issue or declare a day unoccupied from a possibly partial list.
 - Preserve GitHub native issue/PR numbers, URLs, author association, and commit SHAs in the run report.
 
 ## Per-day compare-and-set lock

@@ -27,6 +27,7 @@ describe('validatePullRequestURL', () => {
   it('accepts a GitHub PR URL', () => expect(validatePullRequestURL('https://github.com/acme/ghostline/pull/12')).toBeUndefined())
   it('rejects other hosts', () => expect(validatePullRequestURL('https://evil.example/acme/ghostline/pull/12')).toBeTruthy())
   it('rejects a non-pull URL', () => expect(validatePullRequestURL('https://github.com/acme/ghostline/issues/12')).toBeTruthy())
+  it('rejects a non-default port', () => expect(validatePullRequestURL('https://github.com:8443/acme/ghostline/pull/12')).toBeTruthy())
   it('rejects query strings and fragments', () => expect(validatePullRequestURL('https://github.com/acme/ghostline/pull/12?x=1')).toBeTruthy())
 })
 
@@ -42,6 +43,7 @@ describe('PullRequestSchema source links', () => {
     ['a PR URL with a query string', { url: 'https://github.com/acme/ghostline/pull/12?redirect=1' }],
     ['an encoded slash in the owner', { url: 'https://github.com/acme%2Fghostline/pull/12' }],
     ['an encoded slash in the repository', { url: 'https://github.com/acme/ghostline%2Fother/pull/12' }],
+    ['a non-default port', { url: 'https://github.com:8443/acme/ghostline/pull/12' }],
   ])('rejects a PR URL with %s', (_reason, override) => {
     expect(PullRequestSchema.safeParse({ ...validPullRequest, ...override }).success).toBe(false)
   })
@@ -50,6 +52,7 @@ describe('PullRequestSchema source links', () => {
     ['a non-GitHub host', 'https://evil.example/acme/ghostline/commit/' + 'a'.repeat(40)],
     ['a different repository', 'https://github.com/acme/other/commit/' + 'a'.repeat(40)],
     ['a different commit SHA', 'https://github.com/acme/ghostline/commit/' + 'b'.repeat(40)],
+    ['a non-default port', 'https://github.com:8443/acme/ghostline/commit/' + 'a'.repeat(40)],
   ])('rejects a commit URL with %s', (_reason, url) => {
     const candidate = { ...validPullRequest, commits: [{ ...validPullRequest.commits[0], url }] }
     expect(PullRequestSchema.safeParse(candidate).success).toBe(false)
