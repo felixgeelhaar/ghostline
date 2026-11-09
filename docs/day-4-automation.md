@@ -43,3 +43,7 @@ PR #28 is open at `afc7b19fd81fd658994ae8275d2246cf668ec6cd`. Qodo completed a s
 ## Run record — 2026-11-07 (documentation update, not a scheduled run)
 
 The skill, lock helper, and this document were changed from connected GitHub tools back to the `gh` CLI and Git remotes, because the earlier connector-based path had not been exercised by a scheduled run and the scheduled shell's failure was specific to `gh auth status`. The local lock test (`test-day-lock.sh`) passes against a temporary bare remote. No scheduled run has used this path, no ticket has been picked up automatically, and Day 4 remains partial. The run records above describe the connector-based procedure that this update replaces.
+
+## Runner smoke test — 2026-11-09 17:25 UTC (manual, read-only, not a pickup)
+
+`run-pickup.sh` was run by hand at `370a98e` plus the uncommitted allowlist change, with a read-only smoke prompt (`GHOSTLINE_PROMPT_FILE`) and the default runner order. `codex exec` stopped immediately with Codex's usage-limit error (reset 2026-11-10 07:53 local); the wrapper matched it and fell back to `claude -p`. Claude Code ran under `--permission-mode dontAsk` with the tool allowlist, listed open `ready-for-agent` issues #30 and #29 with `gh`, read `HEAD` with `git`, and changed nothing. This shows the fallback, `gh` access, and the allowlist working from a terminal; it does not show a scheduled run, a launchd environment, or a ticket pickup. Claude Code warned that its interactive sign-in can expire before 2026-11-12 and recommended `claude setup-token` for unattended jobs.

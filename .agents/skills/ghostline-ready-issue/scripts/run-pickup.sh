@@ -7,6 +7,7 @@
 # stops the run so a half-finished attempt is never repeated by a second agent.
 # GHOSTLINE_RUN_LOG_DIR    where run logs and the overlap lock live.
 # GHOSTLINE_WORKTREE_DIR   where the issue worktree is created.
+# GHOSTLINE_PROMPT_FILE    alternate prompt, e.g. a read-only smoke test.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,7 +33,8 @@ fi
 echo $$ > "$lock/pid"
 trap 'rm -rf "$lock"' EXIT
 
-prompt="$(sed -e "s|{{REPO}}|${repo}|g" -e "s|{{WORKTREES}}|${worktrees}|g" "$script_dir/prompt.md")"
+prompt_file="${GHOSTLINE_PROMPT_FILE:-$script_dir/prompt.md}"
+prompt="$(sed -e "s|{{REPO}}|${repo}|g" -e "s|{{WORKTREES}}|${worktrees}|g" "$prompt_file")"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 
 run_codex() {
@@ -47,7 +49,9 @@ run_claude() {
     --allowedTools 'Read' 'Edit' 'Write' 'Glob' 'Grep' \
       'Bash(git *)' 'Bash(gh *)' 'Bash(go *)' 'Bash(npm *)' 'Bash(npx *)' \
       'Bash(warden *)' 'Bash(nox *)' 'Bash(bash .agents/skills/*)' \
-      'Bash(ls *)' 'Bash(mkdir *)' 'Bash(date *)')
+      'Bash(cd *)' 'Bash(pwd)' 'Bash(ls *)' 'Bash(mkdir *)' 'Bash(date *)' \
+      'Bash(cat *)' 'Bash(head *)' 'Bash(tail *)' 'Bash(wc *)' 'Bash(sort *)' \
+      'Bash(grep *)' 'Bash(jq *)' 'Bash(echo *)' 'Bash(printf *)' 'Bash(test *)')
 }
 
 for runner in $runners; do
