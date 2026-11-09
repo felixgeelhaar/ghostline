@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,13 +22,20 @@ const (
 
 var headerName = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 
+// clientIdentity decides which address a request is limited as.
+type clientIdentity struct {
+	// Header names a header carrying exactly one client IP. It is read only
+	// when the TCP peer is inside TrustedProxies, so callers cannot pick their
+	// own identity; that proxy must overwrite the header, not append to it.
+	Header         string
+	TrustedProxies []netip.Prefix
+}
+
 // rateLimitConfig is the validated startup configuration for per-client limiting.
 type rateLimitConfig struct {
 	Requests int
 	Window   time.Duration
-	// ClientIPHeader names a header set by a proxy you operate. Empty means the
-	// TCP peer address is the only client identity; forwarded headers are ignored.
-	ClientIPHeader string
+	Identity clientIdentity
 }
 
 func loadRateLimitConfig(getenv func(string) string) (rateLimitConfig, error) {
@@ -46,13 +54,35 @@ func loadRateLimitConfig(getenv func(string) string) (rateLimitConfig, error) {
 		}
 		cfg.Window = d
 	}
-	if raw := strings.TrimSpace(getenv("RATE_LIMIT_CLIENT_IP_HEADER")); raw != "" {
-		if !headerName.MatchString(raw) {
-			return rateLimitConfig{}, errors.New("RATE_LIMIT_CLIENT_IP_HEADER must be a valid HTTP header name")
-		}
-		cfg.ClientIPHeader = raw
+	identity, err := loadClientIdentity(getenv)
+	if err != nil {
+		return rateLimitConfig{}, err
 	}
+	cfg.Identity = identity
 	return cfg, nil
+}
+
+func loadClientIdentity(getenv func(string) string) (clientIdentity, error) {
+	header := strings.TrimSpace(getenv("RATE_LIMIT_CLIENT_IP_HEADER"))
+	proxies := strings.TrimSpace(getenv("RATE_LIMIT_TRUSTED_PROXIES"))
+	if header == "" && proxies == "" {
+		return clientIdentity{}, nil
+	}
+	if header == "" || proxies == "" {
+		return clientIdentity{}, errors.New("RATE_LIMIT_CLIENT_IP_HEADER and RATE_LIMIT_TRUSTED_PROXIES must be set together")
+	}
+	if !headerName.MatchString(header) {
+		return clientIdentity{}, errors.New("RATE_LIMIT_CLIENT_IP_HEADER must be a valid HTTP header name")
+	}
+	identity := clientIdentity{Header: header}
+	for _, raw := range strings.Split(proxies, ",") {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil {
+			return clientIdentity{}, fmt.Errorf("RATE_LIMIT_TRUSTED_PROXIES must be comma-separated CIDR ranges, got %q", strings.TrimSpace(raw))
+		}
+		identity.TrustedProxies = append(identity.TrustedProxies, prefix.Masked())
+	}
+	return identity, nil
 }
 
 type clientWindow struct {
@@ -113,29 +143,48 @@ func (l *rateLimiter) size() int {
 	return len(l.clients)
 }
 
-// clientKey derives the rate-limit identity. Forwarded headers are spoofable by
-// callers, so they are only read when an operator names a trusted header, and
-// then only the rightmost entry (appended by the nearest proxy) is used.
-func clientKey(r *http.Request, trustedHeader string) string {
-	if trustedHeader != "" {
-		values := r.Header.Values(trustedHeader)
-		if len(values) > 0 {
-			parts := strings.Split(values[len(values)-1], ",")
-			if ip := net.ParseIP(strings.TrimSpace(parts[len(parts)-1])); ip != nil {
-				return ip.String()
+// clientKey derives the rate-limit identity: the TCP peer, or the configured
+// header's single IP when the peer is a trusted proxy.
+func clientKey(r *http.Request, identity clientIdentity) string {
+	peer := peerAddr(r.RemoteAddr)
+	if identity.Header != "" && peer.IsValid() && identity.trusts(peer) {
+		values := r.Header.Values(identity.Header)
+		if len(values) == 1 {
+			if addr, err := netip.ParseAddr(strings.TrimSpace(values[0])); err == nil {
+				return addr.Unmap().String()
 			}
 		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+	if peer.IsValid() {
+		return peer.String()
 	}
-	return host
+	return r.RemoteAddr
 }
 
-func rateLimitMiddleware(l *rateLimiter, trustedHeader string) gin.HandlerFunc {
+func (i clientIdentity) trusts(addr netip.Addr) bool {
+	for _, prefix := range i.TrustedProxies {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+func peerAddr(remote string) netip.Addr {
+	host, _, err := net.SplitHostPort(remote)
+	if err != nil {
+		host = remote
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return netip.Addr{}
+	}
+	return addr.Unmap()
+}
+
+func rateLimitMiddleware(l *rateLimiter, identity clientIdentity) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		allowed, retryAfter := l.allow(clientKey(c.Request, trustedHeader))
+		allowed, retryAfter := l.allow(clientKey(c.Request, identity))
 		if allowed {
 			c.Next()
 			return

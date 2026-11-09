@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -73,8 +75,11 @@ func TestLoadRateLimitConfig(t *testing.T) {
 		wantErr bool
 	}{
 		{"defaults", map[string]string{}, rateLimitConfig{Requests: 30, Window: time.Minute}, false},
-		{"custom", map[string]string{"RATE_LIMIT_REQUESTS": "5", "RATE_LIMIT_WINDOW": "10s", "RATE_LIMIT_CLIENT_IP_HEADER": "X-Forwarded-For"},
-			rateLimitConfig{Requests: 5, Window: 10 * time.Second, ClientIPHeader: "X-Forwarded-For"}, false},
+		{"custom", map[string]string{"RATE_LIMIT_REQUESTS": "5", "RATE_LIMIT_WINDOW": "10s", "RATE_LIMIT_CLIENT_IP_HEADER": "X-Ghostline-Client-IP", "RATE_LIMIT_TRUSTED_PROXIES": "10.0.0.0/8, fc00::/7"},
+			rateLimitConfig{Requests: 5, Window: 10 * time.Second, Identity: clientIdentity{Header: "X-Ghostline-Client-IP", TrustedProxies: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("fc00::/7")}}}, false},
+		{"header without trusted proxies", map[string]string{"RATE_LIMIT_CLIENT_IP_HEADER": "X-Ghostline-Client-IP"}, rateLimitConfig{}, true},
+		{"trusted proxies without header", map[string]string{"RATE_LIMIT_TRUSTED_PROXIES": "10.0.0.0/8"}, rateLimitConfig{}, true},
+		{"invalid trusted proxy", map[string]string{"RATE_LIMIT_CLIENT_IP_HEADER": "X-Ghostline-Client-IP", "RATE_LIMIT_TRUSTED_PROXIES": "10.0.0.0/8,nope"}, rateLimitConfig{}, true},
 		{"non numeric requests", map[string]string{"RATE_LIMIT_REQUESTS": "many"}, rateLimitConfig{}, true},
 		{"zero requests", map[string]string{"RATE_LIMIT_REQUESTS": "0"}, rateLimitConfig{}, true},
 		{"negative requests", map[string]string{"RATE_LIMIT_REQUESTS": "-1"}, rateLimitConfig{}, true},
@@ -88,7 +93,7 @@ func TestLoadRateLimitConfig(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if err == nil && got != tt.want {
+			if err == nil && !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("got %+v, want %+v", got, tt.want)
 			}
 		})
@@ -96,33 +101,62 @@ func TestLoadRateLimitConfig(t *testing.T) {
 }
 
 func TestClientKey(t *testing.T) {
+	proxy := clientIdentity{Header: "X-Ghostline-Client-IP", TrustedProxies: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}}
 	tests := []struct {
-		name, remote, header, headerValue, want string
+		name, remote, headerValue, want string
+		identity                        clientIdentity
 	}{
-		{"remote address only", "203.0.113.9:5555", "", "", "203.0.113.9"},
-		{"forwarded header ignored unless configured", "203.0.113.9:5555", "", "198.51.100.1", "203.0.113.9"},
-		{"configured header uses the rightmost entry", "10.0.0.1:80", "X-Forwarded-For", "6.6.6.6, 198.51.100.1", "198.51.100.1"},
-		{"configured header with garbage falls back to remote", "10.0.0.1:80", "X-Forwarded-For", "not-an-ip", "10.0.0.1"},
-		{"configured header absent falls back to remote", "10.0.0.1:80", "X-Forwarded-For", "", "10.0.0.1"},
+		{"remote address only", "203.0.113.9:5555", "", "203.0.113.9", clientIdentity{}},
+		{"header ignored unless configured", "203.0.113.9:5555", "198.51.100.1", "203.0.113.9", clientIdentity{}},
+		{"trusted proxy header is used", "10.0.0.2:80", "198.51.100.1", "198.51.100.1", proxy},
+		{"untrusted peer cannot choose its identity", "203.0.113.9:5555", "198.51.100.1", "203.0.113.9", proxy},
+		{"forwarding chain is rejected", "10.0.0.2:80", "6.6.6.6, 198.51.100.1", "10.0.0.2", proxy},
+		{"garbage falls back to the peer", "10.0.0.2:80", "not-an-ip", "10.0.0.2", proxy},
+		{"absent header falls back to the peer", "10.0.0.2:80", "", "10.0.0.2", proxy},
+		{"IPv4-mapped address is normalized", "10.0.0.2:80", "::ffff:198.51.100.1", "198.51.100.1", proxy},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/import", nil)
 			req.RemoteAddr = tt.remote
 			if tt.headerValue != "" {
-				req.Header.Set("X-Forwarded-For", tt.headerValue)
+				req.Header.Set("X-Ghostline-Client-IP", tt.headerValue)
 			}
-			if got := clientKey(req, tt.header); got != tt.want {
+			if got := clientKey(req, tt.identity); got != tt.want {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
+func TestRateLimitThroughTrustedProxy(t *testing.T) {
+	clock := &fakeClock{now: time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)}
+	identity := clientIdentity{Header: "X-Ghostline-Client-IP", TrustedProxies: []netip.Prefix{netip.MustParsePrefix("172.16.0.0/12")}}
+	router := newRouterWithLimiter(&githubClient{baseURL: "http://127.0.0.1:1", http: http.DefaultClient}, newRateLimiter(1, time.Minute, clock.Now), identity)
+	post := func(client string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(`{"url":"https://example.com/x"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Ghostline-Client-IP", client)
+		req.RemoteAddr = "172.18.0.3:40000" // the frontend proxy container
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := post("192.168.1.10"); code != http.StatusBadRequest {
+		t.Fatalf("first browser: status %d, want 400 from the handler", code)
+	}
+	if code := post("192.168.1.11"); code != http.StatusBadRequest {
+		t.Fatalf("second browser behind the same proxy: status %d, want its own budget", code)
+	}
+	if code := post("192.168.1.10"); code != http.StatusTooManyRequests {
+		t.Fatalf("first browser again: status %d, want 429", code)
+	}
+}
+
 func TestRateLimitedRoutes(t *testing.T) {
 	clock := &fakeClock{now: time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)}
 	limiter := newRateLimiter(2, time.Minute, clock.Now)
-	router := newRouterWithLimiter(&githubClient{baseURL: "http://127.0.0.1:1", http: http.DefaultClient}, limiter, "")
+	router := newRouterWithLimiter(&githubClient{baseURL: "http://127.0.0.1:1", http: http.DefaultClient}, limiter, clientIdentity{})
 
 	post := func(path, remote string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"url":"https://example.com/x"}`))

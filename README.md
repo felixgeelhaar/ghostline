@@ -32,9 +32,12 @@ Open the URL printed by Vite. Public GitHub API requests work without a token; s
 | --- | --- | --- |
 | `RATE_LIMIT_REQUESTS` | `30` | Requests allowed per client per window (positive integer). |
 | `RATE_LIMIT_WINDOW` | `1m` | Window length as a Go duration, such as `30s` or `5m`. |
-| `RATE_LIMIT_CLIENT_IP_HEADER` | unset | Name of a header set by a reverse proxy you operate, such as `X-Forwarded-For`. |
+| `RATE_LIMIT_CLIENT_IP_HEADER` | unset | Header carrying exactly one client IP, set by a proxy you operate. |
+| `RATE_LIMIT_TRUSTED_PROXIES` | unset | Comma-separated CIDR ranges of proxies allowed to set that header. Required together with the header. |
 
-Invalid values stop the backend at startup with an error. By default a client is its TCP peer address and forwarded headers are ignored, because callers can forge them. Behind a reverse proxy every client shares the proxy's address, so set `RATE_LIMIT_CLIENT_IP_HEADER` only when your proxy overwrites or appends that header; Ghostline then uses its rightmost value and falls back to the peer address if it is not an IP.
+Invalid values stop the backend at startup with an error. By default a client is its TCP peer address and forwarded headers are ignored, because callers can forge them. The header is read only when the request arrives from a trusted proxy, and only when it holds a single IP; forwarding chains such as a multi-hop `X-Forwarded-For` fall back to the peer address. The proxy must overwrite the header with the address of the connection it received, not append to it.
+
+The Vite proxy used for local development and Docker Compose does this: it sets `X-Ghostline-Client-IP` to each browser's address, replacing any value the browser sent. Docker Compose configures the backend to trust that header from private network ranges, since the backend is not published and only the frontend container can reach it. When running `go run ./backend` and `npm run dev` directly, every request comes from `127.0.0.1` and shares one budget unless you set both variables.
 
 This limit does not replace authentication, does not protect or meter a `GITHUB_TOKEN`, and does not stop a distributed caller using many addresses. GitHub's own 429 responses are reported separately, without a retry time.
 
