@@ -2,7 +2,11 @@ At each scheduled run, work in the local Ghostline repository at {{REPO}}. Read 
 
 Use the normal `gh` CLI and Git workflow already configured for this repository for GitHub reads, labels, ref locking, issue claims, branch and commit publication, and PR operations. Do not change `gh` authentication, global configuration, credentials, or other processes. Do not use `gh auth status` as a preflight; attempt the required read-only issue query directly, and if this invocation cannot access GitHub, stop and record the specific operation and error.
 
-Run each shell command on its own or chained with `&&`; do not use shell loops such as `for` or `while`. If a command is denied only because of its shape, re-run it as separate single commands; that is not a workaround. If a single plain command is denied, stop and report it.
+Command rules for unattended runs (the tool allowlist matches command prefixes):
+- Never start a command with `cd`. Address other directories with `git -C <dir>`, `go -C <dir>`, `npm --prefix <dir>`, and absolute paths. Run the day-lock helper from this checkout as `bash .agents/skills/ghostline-ready-issue/scripts/day-lock.sh ...`.
+- Change files with the Edit and Write tools, not shell redirects (`>`, `>>`), `sed -i`, or heredocs. Do not use command substitution (`$(...)`) or shell loops; write literal values, for example a run ID such as `run-YYYYMMDD-HHMM` typed out.
+- Ports 8080 and 5173 belong to other local services; never stop them. Start the backend as `PORT=18080 go -C <worktree> run ./backend` and the frontend as `GHOSTLINE_API_URL=http://localhost:18080 npm --prefix <worktree>/frontend run dev -- --port 15173 --strictPort`, both in the background, and take screenshots of `http://localhost:15173` with the Scout browser tools. Save screenshots inside the worktree and stop both servers before finishing.
+- If a command is denied only because of its shape, re-run it in an allowed shape; that is not a workaround. If an allowed-shape command is still denied, stop and report it.
 
 Create the isolated worktree for the issue under {{WORKTREES}}, never inside the checkout above.
 

@@ -44,14 +44,33 @@ run_codex() {
 }
 
 run_claude() {
-  (cd "$repo" && printf '%s\n' "$prompt" | claude -p \
+  local out status
+  out="$(mktemp)"
+  set +e
+  (cd "$repo" && printf '%s\n' "$prompt" | claude -p --output-format json \
     --permission-mode dontAsk --add-dir "$worktrees" \
-    --allowedTools 'Read' 'Edit' 'Write' 'Glob' 'Grep' \
+    --allowedTools 'Read' 'Edit' 'Write' 'Glob' 'Grep' 'mcp__scout' \
       'Bash(git *)' 'Bash(gh *)' 'Bash(go *)' 'Bash(npm *)' 'Bash(npx *)' \
+      'Bash(PORT=18080 go *)' 'Bash(GHOSTLINE_API_URL=http://localhost:18080 npm *)' \
       'Bash(warden *)' 'Bash(nox *)' 'Bash(bash .agents/skills/*)' \
-      'Bash(cd *)' 'Bash(pwd)' 'Bash(ls *)' 'Bash(mkdir *)' 'Bash(date *)' \
+      'Bash(pwd)' 'Bash(ls *)' 'Bash(mkdir *)' 'Bash(date *)' \
       'Bash(cat *)' 'Bash(head *)' 'Bash(tail *)' 'Bash(wc *)' 'Bash(sort *)' \
-      'Bash(grep *)' 'Bash(jq *)' 'Bash(echo *)' 'Bash(printf *)' 'Bash(test *)')
+      'Bash(grep *)' 'Bash(jq *)' 'Bash(echo *)' 'Bash(printf *)' 'Bash(test *)') >"$out" 2>&1
+  status=$?
+  set -e
+  # Print the agent's report and every denied tool call; fall back to raw output.
+  python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    print(open(sys.argv[1]).read()); sys.exit(0)
+print(d.get("result", ""))
+for x in d.get("permission_denials", []):
+    print("PERMISSION DENIED:", x.get("tool_name"), json.dumps(x.get("tool_input"))[:400])
+' "$out"
+  rm -f "$out"
+  return "$status"
 }
 
 for runner in $runners; do
