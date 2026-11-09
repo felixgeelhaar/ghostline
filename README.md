@@ -24,6 +24,20 @@ npm run dev
 
 Open the URL printed by Vite. Public GitHub API requests work without a token; set `GITHUB_TOKEN` to increase the unauthenticated rate limit.
 
+## Request rate limit
+
+`POST /api/import` and `POST /api/checks` share one per-client budget so a single caller cannot use up the GitHub API quota for everyone else. The limiter is in-memory and fixed-window: the window starts at a client's first request, and the count and any recorded clients are lost when the backend restarts or if you run more than one instance. A request over the limit receives HTTP 429, a `Retry-After` header in seconds, and a JSON `{"error": "..."}` body; the UI shows when to retry. `GET /api/health` is not limited.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RATE_LIMIT_REQUESTS` | `30` | Requests allowed per client per window (positive integer). |
+| `RATE_LIMIT_WINDOW` | `1m` | Window length as a Go duration, such as `30s` or `5m`. |
+| `RATE_LIMIT_CLIENT_IP_HEADER` | unset | Name of a header set by a reverse proxy you operate, such as `X-Forwarded-For`. |
+
+Invalid values stop the backend at startup with an error. By default a client is its TCP peer address and forwarded headers are ignored, because callers can forge them. Behind a reverse proxy every client shares the proxy's address, so set `RATE_LIMIT_CLIENT_IP_HEADER` only when your proxy overwrites or appends that header; Ghostline then uses its rightmost value and falls back to the peer address if it is not an IP.
+
+This limit does not replace authentication, does not protect or meter a `GITHUB_TOKEN`, and does not stop a distributed caller using many addresses. GitHub's own 429 responses are reported separately, without a retry time.
+
 ## Repository checks
 
 This repository's `.warden.yaml` configures Warden developer gates: Go tests and a tracked-repository Nox scan before commits, then Go tests, `go vet`, frontend tests/build, and another Nox scan before pushes. The Warden steps call Nox directly. Install Warden (for example, `go install go.klarlabs.de/warden@v0.46.1`) and Nox 1.57.0 from the [official release](https://github.com/Nox-HQ/nox/releases/tag/v1.57.0), placing its `nox` binary on `PATH`. Then run `warden init --hooks=pre-commit,pre-push` in a fresh checkout to activate the hooks. Nox uses the committed `.nox/baseline.json` to report known findings and fail on new ones. Warden displays scan coverage warnings; CI enforces the documented coverage-gap policy. These hooks help contributors catch issues early. Hosted security and validation evidence should come from repository CI checks attached to a commit; Ghostline displays those checks only for the commit they ran against.
