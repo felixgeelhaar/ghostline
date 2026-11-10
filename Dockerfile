@@ -3,7 +3,8 @@ LABEL maintainer="Ghostline maintainers"
 WORKDIR /app
 COPY --chown=65532:65532 go.mod go.sum ./
 RUN go mod download
-RUN apk add --no-cache curl
+# zlib: ALPINE-CVE-2026-4738 is fixed in 1.4-r0, which the pinned base image does not ship yet.
+RUN apk add --no-cache curl && apk upgrade --no-cache zlib
 COPY --chown=65532:65532 backend ./backend
 ENV HOST=0.0.0.0 PORT=8080 HOME=/tmp GOCACHE=/tmp/go-cache
 USER 65532:65532
