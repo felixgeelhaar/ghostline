@@ -90,8 +90,9 @@ reset; if run; then fail "limit after a branch switch should fail the run"; fi
 git -C "$checkout" switch --quiet main
 
 # Nor after it claimed an issue beyond the first 500 in the queue.
-stub codex 1 "$limit_msg" "sed -i '' '/^550\$/d' '$tmp/state'"
+stub codex 1 "$limit_msg" "grep -vx 550 '$tmp/state' > '$tmp/state.next'; mv '$tmp/state.next' '$tmp/state'"
 reset; seq 1 600 > "$tmp/state"; if run; then fail "limit after a deep-queue claim should fail the run"; fi
+if grep -qx 550 "$tmp/state"; then fail "the stub did not claim issue 550"; fi
 [[ "$(calls)" == "codex ran " ]] || fail "fell back after a deep-queue claim: $(calls)"
 
 # Without a readable state snapshot there is no evidence that nothing happened.
@@ -115,6 +116,14 @@ for bad in "" "not json" '{"result":"done"}' '[1,2]'; do
   reset; if GHOSTLINE_AGENT_RUNNERS="claude codex" run; then fail "malformed output '$bad' counted as success"; fi
   [[ "$(calls)" == "claude ran " ]] || fail "malformed output '$bad' fell back: $(calls)"
 done
+# An unknown outcome never falls back, even when its text mentions a limit.
+stub claude 0 "$limit_msg"
+reset; if GHOSTLINE_AGENT_RUNNERS="claude codex" run; then fail "unknown outcome with limit text counted as success"; fi
+[[ "$(calls)" == "claude ran " ]] || fail "unknown outcome with limit text fell back: $(calls)"
+# A CLI startup failure (non-zero exit, plain text) is still classified normally.
+stub claude 1 "Not logged in · Please run /login"
+reset; GHOSTLINE_AGENT_RUNNERS="claude codex" run || fail "claude startup limit did not fall back: $(cat "$tmp/out")"
+[[ "$(calls)" == "claude ran codex ran " ]] || fail "claude startup limit did not fall back: $(calls)"
 
 # Runner order is configurable.
 stub codex 0 "done"; stub claude 0 "$claude_ok"

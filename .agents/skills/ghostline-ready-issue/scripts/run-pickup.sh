@@ -100,6 +100,9 @@ if d.get("is_error"):
     sys.exit(3)
 ' "$out" || report=$?
   if [[ $status -ne 0 ]]; then return "$status"; fi
+  # Exit 0 without a result object: nothing says why Claude stopped, so whatever
+  # text it printed must not be read as a limit error.
+  if [[ $report -eq 4 ]]; then touch "$state_dir/unknown-outcome"; fi
   return "$report"
 }
 
@@ -125,6 +128,10 @@ for runner in $runners; do
   "run_${runner}" >"$log" 2>&1 9>&- || status=$?
   cat "$log"
   [[ $status -eq 0 ]] && exit 0
+  if [[ -f "$state_dir/unknown-outcome" ]]; then
+    echo "$runner ended without a result, so the outcome is unknown; not retrying with another runner" >&2
+    exit "$status"
+  fi
   if ! tail -n 20 "$log" | grep -Eqi "$limit_pattern"; then
     echo "$runner failed (exit $status) for a reason that is not a limit; not retrying with another runner" >&2
     exit "$status"
