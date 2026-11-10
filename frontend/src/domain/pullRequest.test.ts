@@ -63,3 +63,46 @@ describe('PullRequestSchema source links', () => {
     expect(PullRequestSchema.safeParse(candidate).success).toBe(false)
   })
 })
+
+describe('PullRequestSchema Qodo review commit links', () => {
+  const reviewedSha = 'a'.repeat(40)
+  const withReview = (review: Record<string, unknown>) => ({
+    ...validPullRequest,
+    qodoReviews: {
+      availability: 'available',
+      unrecognizedCommentCount: 0,
+      items: [{
+        id: 30,
+        provider: 'Qodo',
+        sourceType: 'github_issue_comment',
+        sourceAuthor: 'qodo-code-review[bot]',
+        kind: 'no_open_findings',
+        findings: [],
+        createdAt: '2026-11-06T08:00:00Z',
+        url: 'https://github.com/acme/ghostline/pull/12#issuecomment-30',
+        ...review,
+      }],
+    },
+  })
+
+  it('accepts a review without a commit marker', () => {
+    expect(PullRequestSchema.safeParse(withReview({})).success).toBe(true)
+  })
+
+  it('accepts a commit link in the imported repository, in any letter case', () => {
+    expect(PullRequestSchema.safeParse(withReview({ commitSha: reviewedSha, commitUrl: `https://github.com/acme/ghostline/commit/${reviewedSha}` })).success).toBe(true)
+    expect(PullRequestSchema.safeParse(withReview({ commitSha: reviewedSha, commitUrl: `https://github.com/ACME/Ghostline/commit/${reviewedSha}` })).success).toBe(true)
+  })
+
+  it.each([
+    ['another repository', `https://github.com/acme/other/commit/${reviewedSha}`],
+    ['another host', `https://evil.example/acme/ghostline/commit/${reviewedSha}`],
+    ['a different SHA than commitSha', `https://github.com/acme/ghostline/commit/${'b'.repeat(40)}`],
+  ])('rejects a commit link to %s', (_reason, commitUrl) => {
+    expect(PullRequestSchema.safeParse(withReview({ commitSha: reviewedSha, commitUrl })).success).toBe(false)
+  })
+
+  it('rejects a commit link without the SHA it claims to name', () => {
+    expect(PullRequestSchema.safeParse(withReview({ commitUrl: `https://github.com/acme/ghostline/commit/${reviewedSha}` })).success).toBe(false)
+  })
+})
