@@ -28,8 +28,11 @@ if bash "$servers" restart "$worktree" >/dev/null 2>&1; then fail "unknown actio
 # Stopping with nothing recorded is a no-op.
 bash "$servers" stop "$worktree" >/dev/null || fail "stop without a record failed"
 
+# Servers run in their own process group, as dev-servers.sh starts them.
+in_group() { exec python3 -c 'import os, sys; os.setpgid(0, 0); os.execvp(sys.argv[1], sys.argv[1:])' "$@"; }
+
 # A recorded process tree (parent and child, like `go run` or `npm run dev`) is stopped.
-bash -c 'sleep 60 & wait' & recorded=$!
+in_group bash -c 'sleep 60 & wait' & recorded=$!
 others+=("$recorded")
 until pgrep -P "$recorded" >/dev/null; do sleep 0.1; done
 child="$(pgrep -P "$recorded")"
@@ -49,6 +52,19 @@ if alive "$child"; then fail "recorded process's child still running"; fi
 alive "$unrelated" || fail "unrelated process was stopped"
 alive "$reused" || fail "a reused PID was stopped"
 [[ ! -e "$state/pids" ]] || fail "record not removed after stop"
+
+# A launcher that exits while its child keeps running: the child is still stopped.
+in_group bash -c 'sleep 60 & sleep 1' & launcher=$!
+others+=("$launcher")
+until pgrep -P "$launcher" -f "sleep 60" >/dev/null; do sleep 0.1; done
+orphan="$(pgrep -P "$launcher" -f "sleep 60")"
+others+=("$orphan")
+printf '%s\t%s\n' "$launcher" "$(ps -o lstart= -p "$launcher")" >"$state/pids"
+wait "$launcher" || true
+alive "$orphan" || fail "test setup: the launcher's child exited with it"
+bash "$servers" stop "$worktree" >/dev/null || fail "stop after launcher exit failed"
+sleep 0.5
+if alive "$orphan"; then fail "a child that outlived its launcher was left running"; fi
 
 
 # Startup: build a tiny app whose servers listen on the ports they are given.
