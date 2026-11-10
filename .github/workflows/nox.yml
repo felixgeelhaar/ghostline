@@ -12,4 +12,8 @@ permissions:
 
 jobs:
   nox:
-    uses: klarlabs-studio/.github/.github/workflows/nox.yml@main
+    # Pinned to a reviewed commit: a reusable workflow runs with this repository's
+    # token and the permissions above, so a change to the fleet's branch must not
+    # reach this scan without a reviewed change here. Move the pin deliberately.
+    # ef33ad2 is the head of klarlabs-studio/.github#92 (Nox 1.63.0, `nox ci-gate`).
+    uses: klarlabs-studio/.github/.github/workflows/nox.yml@ef33ad24b9f534fd8bfa5aa2ace0c9b9cbab07eb
