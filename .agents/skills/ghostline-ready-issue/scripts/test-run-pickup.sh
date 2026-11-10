@@ -2,10 +2,21 @@
 # Verifies run-pickup.sh with stub codex, claude, and gh binaries; no model or GitHub call is made.
 set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-wrapper="$script_dir/run-pickup.sh"
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR
+unset GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
+# Run the wrapper from a throwaway checkout so stub runners can change local history.
+checkout="$tmp/repo"
+git init --quiet --initial-branch=main "$checkout"
+git -C "$checkout" config user.name "Ghostline Runner Test"
+git -C "$checkout" config user.email "ghostline-runner-test@example.invalid"
+git -C "$checkout" config commit.gpgsign false
+mkdir -p "$checkout/.agents/skills/ghostline-ready-issue/scripts"
+cp "$script_dir/run-pickup.sh" "$script_dir/prompt.md" "$checkout/.agents/skills/ghostline-ready-issue/scripts/"
+git -C "$checkout" add -A && git -C "$checkout" commit --quiet -m "fixture"
+wrapper="$checkout/.agents/skills/ghostline-ready-issue/scripts/run-pickup.sh"
 export GHOSTLINE_RUN_LOG_DIR="$tmp/logs" GHOSTLINE_WORKTREE_DIR="$tmp/wt" PATH="$tmp/bin:$PATH"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -25,10 +36,13 @@ EOF
   chmod +x "$tmp/bin/$1"
 }
 # The gh stub reports the "remote state" kept in a file, or fails when asked to.
+# Like gh, it returns only the first N records when given --limit N.
 cat >"$tmp/bin/gh" <<EOF
 #!/usr/bin/env bash
 [[ -f "$tmp/gh-fail" ]] && { echo "gh: network error" >&2; exit 1; }
-cat "$tmp/state"
+limit=""
+while [[ \$# -gt 0 ]]; do [[ "\$1" == --limit ]] && limit="\$2"; shift; done
+if [[ -n "\$limit" ]]; then head -n "\$limit" "$tmp/state"; else cat "$tmp/state"; fi
 EOF
 chmod +x "$tmp/bin/gh"
 
@@ -37,9 +51,10 @@ reset() { rm -rf "$tmp/calls" "$tmp/gh-fail" "$tmp/wt"; echo "issues=29" > "$tmp
 run() { bash "$wrapper" >"$tmp/out" 2>&1; }
 
 limit_msg="ERROR: You've hit your usage limit. Try again at 7:53 AM."
+claude_ok='{"type":"result","subtype":"success","is_error":false,"result":"done"}'
 
 # A usage limit before any work falls back to the next runner.
-stub codex 1 "$limit_msg"; stub claude 0 "done"
+stub codex 1 "$limit_msg"; stub claude 0 "$claude_ok"
 reset; run || fail "fallback run failed: $(cat "$tmp/out")"
 [[ "$(calls)" == "codex ran claude ran " ]] || fail "limit did not fall back: $(calls)"
 
@@ -63,23 +78,46 @@ stub codex 1 "$limit_msg" "mkdir -p '$tmp/wt/issue-29'"
 reset; if run; then fail "limit after local work should fail the run"; fi
 [[ "$(calls)" == "codex ran " ]] || fail "fell back after local work: $(calls)"
 
+# Nor after it made a clean local commit (git status stays empty).
+stub codex 1 "$limit_msg" "git -C '$checkout' commit --quiet --allow-empty -m work"
+reset; if run; then fail "limit after a local commit should fail the run"; fi
+[[ "$(calls)" == "codex ran " ]] || fail "fell back after a local commit: $(calls)"
+
+# Nor after it switched the checkout to another clean branch.
+stub codex 1 "$limit_msg" "git -C '$checkout' switch --quiet -c agent/issue-29"
+reset; if run; then fail "limit after a branch switch should fail the run"; fi
+[[ "$(calls)" == "codex ran " ]] || fail "fell back after a branch switch: $(calls)"
+git -C "$checkout" switch --quiet main
+
+# Nor after it claimed an issue beyond the first 500 in the queue.
+stub codex 1 "$limit_msg" "sed -i '' '/^550\$/d' '$tmp/state'"
+reset; seq 1 600 > "$tmp/state"; if run; then fail "limit after a deep-queue claim should fail the run"; fi
+[[ "$(calls)" == "codex ran " ]] || fail "fell back after a deep-queue claim: $(calls)"
+
 # Without a readable state snapshot there is no evidence that nothing happened.
 stub codex 1 "$limit_msg"
 reset; touch "$tmp/gh-fail"; if run; then fail "unreadable state should fail the run"; fi
 [[ "$(calls)" == "codex ran " ]] || fail "fell back without a state snapshot: $(calls)"
 
 # Claude can report an error in its JSON result while exiting zero.
-stub claude 0 '{"is_error":true,"subtype":"success","result":"Credit balance is too low","errors":[]}'
+stub claude 0 '{"type":"result","is_error":true,"subtype":"success","result":"Credit balance is too low","errors":[]}'
 stub codex 0 "done"
 reset; GHOSTLINE_AGENT_RUNNERS="claude codex" run || fail "claude limit fallback failed: $(cat "$tmp/out")"
 [[ "$(calls)" == "claude ran codex ran " ]] || fail "claude is_error limit did not fall back: $(calls)"
-stub claude 0 '{"is_error":true,"subtype":"error_during_execution","result":"","errors":["tool crashed"]}'
+stub claude 0 '{"type":"result","is_error":true,"subtype":"error_during_execution","result":"","errors":["tool crashed"]}'
 reset; if GHOSTLINE_AGENT_RUNNERS="claude codex" run; then fail "claude is_error should fail the run"; fi
 [[ "$(calls)" == "claude ran " ]] || fail "claude is_error fell back: $(calls)"
 grep -q "tool crashed" "$tmp/out" || fail "claude errors were not logged: $(cat "$tmp/out")"
 
+# Empty or malformed Claude output with exit 0 is an unknown outcome, not a success.
+for bad in "" "not json" '{"result":"done"}' '[1,2]'; do
+  stub claude 0 "$bad"
+  reset; if GHOSTLINE_AGENT_RUNNERS="claude codex" run; then fail "malformed output '$bad' counted as success"; fi
+  [[ "$(calls)" == "claude ran " ]] || fail "malformed output '$bad' fell back: $(calls)"
+done
+
 # Runner order is configurable.
-stub codex 0 "done"; stub claude 0 '{"is_error":false,"result":"done"}'
+stub codex 0 "done"; stub claude 0 "$claude_ok"
 reset; GHOSTLINE_AGENT_RUNNERS="claude codex" run
 [[ "$(calls)" == "claude ran " ]] || fail "runner order ignored: $(calls)"
 

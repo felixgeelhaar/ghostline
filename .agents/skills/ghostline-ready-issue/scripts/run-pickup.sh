@@ -38,16 +38,21 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 state_dir="$(mktemp -d)"
 trap 'rm -rf "$state_dir"' EXIT
 
-# Everything a pickup changes before it can fail part-way: the label queue, pushed
-# agent branches, day-lock refs, the worktrees directory, and the checkout.
+# Everything a pickup changes before it can fail part-way: the complete label queue,
+# pushed agent branches, day-lock refs, the worktrees directory, local branches and
+# HEAD, registered worktrees, and the checkout. Any read failure fails the snapshot.
 snapshot() {
-  gh issue list --repo "$slug" --state open --label ready-for-agent --limit 500 \
-    --json number --jq '[.[].number] | sort | map(tostring) | join(",")' &&
-    gh api "repos/$slug/git/matching-refs/heads/agent/" --jq '[.[].ref] | sort | join(",")' &&
-    gh api "repos/$slug/git/matching-refs/heads/ghostline-automation/" \
-      --jq '[.[] | .ref + "@" + .object.sha] | sort | join(",")' &&
-    ls -A "$worktrees" &&
-    git -C "$repo" status --porcelain
+  gh api --paginate "repos/$slug/issues?state=open&labels=ready-for-agent&per_page=100" \
+    --jq '.[].number' | sort -n || return 1
+  gh api "repos/$slug/git/matching-refs/heads/agent/" --jq '[.[].ref] | sort | join(",")' || return 1
+  gh api "repos/$slug/git/matching-refs/heads/ghostline-automation/" \
+    --jq '[.[] | .ref + "@" + .object.sha] | sort | join(",")' || return 1
+  ls -A "$worktrees" || return 1
+  echo "HEAD $(git -C "$repo" symbolic-ref -q HEAD || echo detached)"
+  git -C "$repo" rev-parse HEAD || return 1
+  git -C "$repo" for-each-ref --format='%(refname) %(objectname)' refs/heads || return 1
+  git -C "$repo" worktree list --porcelain || return 1
+  git -C "$repo" status --porcelain || return 1
 }
 
 claude_tools=(
@@ -72,14 +77,19 @@ run_claude() {
     --permission-mode dontAsk --add-dir "$worktrees" \
     --allowedTools "${claude_tools[@]}") >"$out" 2>&1 || status=$?
   # Print the report, any error the result carries, and every denied tool call.
-  # A result with is_error is a failed run even when claude exits zero.
+  # A result with is_error is a failed run even when claude exits zero, and output
+  # that is not a Claude result object leaves the outcome unknown, which also fails.
   python3 -c '
 import json, sys
 raw = open(sys.argv[1]).read()
 try:
     d = json.loads(raw)
 except ValueError:
-    print(raw); sys.exit(0)
+    d = None
+if not isinstance(d, dict) or d.get("type") != "result" or "is_error" not in d:
+    print(raw)
+    print("RUNNER ERROR: claude did not return a result object; the outcome is unknown")
+    sys.exit(4)
 print(d.get("result", ""))
 for x in d.get("permission_denials", []):
     print("PERMISSION DENIED:", x.get("tool_name"), json.dumps(x.get("tool_input"))[:400])
