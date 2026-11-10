@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.ghostline.pickup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/.agents/skills/ghostline-ready-issue/scripts/run-pickup.sh</string>
+  </array>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>StartInterval</key><integer>7200</integer>
+  <key>RunAtLoad</key><false/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>__HOME__/.local/bin:__HOME__/go/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>GHOSTLINE_AGENT_RUNNERS</key><string>codex claude</string>
+  </dict>
+  <key>StandardOutPath</key><string>__HOME__/.ghostline/runs/launchd.out.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.ghostline/runs/launchd.err.log</string>
+</dict>
+</plist>

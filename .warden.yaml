@@ -4,11 +4,14 @@ hooks:
   pre_commit: true
   pre_push: true
 commands:
+  day-lock-test: "bash .agents/skills/ghostline-ready-issue/scripts/test-day-lock.sh"
+  runner-test: "bash .agents/skills/ghostline-ready-issue/scripts/test-run-pickup.sh"
+  dev-servers-test: "bash .agents/skills/ghostline-ready-issue/scripts/test-dev-servers.sh"
   go-test: "go test ./... -count=1"
   go-vet: "go vet ./..."
   nox-scan: "nox --format all --output .nox/results scan . --tracked-only"
   frontend-verify: "cd frontend && npm ci && npm test && npm run build"
 steps:
-  pre_commit: [go-test, nox-scan]
+  pre_commit: [day-lock-test, runner-test, dev-servers-test, go-test, nox-scan]
   pre_push: [go-test, go-vet, frontend-verify, nox-scan]
 parallel: true
