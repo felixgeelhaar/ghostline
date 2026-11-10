@@ -90,3 +90,5 @@ Qodo's review of `d01b5c7` raised ten findings against the runner and skill. The
 - `scripts/dev-servers.sh` gives the run an allowlisted, owner-checked way to start and stop its servers; the env-prefixed server commands were removed from the allowlist.
 - `test-run-pickup.sh` asserts the exact Claude argument list, including `--permission-mode dontAsk`.
 - launchd setup creates `~/.ghostline/runs` first, and the history above no longer contradicts the smoke test.
+
+Qodo's review of `2500440` raised four more findings, all confirmed and fixed with tests that fail against the previous scripts. The fallback snapshot now includes HEAD, local branches, and registered worktrees, so a clean commit or branch switch blocks a second runner. It reads the complete `ready-for-agent` queue with pagination, without a 500-issue cap. Empty or malformed Claude output counts as an unknown outcome, not a success. `dev-servers.sh` counts a port as ready only when the listener belongs to a process tree it started, and a foreign listener fails the start and triggers cleanup.
