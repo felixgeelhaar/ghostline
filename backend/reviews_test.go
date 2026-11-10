@@ -7,7 +7,41 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/felixgeelhaar/ghostline/backend/internal/domain"
 )
+
+var acmeApp = domain.RepositoryIdentity{Owner: "acme", Name: "app"}
+
+func TestParseQodoKeepsCommitMarkersOnlyForTheImportedRepository(t *testing.T) {
+	tests := []struct {
+		name    string
+		marker  string
+		wantSHA string
+		wantURL string
+	}{
+		{"same repository", "https://github.com/acme/app/commit/" + headSHA, headSHA, "https://github.com/acme/app/commit/" + headSHA},
+		{"same repository, different case", "https://github.com/ACME/App/commit/" + headSHA, headSHA, "https://github.com/ACME/App/commit/" + headSHA},
+		{"another repository", "https://github.com/acme/other/commit/" + headSHA, "", ""},
+		{"another owner", "https://github.com/someone/app/commit/" + headSHA, "", ""},
+		{"another host", "https://evil.example/acme/app/commit/" + headSHA, "", ""},
+		{"extra path segment", "https://github.com/acme/app/extra/commit/" + headSHA, "", ""},
+		{"encoded separator", "https://github.com/acme%2Fother/app/commit/" + headSHA, "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			comments := []githubIssueComment{{ID: 30, User: githubUser{Login: "qodo-code-review[bot]"}, HTMLURL: "https://github.com/acme/app/pull/7#issuecomment-30", Body: `<h3>Code Review by Qodo</h3><p>Great, no issues found!</p><!-- ` + tt.marker + ` -->`}}
+
+			got, unrecognized := parseQodoReviews(comments, acmeApp)
+			if unrecognized != 0 || len(got) != 1 {
+				t.Fatalf("the review itself must be kept: reviews=%+v unrecognized=%d", got, unrecognized)
+			}
+			if got[0].CommitSHA != tt.wantSHA || got[0].CommitURL != tt.wantURL {
+				t.Fatalf("commit evidence = (%q, %q), want (%q, %q)", got[0].CommitSHA, got[0].CommitURL, tt.wantSHA, tt.wantURL)
+			}
+		})
+	}
+}
 
 func TestParseQodoReviewComments(t *testing.T) {
 	comments := []githubIssueComment{
@@ -18,7 +52,7 @@ func TestParseQodoReviewComments(t *testing.T) {
 		{ID: 21, User: githubUser{Login: "qodo-code-review[bot]"}, Body: "/agentic_review"},
 	}
 
-	got, unrecognized := parseQodoReviews(comments)
+	got, unrecognized := parseQodoReviews(comments, acmeApp)
 	if len(got) != 2 {
 		t.Fatalf("got %d Qodo review comments, want 2", len(got))
 	}
@@ -43,7 +77,7 @@ func TestParseQodoReviewComments(t *testing.T) {
 func TestParseQodoCleanReviewAsNoOpenFindings(t *testing.T) {
 	comments := []githubIssueComment{{ID: 26, User: githubUser{Login: "qodo-code-review[bot]"}, HTMLURL: "https://github.com/acme/app/pull/7#issuecomment-26", Body: `<h3>Code Review by Qodo</h3><p>Nice, no open findings for this group</p><!-- https://github.com/acme/app/commit/` + headSHA + ` -->`}}
 
-	got, unrecognized := parseQodoReviews(comments)
+	got, unrecognized := parseQodoReviews(comments, acmeApp)
 	if unrecognized != 0 || len(got) != 1 || got[0].Kind != "no_open_findings" || got[0].CommitSHA != headSHA || len(got[0].Findings) != 0 {
 		t.Fatalf("clean review was not preserved as source-backed no-open-findings evidence: reviews=%+v unrecognized=%d", got, unrecognized)
 	}
@@ -52,7 +86,7 @@ func TestParseQodoCleanReviewAsNoOpenFindings(t *testing.T) {
 func TestParseQodoDoesNotMarkUnreadableFindingGroupAsClean(t *testing.T) {
 	comments := []githubIssueComment{{ID: 27, User: githubUser{Login: "qodo-code-review[bot]"}, HTMLURL: "https://github.com/acme/app/pull/7#issuecomment-27", Body: `<h3>Code Review by Qodo</h3><p>Nice, no open findings for this group</p><details><summary>View medium (1)</summary><details><summary>Concern: stale result details</summary></details></details>`}}
 
-	got, unrecognized := parseQodoReviews(comments)
+	got, unrecognized := parseQodoReviews(comments, acmeApp)
 	if unrecognized != 0 || len(got) != 1 || got[0].Kind != "findings" {
 		t.Fatalf("a non-empty, unparsed finding group must not look clean: reviews=%+v unrecognized=%d", got, unrecognized)
 	}
@@ -60,7 +94,7 @@ func TestParseQodoDoesNotMarkUnreadableFindingGroupAsClean(t *testing.T) {
 
 func TestQodoSummaryStopsAtDividerSourceEvenWithoutDescriptiveAlt(t *testing.T) {
 	comments := []githubIssueComment{{ID: 25, User: githubUser{Login: "qodo-free-for-open-source-projects[bot]"}, Body: `<h3>PR Summary by Qodo</h3>Keep checks revision-specific.<img src="https://www.qodo.ai/light-grey-line.svg" alt="divider"><code>Post-divider category</code>`}}
-	got, _ := parseQodoReviews(comments)
+	got, _ := parseQodoReviews(comments, acmeApp)
 	if len(got) != 1 || got[0].Summary != "Keep checks revision-specific." {
 		t.Fatalf("summary crossed divider or was not parsed: %+v", got)
 	}
@@ -81,7 +115,7 @@ func TestFetchQodoReviewsStopsAtCommentBudgetAndReportsUnavailable(t *testing.T)
 	}))
 	defer srv.Close()
 
-	result := fetchQodoReviews(t.Context(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7)
+	result := fetchQodoReviews(t.Context(), &githubClient{baseURL: srv.URL, http: srv.Client()}, acmeApp, 7)
 	if requests != maxQodoCommentPages || result.Availability != reviewsUnavailable || len(result.Items) != 0 {
 		t.Fatalf("requests=%d result=%+v", requests, result)
 	}
@@ -96,7 +130,7 @@ func TestFetchQodoReviewsMarksUnavailableOnGitHubError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	result := fetchQodoReviews(t.Context(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7)
+	result := fetchQodoReviews(t.Context(), &githubClient{baseURL: srv.URL, http: srv.Client()}, acmeApp, 7)
 	if result.Availability != reviewsUnavailable || !strings.Contains(result.Reason, "could not be loaded") || len(result.Items) != 0 {
 		t.Fatalf("unexpected unavailable result: %+v", result)
 	}
