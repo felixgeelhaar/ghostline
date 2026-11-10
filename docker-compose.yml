@@ -6,6 +6,10 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 8080
+      # Only the frontend proxy can reach the backend (it is not published), and that
+      # proxy overwrites this header with each browser's address.
+      RATE_LIMIT_CLIENT_IP_HEADER: X-Ghostline-Client-IP
+      RATE_LIMIT_TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7
     expose:
       - "8080"
     healthcheck:
