@@ -29,6 +29,21 @@ export const PullRequestSchema = z.object({
       })
     }
   })
+
+  // A review's reviewed-commit link must name a commit in the imported repository.
+  pullRequest.qodoReviews.items.forEach((review, index) => {
+    if (review.commitUrl === undefined) return
+    if (review.commitSha === undefined || !matchesGitHubPath(
+      review.commitUrl,
+      `${pullRequest.owner}/${pullRequest.repo}/commit/${review.commitSha}`,
+    )) {
+      context.addIssue({
+        code: 'custom',
+        path: ['qodoReviews', 'items', index, 'commitUrl'],
+        message: 'Qodo review commit URL does not match the imported repository and reviewed commit.',
+      })
+    }
+  })
 })
 export type PullRequest = z.infer<typeof PullRequestSchema>
 

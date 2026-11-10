@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"golang.org/x/net/html"
+
+	"github.com/felixgeelhaar/ghostline/backend/internal/domain"
 )
 
 const (
@@ -62,13 +64,17 @@ type githubIssueComment struct {
 }
 
 var (
-	qodoCommitMarker        = regexp.MustCompile(`(?i)<!--\s*(https://github\.com/[^\s]+/commit/([0-9a-f]{40}))\s*-->`)
+	qodoCommitMarker        = regexp.MustCompile(`(?i)<!--\s*(https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/commit/([0-9a-f]{40}))\s*-->`)
 	qodoFindingOrdinal      = regexp.MustCompile(`^\s*\d+\.\s*`)
 	qodoFindingHeadingText  = regexp.MustCompile(`^\s*\d+\.`)
 	qodoNonzeroFindingGroup = regexp.MustCompile(`(?i)^view\s+.+\(\s*[1-9]\d*\s*\)$`)
 )
 
-func parseQodoReviews(comments []githubIssueComment) ([]qodoReview, int) {
+// parseQodoReviews extracts Qodo reviews from issue comments. A review's commit
+// marker is kept only when it names the imported repository; a marker for any
+// other repository is dropped, so the review shows no reviewed revision rather
+// than another repository's commit.
+func parseQodoReviews(comments []githubIssueComment, repo domain.RepositoryIdentity) ([]qodoReview, int) {
 	reviews := make([]qodoReview, 0)
 	unrecognized := 0
 	for _, comment := range comments {
@@ -109,9 +115,10 @@ func parseQodoReviews(comments []githubIssueComment) ([]qodoReview, int) {
 			continue
 		}
 
-		if match := qodoCommitMarker.FindStringSubmatch(comment.Body); match != nil {
+		if match := qodoCommitMarker.FindStringSubmatch(comment.Body); match != nil &&
+			repo.Equal(domain.RepositoryIdentity{Owner: match[2], Name: match[3]}) {
 			review.CommitURL = match[1]
-			review.CommitSHA = strings.ToLower(match[2])
+			review.CommitSHA = strings.ToLower(match[4])
 		}
 		reviews = append(reviews, review)
 	}
@@ -312,16 +319,16 @@ func attribute(node *html.Node, name string) string {
 	return ""
 }
 
-func fetchQodoReviews(ctx context.Context, gh *githubClient, owner, repo string, number int) qodoReviewSet {
+func fetchQodoReviews(ctx context.Context, gh *githubClient, repo domain.RepositoryIdentity, number int) qodoReviewSet {
 	reviews := make([]qodoReview, 0)
 	unrecognized := 0
 	for page := 1; page <= maxQodoCommentPages; page++ {
 		var batch []githubIssueComment
-		path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=100&page=%d", url.PathEscape(owner), url.PathEscape(repo), number, page)
+		path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=100&page=%d", url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number, page)
 		if err := gh.get(ctx, path, &batch); err != nil {
 			return qodoReviewSet{Availability: reviewsUnavailable, Reason: "Qodo review comments could not be loaded from GitHub.", Items: []qodoReview{}}
 		}
-		parsed, unrecognizedBatch := parseQodoReviews(batch)
+		parsed, unrecognizedBatch := parseQodoReviews(batch, repo)
 		reviews = append(reviews, parsed...)
 		unrecognized += unrecognizedBatch
 		if len(batch) < 100 {
