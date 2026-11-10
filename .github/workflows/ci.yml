@@ -9,9 +9,11 @@ permissions:
   contents: read
 
 concurrency:
-  # Superseded runs for the same PR or branch do not need to finish.
+  # A newer push to a pull request supersedes its older run, so that run may be
+  # cancelled. Runs on main are never cancelled: every merged revision keeps its
+  # own CI result.
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   go:
