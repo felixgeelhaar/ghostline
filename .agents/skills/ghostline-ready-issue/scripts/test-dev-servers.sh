@@ -50,4 +50,62 @@ alive "$unrelated" || fail "unrelated process was stopped"
 alive "$reused" || fail "a reused PID was stopped"
 [[ ! -e "$state/pids" ]] || fail "record not removed after stop"
 
-echo "dev server validation and owner-checked stop passed"
+
+# Startup: build a tiny app whose servers listen on the ports they are given.
+ports="$(python3 -c 'import socket
+s = [socket.socket() for _ in range(2)]
+for x in s: x.bind(("127.0.0.1", 0))
+print(" ".join(str(x.getsockname()[1]) for x in s))')"
+read -r backend_port frontend_port <<<"$ports"
+export GHOSTLINE_BACKEND_PORT="$backend_port" GHOSTLINE_FRONTEND_PORT="$frontend_port"
+app="$tmp/app"
+git init --quiet "$app"
+mkdir -p "$app/backend" "$app/frontend"
+printf 'module example.invalid/app\n\ngo 1.21\n' >"$app/go.mod"
+cat >"$app/backend/main.go" <<'GO'
+package main
+
+import (
+	"net/http"
+	"os"
+	"time"
+)
+
+func main() {
+	if os.Getenv("FAKE_BACKEND_SILENT") != "" {
+		time.Sleep(time.Minute)
+		return
+	}
+	_ = http.ListenAndServe("127.0.0.1:"+os.Getenv("PORT"), http.NotFoundHandler())
+}
+GO
+cat >"$app/frontend/server.js" <<'JS'
+const port = Number(process.argv[process.argv.indexOf("--port") + 1]);
+require("http").createServer((_, res) => res.end("ok")).listen(port, "127.0.0.1");
+JS
+printf '{"name":"fake","private":true,"scripts":{"dev":"node server.js"}}\n' >"$app/frontend/package.json"
+app_state="$(git -C "$app" rev-parse --path-format=absolute --git-path ghostline-dev-servers)"
+
+# Both servers start, are owned by this script's process trees, and stop again.
+bash "$servers" start "$app" >/dev/null || fail "start failed: $(tail -n 5 "$app_state"/*.log)"
+curl -fsS "http://127.0.0.1:$frontend_port" >/dev/null || fail "frontend not reachable"
+bash "$servers" stop "$app" >/dev/null
+sleep 0.5
+if lsof -nP -iTCP:"$backend_port" -sTCP:LISTEN -t >/dev/null; then fail "backend still listening after stop"; fi
+
+# A foreign process that takes the backend port during startup is not mistaken for the
+# backend: start fails, cleans up its own processes, and leaves the foreign one running.
+python3 -c 'import socket, sys, time
+time.sleep(1)
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(); time.sleep(60)' "$backend_port" &
+foreign=$!
+others+=("$foreign")
+if FAKE_BACKEND_SILENT=1 bash "$servers" start "$app" >/dev/null 2>&1; then
+  fail "start succeeded although a foreign process owned the backend port"
+fi
+alive "$foreign" || fail "the foreign listener was stopped"
+[[ ! -e "$app_state/pids" ]] || fail "failed start left a record behind"
+if lsof -nP -iTCP:"$frontend_port" -sTCP:LISTEN -t >/dev/null; then fail "failed start left the frontend running"; fi
+
+echo "dev server validation and owner-checked start and stop passed"

@@ -11,8 +11,9 @@
 # are never touched.
 set -euo pipefail
 
-backend_port=18080
-frontend_port=15173
+# The ports are fixed for pickups; the overrides exist so the test can use free ports.
+backend_port="${GHOSTLINE_BACKEND_PORT:-18080}"
+frontend_port="${GHOSTLINE_FRONTEND_PORT:-15173}"
 
 usage() {
   echo "Usage: dev-servers.sh start|stop <worktree>" >&2
@@ -69,6 +70,30 @@ stop_servers() {
 
 record() { printf '%s\t%s\n' "$1" "$(started_at "$1")" >>"$pid_file"; }
 
+recorded_pids() { cut -f1 "$pid_file"; }
+
+# Prints "owned" when every listener on the port belongs to a recorded process tree,
+# "foreign" when any listener does not, and "none" when nothing listens yet.
+port_owner() {
+  local listeners pid owned=" "
+  listeners="$(lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null || true)"
+  [[ -n "$listeners" ]] || { echo none; return; }
+  for pid in $(recorded_pids); do
+    owned+="$pid $(descendants "$pid" | tr '\n' ' ')"
+  done
+  for pid in $listeners; do
+    [[ "$owned" == *" $pid "* ]] || { echo foreign; return; }
+  done
+  echo owned
+}
+
+fail_start() {
+  echo "$1; logs follow" >&2
+  tail -n 20 "$state_dir/backend.log" "$state_dir/frontend.log" >&2 || true
+  stop_servers >&2
+  exit 1
+}
+
 start_servers() {
   if [[ -f "$pid_file" ]]; then
     echo "dev servers are already recorded for $worktree; run stop first" >&2
@@ -91,14 +116,18 @@ start_servers() {
     run dev -- --port "$frontend_port" --strictPort \
     >"$state_dir/frontend.log" 2>&1 </dev/null 9>&- &
   record "$!"
-  local waited=0
-  until listening "$backend_port" && listening "$frontend_port"; do
-    if [[ $waited -ge 180 ]]; then
-      echo "dev servers did not start within 90 seconds; logs follow" >&2
-      tail -n 20 "$state_dir/backend.log" "$state_dir/frontend.log" >&2 || true
-      stop_servers >&2
-      exit 1
-    fi
+  # Ready only when both ports are served by the processes started here.
+  local waited=0 pid backend frontend
+  while true; do
+    for pid in $(recorded_pids); do
+      kill -0 "$pid" 2>/dev/null || fail_start "a dev server exited during startup"
+    done
+    backend="$(port_owner "$backend_port")"
+    frontend="$(port_owner "$frontend_port")"
+    [[ "$backend" != foreign ]] || fail_start "another process took port $backend_port during startup"
+    [[ "$frontend" != foreign ]] || fail_start "another process took port $frontend_port during startup"
+    [[ "$backend" == owned && "$frontend" == owned ]] && break
+    [[ $waited -lt 180 ]] || fail_start "dev servers did not start within 90 seconds"
     sleep 0.5
     waited=$((waited + 1))
   done
