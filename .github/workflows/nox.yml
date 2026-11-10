@@ -1,80 +1,19 @@
-name: Security scan
+name: Security
 
 on:
-  pull_request:
   push:
     branches: [main]
+  pull_request:
 
 permissions:
   contents: read
-  attestations: write
-  id-token: write
-  artifact-metadata: write
-  issues: write
+  security-events: write
   pull-requests: write
 
 jobs:
   nox:
-    name: Nox security scan
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out revision
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Scan repository with Nox
-        id: nox
-        uses: nox-hq/nox@7879126c43eaed7de3555e279873ba784b5f72a2 # v1.57.0 action source
-        with:
-          path: .
-          version: 1.57.0
-          format: all
-          output: nox-results
-          fail-on-findings: true
-          fail-on-degraded: false
-          annotate: true
-          pr-comment: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
-
-      - name: Attest Nox reports
-        if: >-
-          always() &&
-          steps.nox.outputs.findings-file != '' &&
-          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-path: nox-results/*
-
-      - name: Enforce scan completeness
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          report="nox-results/findings.json"
-          if [[ ! -s "$report" ]]; then
-            echo "::error::Nox did not produce findings.json; scan coverage cannot be confirmed."
-            exit 1
-          fi
-
-          # This currently known gap is specific to Docker base images: Nox
-          # inventories them but has no Docker ecosystem in its OSV lookup.
-          # Keep that gap visible while failing every other degraded check.
-          jq -e '
-            .meta.degradations as $degradations |
-            all($degradations[];
-              .kind == "lockfile_parse" and
-              (.detail | test("^[0-9]+ docker packages are in the inventory but the advisory pipeline has no OSV ecosystem for docker$")) and
-              (.impact | test("^these packages were NOT checked for known vulnerabilities"))
-            )
-          ' "$report" >/dev/null || {
-            echo "::error::Nox reported incomplete scan coverage beyond the documented Docker advisory gap. Inspect nox-results/findings.json."
-            exit 1
-          }
-
-          jq -r '.meta.degradations[]? | "Accepted documented coverage gap: \(.detail) — \(.impact)"' "$report" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Keep scan reports with this run
-        if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: nox-reports
-          path: nox-results/
-          if-no-files-found: warn
+    # Pinned to a reviewed commit: a reusable workflow runs with this repository's
+    # token and the permissions above, so a change to the fleet's branch must not
+    # reach this scan without a reviewed change here. Move the pin deliberately.
+    # ef33ad2 is the head of klarlabs-studio/.github#92 (Nox 1.63.0, `nox ci-gate`).
+    uses: klarlabs-studio/.github/.github/workflows/nox.yml@ef33ad24b9f534fd8bfa5aa2ace0c9b9cbab07eb

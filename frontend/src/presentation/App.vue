@@ -2,6 +2,7 @@
 import { computed, nextTick, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
+import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
 import { checkOutcome, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
 import { findRecurringFindings, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import { buildFindingTrace } from '../domain/trace'
@@ -18,6 +19,7 @@ const focusedChecks = ref<PullRequest['checks']>()
 const checksLoading = ref(false)
 const checksError = ref('')
 const selectedTraceId = ref('')
+const copyResult = ref<CopyResult>()
 let traceTrigger: HTMLButtonElement | undefined
 let revisionRequest = 0
 const activeChecks = computed(() => selectedRevision.value ? focusedChecks.value : pr.value?.checks)
@@ -36,7 +38,7 @@ const glyph: Record<CheckTone, string> = { pass: '✓', fail: '✕', running: '�
 async function loadPR() {
   error.value = validatePullRequestURL(url.value) ?? ''
   if (error.value) return
-  loading.value = true; pr.value = undefined; selectedRevision.value = ''; selectedTraceId.value = ''; traceTrigger = undefined; focusedChecks.value = undefined; checksError.value = ''; checksLoading.value = false; revisionRequest++
+  loading.value = true; pr.value = undefined; selectedRevision.value = ''; selectedTraceId.value = ''; traceTrigger = undefined; focusedChecks.value = undefined; checksError.value = ''; checksLoading.value = false; copyResult.value = undefined; copyRequest++; revisionRequest++
   try { pr.value = await importPullRequest(url.value) } catch (e) { error.value = e instanceof Error ? e.message : 'Could not load the pull request.' }
   finally { loading.value = false }
 }
@@ -61,6 +63,13 @@ async function focusRevision(sha: string) {
   } finally {
     if (request === revisionRequest) checksLoading.value = false
   }
+}
+let copyRequest = 0
+async function copySha(sha: string) {
+  const request = ++copyRequest
+  copyResult.value = undefined
+  const result = await copyRevisionSha(sha, navigator.clipboard)
+  if (request === copyRequest) copyResult.value = result
 }
 function clearFocus() {
   revisionRequest++
@@ -116,7 +125,8 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
 
       <h3 class="section-title"><span>REVISION TIMELINE <span v-if="selectedRevision">· FOCUSED</span></span><span>COMMIT TIME · OLDEST FIRST</span></h3>
       <button v-if="selectedRevision" class="clear-focus" @click="clearFocus">SHOW FULL HISTORY</button>
-      <ol class="timeline"><li v-for="commit in visibleCommits" :key="commit.sha"><span class="node"></span><div class="commit"><div class="commit-meta"><span><a :href="commit.url" target="_blank" rel="noreferrer">{{ commit.shortSha }}</a><span v-if="headCommitLabel(pr.checks, commit.sha)" class="head-tag">{{ headCommitLabel(pr.checks, commit.sha) }}</span></span><time>{{ date(commit.committedAt) }}</time></div><h4>{{ commit.message }}</h4><p>COMMITTED BY {{ commit.author }}</p><button v-if="selectedRevision !== commit.sha" class="focus-revision" :aria-label="`Focus history on revision ${commit.shortSha}`" @click="focusRevision(commit.sha)">FOCUS THIS REVISION</button><span v-else class="selected-tag">FOCUSED REVISION</span></div></li></ol>
+      <ol class="timeline"><li v-for="commit in visibleCommits" :key="commit.sha"><span class="node"></span><div class="commit"><div class="commit-meta"><span><a :href="commit.url" target="_blank" rel="noreferrer">{{ commit.shortSha }}</a><span v-if="headCommitLabel(pr.checks, commit.sha)" class="head-tag">{{ headCommitLabel(pr.checks, commit.sha) }}</span></span><time>{{ date(commit.committedAt) }}</time></div><h4>{{ commit.message }}</h4><p>COMMITTED BY {{ commit.author }}</p><div class="commit-actions"><button v-if="selectedRevision !== commit.sha" class="focus-revision" :aria-label="`Focus history on revision ${commit.shortSha}`" @click="focusRevision(commit.sha)">FOCUS THIS REVISION</button><span v-else class="selected-tag">FOCUSED REVISION</span><button type="button" class="copy-sha" :aria-label="`Copy full SHA for revision ${commit.shortSha}`" @click="copySha(commit.sha)">COPY SHA</button></div></div></li></ol>
+      <p class="copy-status" :class="{ warn: copyResult && !copyResult.ok }" role="status">{{ copyResult?.message ?? '' }}</p>
       <p class="footnote">Commit timestamps come from Git commit metadata. They do not establish push time or complete pull request event chronology.</p>
 
       <section class="qodo-reviews" aria-labelledby="qodo-reviews-title">

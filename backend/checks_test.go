@@ -28,7 +28,7 @@ func (f fakeGitHub) serve(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/acme/app/pulls/7", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"number":7,"title":"Add checks","state":"open","html_url":"https://github.com/acme/app/pull/7","created_at":"2026-11-01T10:00:00Z","updated_at":"2026-11-02T10:00:00Z","head":{"sha":"` + f.headSHA + `"}}`))
+		_, _ = w.Write([]byte(`{"number":7,"title":"Add checks","state":"open","html_url":"https://github.com/acme/app/pull/7","created_at":"2026-11-01T10:00:00Z","updated_at":"2026-11-02T10:00:00Z","head":{"sha":"` + f.headSHA + `"},"base":{"repo":{"name":"app","owner":{"login":"acme"}}}}`))
 	})
 	mux.HandleFunc("/repos/acme/app/pulls/7/commits", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`[{"sha":"` + olderSHA + `","html_url":"https://github.com/acme/app/commit/` + olderSHA + `","commit":{"message":"first","author":{"name":"A","date":"2026-11-01T10:00:00Z"}}},{"sha":"` + headSHA + `","html_url":"https://github.com/acme/app/commit/` + headSHA + `","commit":{"message":"second","author":{"name":"A","date":"2026-11-02T10:00:00Z"}}}]`))
@@ -282,7 +282,7 @@ func TestImportRetriesWhenPullRequestHeadChanges(t *testing.T) {
 		if prReads >= 2 {
 			sha = newHeadSHA
 		}
-		_, _ = w.Write([]byte(`{"number":7,"title":"Add checks","state":"open","html_url":"https://github.com/acme/app/pull/7","created_at":"2026-11-01T10:00:00Z","updated_at":"2026-11-02T10:00:00Z","head":{"sha":"` + sha + `"}}`))
+		_, _ = w.Write([]byte(`{"number":7,"title":"Add checks","state":"open","html_url":"https://github.com/acme/app/pull/7","created_at":"2026-11-01T10:00:00Z","updated_at":"2026-11-02T10:00:00Z","head":{"sha":"` + sha + `"},"base":{"repo":{"name":"app","owner":{"login":"acme"}}}}`))
 	})
 	mux.HandleFunc("/repos/acme/app/pulls/7/commits", func(w http.ResponseWriter, r *http.Request) {
 		commitReads++
@@ -326,7 +326,7 @@ func TestImportReturnsConflictWhenHeadKeepsChanging(t *testing.T) {
 		if prReads%2 == 0 {
 			sha = "cccccccccccccccccccccccccccccccccccccccc"
 		}
-		_, _ = w.Write([]byte(`{"number":7,"title":"Add checks","state":"open","html_url":"https://github.com/acme/app/pull/7","created_at":"2026-11-01T10:00:00Z","updated_at":"2026-11-02T10:00:00Z","head":{"sha":"` + sha + `"}}`))
+		_, _ = w.Write([]byte(`{"number":7,"title":"Add checks","state":"open","html_url":"https://github.com/acme/app/pull/7","created_at":"2026-11-01T10:00:00Z","updated_at":"2026-11-02T10:00:00Z","head":{"sha":"` + sha + `"},"base":{"repo":{"name":"app","owner":{"login":"acme"}}}}`))
 	})
 	mux.HandleFunc("/repos/acme/app/pulls/7/commits", func(w http.ResponseWriter, r *http.Request) {
 		commitReads++

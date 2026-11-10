@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/felixgeelhaar/ghostline/backend/internal/domain"
 	"github.com/gin-gonic/gin"
 )
 
@@ -48,6 +49,15 @@ type githubPR struct {
 	Head      struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
+	Base struct {
+		Repo struct {
+			Name     string `json:"name"`
+			FullName string `json:"full_name"`
+			Owner    struct {
+				Login string `json:"login"`
+			} `json:"owner"`
+		} `json:"repo"`
+	} `json:"base"`
 }
 
 type githubCommit struct {
@@ -106,6 +116,12 @@ func (a api) importPR(c *gin.Context) {
 			respondGitHubError(c, err)
 			return
 		}
+		identity, err := domain.NewRepositoryIdentity(rawPR.Base.Repo.Owner.Login, rawPR.Base.Repo.Name)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned incomplete repository identity for this pull request."})
+			return
+		}
+		path = fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(identity.Owner), url.PathEscape(identity.Name), rawPR.Number)
 		var rawCommits []githubCommit
 		for page := 1; ; page++ {
 			var batch []githubCommit
@@ -118,7 +134,7 @@ func (a api) importPR(c *gin.Context) {
 				break
 			}
 		}
-		checks := fetchRevisionChecks(c.Request.Context(), a.gh, owner, repo, rawPR.Head.SHA)
+		checks := fetchRevisionChecks(c.Request.Context(), a.gh, identity.Owner, identity.Name, rawPR.Head.SHA)
 
 		// GitHub requests are separate snapshots. Verify the head after fetching the
 		// timeline and checks so a force push cannot pair a new timeline with old checks.
@@ -127,17 +143,24 @@ func (a api) importPR(c *gin.Context) {
 			respondGitHubError(c, err)
 			return
 		}
-		if verifiedPR.Head.SHA != rawPR.Head.SHA {
+		verifiedIdentity, err := domain.NewRepositoryIdentity(verifiedPR.Base.Repo.Owner.Login, verifiedPR.Base.Repo.Name)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned incomplete repository identity for this pull request."})
+			return
+		}
+		if verifiedPR.Head.SHA != rawPR.Head.SHA || !identity.Equal(verifiedIdentity) {
 			if attempt+1 < maxSnapshotAttempts {
+				path = fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(verifiedIdentity.Owner), url.PathEscape(verifiedIdentity.Name), verifiedPR.Number)
 				continue
 			}
 			c.JSON(http.StatusConflict, gin.H{"error": "This pull request changed while its timeline and checks were loading. Please import it again."})
 			return
 		}
 		rawPR = verifiedPR
+		identity = verifiedIdentity
 		created, _ := time.Parse(time.RFC3339, rawPR.CreatedAt)
 		updated, _ := time.Parse(time.RFC3339, rawPR.UpdatedAt)
-		result := pullRequest{Repository: owner + "/" + repo, Owner: owner, Repo: repo, Number: rawPR.Number, Title: rawPR.Title, State: rawPR.State, URL: rawPR.HTMLURL, CreatedAt: created, UpdatedAt: updated, Commits: make([]commit, 0, len(rawCommits)), Checks: checks, Reviews: fetchQodoReviews(c.Request.Context(), a.gh, owner, repo, number)}
+		result := pullRequest{Repository: identity.FullName(), Owner: identity.Owner, Repo: identity.Name, Number: rawPR.Number, Title: rawPR.Title, State: rawPR.State, URL: rawPR.HTMLURL, CreatedAt: created, UpdatedAt: updated, Commits: make([]commit, 0, len(rawCommits)), Checks: checks, Reviews: fetchQodoReviews(c.Request.Context(), a.gh, identity.Owner, identity.Name, rawPR.Number)}
 		for _, item := range rawCommits {
 			date, _ := time.Parse(time.RFC3339, item.Commit.Author.Date)
 			author := item.Commit.Author.Name
@@ -192,15 +215,25 @@ func respondGitHubError(c *gin.Context, err error) {
 }
 
 func newRouter(gh *githubClient) *gin.Engine {
+	return newRouterWithLimiter(gh, newRateLimiter(defaultRateLimitRequests, defaultRateLimitWindow, time.Now), clientIdentity{})
+}
+
+func newRouterWithLimiter(gh *githubClient, limiter *rateLimiter, identity clientIdentity) *gin.Engine {
 	r := gin.Default()
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
-	r.POST("/api/import", api{gh: gh}.importPR)
-	r.POST("/api/checks", api{gh: gh}.loadRevisionChecks)
+	limited := r.Group("/api", rateLimitMiddleware(limiter, identity))
+	limited.POST("/import", api{gh: gh}.importPR)
+	limited.POST("/checks", api{gh: gh}.loadRevisionChecks)
 	return r
 }
 
 func main() {
-	r := newRouter(newGitHubClient())
+	cfg, err := loadRateLimitConfig(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	r := newRouterWithLimiter(newGitHubClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
