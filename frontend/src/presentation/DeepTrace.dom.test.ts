@@ -39,7 +39,7 @@ const pullRequest: PullRequest = {
 function occurrence(id: number, sha: string): TracedOccurrence {
   const revision = sha === shaA ? commitA : commitB
   return {
-    reviewId: id, findingId: `${id}:1`, createdAt: '2026-11-04T10:00:00Z',
+    reviewId: id, findingId: `${id}:1`, title: 'Test finding', createdAt: '2026-11-04T10:00:00Z',
     url: `https://github.com/acme/app/pull/7#issuecomment-${id}`,
     sourceUrl: `https://github.com/acme/app/pull/7#issuecomment-${id}`, categories: [],
     commitSha: sha, commitUrl: revision.url, revisionInPullRequest: true, revision,
@@ -124,8 +124,37 @@ describe('Deep Trace browser interactions', () => {
     await nextTick()
     host.querySelector<HTMLButtonElement>('.input-row button')!.click()
     await vi.waitFor(() => expect(host?.querySelector('.recurrence')).not.toBeNull())
-    expect(host.querySelector('.recurrence')?.textContent).toContain('No repeated finding title appears')
+    expect(host.querySelector('.recurrence')?.textContent).toContain('No normalized finding title match appears')
     expect(host.querySelector('.trace-open')).toBeNull()
+  })
+
+  it('labels title matches as possible repeats and shows each occurrence title', async () => {
+    vi.mocked(importPullRequest).mockResolvedValue({
+      ...pullRequest,
+      qodoReviews: { ...pullRequest.qodoReviews, items: [
+        { ...reviews[0]!, findings: [{ ...reviews[0]!.findings[0]!, title: 'Finding one', description: 'First report detail.' }] },
+        { ...reviews[1]!, findings: [{ ...reviews[1]!.findings[0]!, title: 'Finding one', description: 'Second report detail.' }] },
+      ] },
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = 'https://github.com/acme/app/pull/7'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.recurrence-list')).not.toBeNull())
+
+    expect(host.querySelector('.recurrence')?.textContent).toContain('POSSIBLE REPEATS')
+    host.querySelector<HTMLButtonElement>('.trace-open')!.click()
+    await settleVue()
+    expect(host.querySelectorAll('.trace-event-title')).toHaveLength(2)
+    expect(host.querySelectorAll('.trace-event-description')).toHaveLength(2)
+    expect(host.querySelector('.trace-event-title')?.textContent).toContain('Finding one')
+    expect(host.querySelectorAll('.trace-event-description')[1]?.textContent).toContain('Second report detail.')
+    expect(host.querySelector('.trace-events')?.textContent).toContain('Possible match based on normalized title only. Compare the source evidence')
   })
 
   it('clears copied guidance status when the reused panel switches findings', async () => {

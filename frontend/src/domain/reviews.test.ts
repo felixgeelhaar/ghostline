@@ -76,6 +76,27 @@ describe('Qodo review evidence', () => {
     expect(repeated[0]?.occurrences[1]?.commitSha).toBe('b'.repeat(40))
   })
 
+  it('does not report same-revision re-posts as possible cross-revision repeats', () => {
+    const reviews = QodoReviewSetSchema.parse({
+      availability: 'available',
+      unrecognizedCommentCount: 0,
+      items: [1, 2].map((id) => ({
+        id,
+        provider: 'Qodo',
+        sourceType: 'github_issue_comment',
+        sourceAuthor: 'qodo-code-review[bot]',
+        kind: 'findings',
+        findings: [{ id: `${id}:1`, title: 'Reject stale checks', sourceUrl: `https://github.com/acme/app/pull/7#issuecomment-${id}` }],
+        commitSha: sha,
+        commitUrl: `https://github.com/acme/app/commit/${sha}`,
+        createdAt: `2026-11-04T09:0${id}:00Z`,
+        url: `https://github.com/acme/app/pull/7#issuecomment-${id}`,
+      })),
+    })
+
+    expect(findRecurringFindings(reviews.items)).toEqual([])
+  })
+
   it('focuses Qodo evidence on an exact revision and keeps unmarked comments separate', () => {
     const reviews = QodoReviewSetSchema.parse({
       availability: 'available',

@@ -176,6 +176,7 @@ describe('Qodo finding trace', () => {
     const occurrence = (reviewId: number, commitSha?: string, revision?: RevisionRef): TracedOccurrence => ({
       reviewId,
       findingId: `${reviewId}:1`,
+      title: 'Test finding',
       createdAt: `2026-11-04T${String(9 + reviewId).padStart(2, '0')}:00:00Z`,
       url: `https://github.com/acme/app/pull/7#issuecomment-${reviewId}`,
       sourceUrl: `https://github.com/acme/app/pull/7#issuecomment-${reviewId}`,

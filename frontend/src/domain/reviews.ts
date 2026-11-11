@@ -47,6 +47,7 @@ export function laterRevisionsToInspect(review: Pick<QodoReview, 'commitSha'>, c
 export type FindingOccurrence = {
   reviewId: number
   findingId: string
+  title: string
   createdAt: string
   url: string
   sourceUrl: string
@@ -106,6 +107,7 @@ export function findRecurringFindings(reviews: QodoReview[]): RecurringFinding[]
       groupedFinding.occurrences.push({
         reviewId: review.id,
         findingId: finding.id,
+        title: finding.title.trim().replace(/\s+/g, ' '),
         createdAt: review.createdAt,
         url: review.url,
         sourceUrl: finding.sourceUrl,
@@ -120,7 +122,10 @@ export function findRecurringFindings(reviews: QodoReview[]): RecurringFinding[]
       grouped.set(normalized, groupedFinding)
     }
   }
-  return [...grouped.values()].filter((finding) => finding.occurrences.length > 1)
+  return [...grouped.values()].filter((finding) => {
+    const markedRevisions = new Set(finding.occurrences.flatMap((occurrence) => occurrence.commitSha ? [occurrence.commitSha.toLowerCase()] : []))
+    return markedRevisions.size > 1
+  })
 }
 
 export function qodoReviewState(reviews: QodoReviewSet): 'recorded' | 'partial' | 'none' | 'unrecognized' | 'unavailable' {
