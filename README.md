@@ -10,7 +10,7 @@ See the [project guide](docs/project-guide.md) for the product specification, ar
 
 ## Run locally
 
-Requirements: Go 1.27.3+ and Node.js 22.12+.
+Requirements: Go 1.27.4+ and Node.js 22.12+.
 
 ```sh
 go run ./backend

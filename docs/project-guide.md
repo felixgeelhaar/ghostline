@@ -35,7 +35,7 @@ The main request is `POST /api/import`: validate the submitted PR URL, fetch PR 
 
 ## Setup and verification
 
-Requirements for a local run: Go 1.27.3 or newer, Node.js 22.12 or newer, and npm.
+Requirements for a local run: Go 1.27.4 or newer, Node.js 22.12 or newer, and npm.
 
 Run the API from the repository root:
 
