@@ -107,7 +107,7 @@ describe('Deep Trace browser interactions', () => {
     expect(document.activeElement).toBe(opener)
   })
 
-  it('shows the live empty state without exposing a trace opener when no title repeats', async () => {
+  it('shows the live empty state without exposing a trace opener when no cross-revision repeat exists', async () => {
     vi.mocked(importPullRequest).mockResolvedValue({
       ...pullRequest,
       qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [
@@ -124,7 +124,33 @@ describe('Deep Trace browser interactions', () => {
     await nextTick()
     host.querySelector<HTMLButtonElement>('.input-row button')!.click()
     await vi.waitFor(() => expect(host?.querySelector('.recurrence')).not.toBeNull())
-    expect(host.querySelector('.recurrence')?.textContent).toContain('No normalized finding title match appears')
+    expect(host.querySelector('.recurrence')?.textContent).toContain('No candidate repeat across distinct marked revisions was found')
+    expect(host.querySelector('.trace-open')).toBeNull()
+  })
+
+  it('does not claim matching titles are absent when they occur only on one marked revision', async () => {
+    vi.mocked(importPullRequest).mockResolvedValue({
+      ...pullRequest,
+      qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [
+        { ...reviews[0]!, findings: [reviews[0]!.findings[0]!], commitSha: shaA },
+        { ...reviews[1]!, findings: [reviews[1]!.findings[0]!], commitSha: shaA, commitUrl: commitA.url },
+      ] },
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = 'https://github.com/acme/app/pull/7'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.recurrence')).not.toBeNull())
+
+    const emptyState = host.querySelector('.recurrence')?.textContent ?? ''
+    expect(emptyState).toContain('No candidate repeat across distinct marked revisions was found')
+    expect(emptyState).toContain('Same-revision or unmarked title matches are not shown as possible repeats')
+    expect(emptyState).not.toContain('No normalized finding title match appears')
     expect(host.querySelector('.trace-open')).toBeNull()
   })
 
