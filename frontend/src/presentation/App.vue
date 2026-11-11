@@ -22,6 +22,7 @@ const selectedTraceId = ref('')
 const copyResult = ref<CopyResult>()
 let traceTrigger: HTMLButtonElement | undefined
 let revisionRequest = 0
+let importRequest = 0
 const activeChecks = computed(() => selectedRevision.value ? focusedChecks.value : pr.value?.checks)
 const orderedChecks = computed(() => orderChecks(activeChecks.value?.availability === 'available' ? activeChecks.value.items : []))
 const checksSummary = computed(() => summarizeChecks(orderedChecks.value))
@@ -36,11 +37,21 @@ const activeTrace = computed(() => {
 const glyph: Record<CheckTone, string> = { pass: '✓', fail: '✕', running: '●', neutral: '–' }
 
 async function loadPR() {
+  const request = ++importRequest
   error.value = validatePullRequestURL(url.value) ?? ''
-  if (error.value) return
+  if (error.value) {
+    loading.value = false
+    return
+  }
   loading.value = true; pr.value = undefined; selectedRevision.value = ''; selectedTraceId.value = ''; traceTrigger = undefined; focusedChecks.value = undefined; checksError.value = ''; checksLoading.value = false; copyResult.value = undefined; copyRequest++; revisionRequest++
-  try { pr.value = await importPullRequest(url.value) } catch (e) { error.value = e instanceof Error ? e.message : 'Could not load the pull request.' }
-  finally { loading.value = false }
+  try {
+    const importedPR = await importPullRequest(url.value)
+    if (request === importRequest) pr.value = importedPR
+  } catch (e) {
+    if (request === importRequest) error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
+  } finally {
+    if (request === importRequest) loading.value = false
+  }
 }
 async function focusRevision(sha: string) {
   const importedPR = pr.value

@@ -6,7 +6,7 @@
       "rule_id": "VULN-001",
       "file_path": "Dockerfile",
       "severity": "medium",
-      "reason": "ALPINE-CVE-2026-4738 (zlib 1.3.2-r1) is in the pinned golang:1.27-alpine base image; no upstream digest ships the fixed zlib 1.4-r0 yet. The Dockerfile installs zlib>=1.4-r0 during the build and fails if that version is unavailable, but Nox inventories the base image, not the built one. Remove this entry when the FROM digest moves to an image with zlib >= 1.4-r0.",
+      "reason": "ALPINE-CVE-2026-4738 affects zlib 1.3.2-r1 embedded in golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf. Alpine v3.24 has not published fixed zlib 1.4-r0 yet. The Dockerfile installs zlib>=1.4-r0 and fails the build if unavailable; Nox inventories the FROM image rather than the post-install image. Remove when the base digest includes fixed zlib.",
       "created_at": "2026-11-10T20:25:45.47479Z"
     },
     {
@@ -14,8 +14,40 @@
       "rule_id": "VULN-001",
       "file_path": "frontend/Dockerfile",
       "severity": "medium",
-      "reason": "ALPINE-CVE-2026-4738 (zlib 1.3.2-r1) is in the pinned node:22-alpine base image; no upstream digest ships the fixed zlib 1.4-r0 yet. The Dockerfile installs zlib>=1.4-r0 during the build and fails if that version is unavailable, but Nox inventories the base image, not the built one. Remove this entry when the FROM digest moves to an image with zlib >= 1.4-r0.",
+      "reason": "ALPINE-CVE-2026-4738 affects zlib 1.3.2-r1 embedded in node:22.23.4-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914. Alpine v3.24 has not published fixed zlib 1.4-r0 yet. The Dockerfile installs zlib>=1.4-r0 and fails the build if unavailable; Nox inventories the FROM image rather than the post-install image. Remove when the base digest includes fixed zlib.",
       "created_at": "2026-11-10T20:25:45.47479Z"
+    },
+    {
+      "fingerprint": "132cceb6c386492d0d153cb33f4d1098807e55d62d90db0eb6fc5b054fdc8f23",
+      "rule_id": "VULN-001",
+      "file_path": "frontend/Dockerfile",
+      "severity": "medium",
+      "reason": "OpenSSL 3.5.9 is bundled by current official Node images; Nox cannot establish symbol reachability/applicability for these findings. Upstream Node 22.23.5 and Node 26.13.1 images still report OpenSSL 3.5.9. Tracked in https://github.com/felixgeelhaar/ghostline/issues/43; remove these entries as soon as an official supported multi-architecture Node image bundles OpenSSL 3.5.10 or later, then rerun Nox.",
+      "created_at": "2026-11-11T22:48:52.344918Z"
+    },
+    {
+      "fingerprint": "16dd4b8e51b1a615616306006cfebc138e9191136c34246dd56dc1c35b86fa41",
+      "rule_id": "VULN-001",
+      "file_path": "frontend/Dockerfile",
+      "severity": "medium",
+      "reason": "OpenSSL 3.5.9 is bundled by current official Node images; Nox cannot establish symbol reachability/applicability for these findings. Upstream Node 22.23.5 and Node 26.13.1 images still report OpenSSL 3.5.9. Tracked in https://github.com/felixgeelhaar/ghostline/issues/43; remove these entries as soon as an official supported multi-architecture Node image bundles OpenSSL 3.5.10 or later, then rerun Nox.",
+      "created_at": "2026-11-11T22:48:52.344919Z"
+    },
+    {
+      "fingerprint": "7d94880522ab2001841f8d1c6a25dc5a6d40fa74b653fa0311045a9dbb2e1ac0",
+      "rule_id": "VULN-001",
+      "file_path": "frontend/Dockerfile",
+      "severity": "medium",
+      "reason": "OpenSSL 3.5.9 is bundled by current official Node images; Nox cannot establish symbol reachability/applicability for these findings. Upstream Node 22.23.5 and Node 26.13.1 images still report OpenSSL 3.5.9. Tracked in https://github.com/felixgeelhaar/ghostline/issues/43; remove these entries as soon as an official supported multi-architecture Node image bundles OpenSSL 3.5.10 or later, then rerun Nox.",
+      "created_at": "2026-11-11T22:48:52.344919Z"
+    },
+    {
+      "fingerprint": "c801c4781d71b1031be07ccbd5460d5d52b147a782f3555c719603ebdd74b2ad",
+      "rule_id": "VULN-001",
+      "file_path": "frontend/Dockerfile",
+      "severity": "medium",
+      "reason": "OpenSSL 3.5.9 is bundled by current official Node images; Nox cannot establish symbol reachability/applicability for these findings. Upstream Node 22.23.5 and Node 26.13.1 images still report OpenSSL 3.5.9. Tracked in https://github.com/felixgeelhaar/ghostline/issues/43; remove these entries as soon as an official supported multi-architecture Node image bundles OpenSSL 3.5.10 or later, then rerun Nox.",
+      "created_at": "2026-11-11T22:48:52.34492Z"
     }
   ]
 }
