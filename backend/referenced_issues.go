@@ -97,6 +97,7 @@ func fetchReferencedIssue(ctx context.Context, gh *githubClient, repository doma
 	result.Availability = "available"
 	result.State = state
 	result.Reason = ""
+	result.URL = issue.HTMLURL
 	return result
 }
 

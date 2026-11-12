@@ -53,6 +53,7 @@ describe('referenced issue status', () => {
     expect(row?.querySelector('a[href="https://github.com/acme/app/pull/12"]')?.textContent).toContain('PR #12')
     expect(row?.querySelector('a[href="https://github.com/acme/app/issues/27"]')?.textContent).toContain('Idempotency tracking')
     expect(host?.textContent).toContain('does not decide whether the work was delivered')
+    expect(host?.textContent).toContain('Issue state reflects GitHub at import time.')
   })
 
   it('shows a closed reference without the open warning', async () => {

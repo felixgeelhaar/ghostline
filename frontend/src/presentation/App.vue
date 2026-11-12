@@ -123,7 +123,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
             <span class="reference-links"><a :href="pr.url" target="_blank" rel="noreferrer">PR #{{ pr.number }} ↗</a><a :href="issue.url" target="_blank" rel="noreferrer">{{ issue.title }} ↗</a></span>
           </li>
         </ul>
-        <p class="footnote">References come from the pull request description. An open issue is a signal for human review; Ghostline does not decide whether the work was delivered.</p>
+        <p class="footnote">References come from the pull request description. Issue state reflects GitHub at import time. An open issue is a signal for human review; Ghostline does not decide whether the work was delivered.</p>
       </section>
 
       <section class="checks" aria-labelledby="checks-title">

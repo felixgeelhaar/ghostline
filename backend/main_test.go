@@ -174,7 +174,7 @@ func TestImportReturnsSameRepositoryIssueReferences(t *testing.T) {
 						w.WriteHeader(tt.issueStatus)
 						return
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"number": 27, "title": "Idempotency tracking", "state": tt.issueState, "html_url": "https://github.com/acme/app/issues/27"})
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 27, "title": "Idempotency tracking", "state": tt.issueState, "html_url": "https://github.com/Acme/App/issues/27"})
 				case strings.Contains(r.URL.Path, "/issues/") && strings.HasSuffix(r.URL.Path, "/comments"):
 					_, _ = w.Write([]byte("[]"))
 				default:
@@ -202,7 +202,11 @@ func TestImportReturnsSameRepositoryIssueReferences(t *testing.T) {
 			}
 			if tt.wantCount == 1 {
 				issue := result.ReferencedIssues[0]
-				if issue.Number != 27 || issue.Availability != tt.wantAvailability || issue.State != tt.wantState || issue.URL != "https://github.com/acme/app/issues/27" {
+				wantURL := "https://github.com/Acme/App/issues/27"
+				if tt.wantAvailability == "unavailable" {
+					wantURL = "https://github.com/acme/app/issues/27"
+				}
+				if issue.Number != 27 || issue.Availability != tt.wantAvailability || issue.State != tt.wantState || issue.URL != wantURL {
 					t.Errorf("issue = %+v", issue)
 				}
 				if tt.wantAvailability == "unavailable" && issue.Reason == "" {
