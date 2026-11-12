@@ -229,7 +229,7 @@ describe('structured Qodo review evidence', () => {
       availability: 'available', source: 'Qodo',
       reviewSession: { status: 'completed', commitSha: shaA },
       findings: closedStatuses.map((attributionStatus, index) => ({
-        id: `finding-${index}`, title: 'Review finding', attributionStatus,
+        id: `finding-${index}`, title: 'Review finding', attributionStatus, gitSha: shaA,
       })), reviewRuns: [],
     })
     expect(reviewAttentionSummary(review, shaA)).toMatchObject({
@@ -238,11 +238,76 @@ describe('structured Qodo review evidence', () => {
     })
   })
 
+  it('falls back to a recognized lifecycle status when attribution is not a lifecycle state', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: [{ id: 'finding-1', title: 'Guard retries', attributionStatus: 'attributed', status: 'implemented', gitSha: shaA }],
+      reviewRuns: [],
+    })
+
+    expect(reviewAttentionSummary(review, shaA)).toMatchObject({
+      kind: 'clear', openFindingCount: 0, unrecognizedFindingCount: 0, implementedFindingCount: 1,
+    })
+  })
+
+  it('uses a recognized attribution lifecycle state over a conflicting legacy status', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: [{ id: 'finding-1', title: 'Guard retries', attributionStatus: 'pending', status: 'implemented' }],
+      reviewRuns: [],
+    })
+
+    expect(reviewAttentionSummary(review, shaA)).toMatchObject({ kind: 'attention', openFindingCount: 1, implementedFindingCount: 0 })
+  })
+
+  it('does not report closed findings as clear when finding revisions are missing', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: [{ id: 'finding-1', title: 'Guard retries', status: 'implemented', reviewRunId: 'run-1' }],
+      reviewRuns: [{ id: 'run-1', status: 'completed', commitSha: shaA }],
+    })
+
+    expect(reviewAttentionSummary(review, shaA)).toMatchObject({
+      kind: 'attention', title: 'Finding revision unconfirmed', unknownFindingRevisionCount: 1,
+    })
+    expect(reviewAttentionSummary(review, shaA).detail).toContain('finding-specific revision')
+    expect(reviewAttentionSummary(review, shaA).detail).toContain('linked run revision')
+  })
+
+  it('does not report a clear review when a closed finding is tied to an older revision', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaB },
+      findings: [{ id: 'finding-1', title: 'Guard retries', status: 'implemented', gitSha: shaA }],
+      reviewRuns: [],
+    })
+
+    expect(reviewAttentionSummary(review, shaB)).toMatchObject({
+      kind: 'attention', title: 'Finding revision needs review',
+    })
+    expect(reviewAttentionSummary(review, shaB).detail).toContain(shaA.slice(0, 7))
+    expect(reviewAttentionSummary(review, shaB).nextAction.toLowerCase()).toContain('confirm')
+  })
+
+  it('keeps finding revision attention visible while Qodo is running', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'running', commitSha: shaB },
+      findings: [{ id: 'finding-1', title: 'Guard retries', status: 'implemented', gitSha: shaA }],
+      reviewRuns: [],
+    })
+
+    expect(reviewAttentionSummary(review, shaB)).toMatchObject({ kind: 'attention', staleFindingCount: 1 })
+  })
+
   it('does not describe a Qodo implemented status as independently verified correctness', () => {
     const review = QodoStructuredReviewSchema.parse({
       availability: 'available', source: 'Qodo',
       reviewSession: { status: 'completed', commitSha: shaA },
-      findings: [{ id: 'finding-1', title: 'Guard duplicates', status: 'implemented' }], reviewRuns: [],
+      findings: [{ id: 'finding-1', title: 'Guard duplicates', status: 'implemented', gitSha: shaA }], reviewRuns: [],
     })
 
     const summary = reviewAttentionSummary(review, shaA)

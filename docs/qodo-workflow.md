@@ -103,13 +103,22 @@ Qodo-reported outcomes. The summary directs engineers to the underlying source
 evidence; `implemented` or `dismissed` statuses are not presented as
 independent verification.
 
-For structured findings, `attributionStatus` is the source for Qodo's open or
-closed classification: `pending`, `partial_implementation`,
-`not_implemented`, and `focus_areas_edited` are treated as open; `implemented`,
-`full_implementation`, `dismissed`, `detected_after_merge`, and `outdated` are
-treated as closed. A legacy `status` is used only when Qodo omitted the
-attribution status. Unknown values stay visible as unclassified. `actionLevel`
-describes review severity and does not determine whether a finding is open.
+For structured findings, the card shows the effective lifecycle classification
+alongside both Qodo source fields. A recognized Qodo lifecycle value in
+`attributionStatus` takes precedence; if attribution contains a non-lifecycle
+value, a recognized legacy `status` is used for classification. Qodo's open states are `pending`,
+`partial_implementation`, `not_implemented`, and `focus_areas_edited`; its closed
+states are `implemented`, `full_implementation`, `dismissed`,
+`detected_after_merge`, and `outdated`. A legacy `status` is used only when Qodo
+omitted the attribution status or it contains a non-lifecycle value. Unknown
+values stay visible as unclassified. `actionLevel` describes review severity
+and does not determine whether a finding is open.
+
+A completed review is not shown as clear when a finding lacks its own revision,
+even if the linked review run has a SHA. The run SHA identifies that run; it
+does not establish which revision Qodo attached to the finding. The summary
+keeps the finding's open/status state visible and asks the engineer to inspect
+its source and linked run.
 
 The running UI's structured-review entry point is shown in the
 [feature screenshot](feature-evidence/qodo-structured-review.jpg). It shows
@@ -118,10 +127,10 @@ source-backed review context; it does not depict a fetched structured session.
 The next-action presentation is shown in
 [its focused screenshot](feature-evidence/qodo-attention-summary.jpg), captured
 from a prepared replay labeled as sample data rather than a live Qodo response.
-The attribution-status regression is shown in the
-[pending-finding screenshot](feature-evidence/qodo-pending-attribution-status.jpg):
-Qodo's `pending` findings remain counted as open even when the legacy status
-field is absent.
+The status fallback and revision-evidence states are shown in the
+[finding revision screenshot](feature-evidence/qodo-finding-revision-evidence.jpg):
+it distinguishes the finding's old source revision from a linked run revision,
+preserves both status fields, and marks a missing finding-specific revision.
 
 ## Features to evaluate in the Qodo workspace
 

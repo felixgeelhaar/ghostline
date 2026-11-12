@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { findingRevisionFreshness, reviewAttentionSummary, reviewSessionFreshness, reviewRunForFinding, type QodoStructuredReview } from '../domain/qodoReviewSession'
+import { findingLifecycleStatus, findingRevisionFreshness, reviewAttentionSummary, reviewSessionFreshness, reviewRunForFinding, type QodoStructuredReview } from '../domain/qodoReviewSession'
 
 const props = defineProps<{ review: QodoStructuredReview; pullRequestUrl: string; headSha: string }>()
 const freshness = computed(() => reviewSessionFreshness(props.review, props.headSha))
@@ -50,9 +50,10 @@ function citationURL(source?: string) {
     <ol v-else class="qodo-managed-findings">
         <li v-for="finding in review.findings" :key="finding.id">
           <div class="finding-heading"><strong>{{ finding.title }}</strong><span v-if="finding.actionLevel">{{ finding.actionLevel.replaceAll('_', ' ') }}</span></div>
-          <p class="finding-labels">QODO FINDING {{ finding.id }} · QODO STATUS {{ finding.attributionStatus || finding.status || 'NO STATUS' }}<span v-if="finding.category"> · {{ finding.category }}</span></p>
+          <p class="finding-labels">QODO FINDING {{ finding.id }} · QODO STATUS {{ findingLifecycleStatus(finding) || 'UNCLASSIFIED' }} · ATTRIBUTION {{ finding.attributionStatus || 'NOT RETURNED' }} · LEGACY STATUS {{ finding.status || 'NOT RETURNED' }}<span v-if="finding.category"> · {{ finding.category }}</span></p>
           <p v-if="finding.description" class="finding-description">{{ finding.description }}</p>
           <p v-if="finding.gitSha" class="review-revision">RAISED ON <a :href="revisionURL(finding.gitSha)" target="_blank" rel="noreferrer">{{ finding.gitSha.slice(0, 7) }} ↗</a></p>
+          <p v-else class="review-revision">QODO DID NOT RETURN A FINDING-SPECIFIC REVISION<span v-if="reviewRunForFinding(finding, review)?.commitSha"> · LINKED RUN REVISION {{ reviewRunForFinding(finding, review)?.commitSha?.slice(0, 7) }}</span><span v-else-if="finding.reviewRunId"> · LINKED RUN REVISION NOT RETURNED</span><span v-else> · NO LINKED RUN REVISION AVAILABLE</span></p>
           <p v-if="finding.gitSha && findingRevisionFreshness(finding, headSha) === 'stale'" class="checks-note warn" role="status"><strong>Finding revision does not match the imported PR head.</strong> Qodo attached this finding to {{ finding.gitSha.slice(0, 7) }}, while Ghostline imported {{ headSha.slice(0, 7) }}.</p>
           <p v-if="finding.filePath" class="finding-location">{{ finding.filePath }}<span v-if="finding.startLine">:{{ finding.startLine }}<span v-if="finding.endLine && finding.endLine !== finding.startLine">–{{ finding.endLine }}</span></span><span v-if="finding.side"> · {{ finding.side }}</span></p>
           <section v-if="finding.evidence" class="qodo-finding-evidence" aria-label="Qodo citation evidence">

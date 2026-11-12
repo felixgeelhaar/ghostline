@@ -100,8 +100,7 @@ func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
 	} else if wire.ReviewSession != nil {
 		data.ReviewSession = &qodoReviewSession{Status: wire.ReviewSession.Status, CommitSHA: wire.ReviewSession.CommitSHA, StartedAt: wire.ReviewSession.StartedAt}
 	}
-	data.Findings = wire.CamelFindings
-	if data.Findings == nil {
+	if len(wire.Findings) > 0 || wire.CamelFindings == nil {
 		data.Findings = make([]qodoManagedFinding, 0, len(wire.Findings))
 		for _, raw := range wire.Findings {
 			var finding qodoManagedFinding
@@ -110,6 +109,8 @@ func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
 			}
 			data.Findings = append(data.Findings, finding)
 		}
+	} else {
+		data.Findings = wire.CamelFindings
 	}
 	data.ReviewRuns = wire.CamelReviewRuns
 	if data.ReviewRuns == nil {
@@ -125,6 +126,29 @@ type qodoReviewSession struct {
 	Status    string    `json:"status"`
 	CommitSHA string    `json:"commitSha,omitempty"`
 	StartedAt time.Time `json:"startedAt,omitempty"`
+}
+
+func (session *qodoReviewSession) UnmarshalJSON(payload []byte) error {
+	type plain qodoReviewSession
+	var decoded plain
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return err
+	}
+	var snake struct {
+		CommitSHA string    `json:"commit_sha"`
+		StartedAt time.Time `json:"started_at"`
+	}
+	if err := json.Unmarshal(payload, &snake); err != nil {
+		return err
+	}
+	if decoded.CommitSHA == "" {
+		decoded.CommitSHA = snake.CommitSHA
+	}
+	if decoded.StartedAt.IsZero() {
+		decoded.StartedAt = snake.StartedAt
+	}
+	*session = qodoReviewSession(decoded)
+	return nil
 }
 
 type qodoManagedFinding struct {
@@ -247,6 +271,29 @@ type qodoManagedReviewRun struct {
 	Status    string    `json:"status"`
 	CommitSHA string    `json:"commitSha,omitempty"`
 	StartedAt time.Time `json:"startedAt,omitempty"`
+}
+
+func (run *qodoManagedReviewRun) UnmarshalJSON(payload []byte) error {
+	type plain qodoManagedReviewRun
+	var decoded plain
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return err
+	}
+	var snake struct {
+		CommitSHA string    `json:"commit_sha"`
+		StartedAt time.Time `json:"started_at"`
+	}
+	if err := json.Unmarshal(payload, &snake); err != nil {
+		return err
+	}
+	if decoded.CommitSHA == "" {
+		decoded.CommitSHA = snake.CommitSHA
+	}
+	if decoded.StartedAt.IsZero() {
+		decoded.StartedAt = snake.StartedAt
+	}
+	*run = qodoManagedReviewRun(decoded)
+	return nil
 }
 
 type mcpEnvelope struct {

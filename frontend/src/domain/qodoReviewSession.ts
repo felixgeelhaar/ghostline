@@ -72,6 +72,8 @@ export type ReviewAttentionSummary = {
   openFindingCount: number
   unspecifiedFindingCount: number
   unrecognizedFindingCount: number
+  staleFindingCount: number
+  unknownFindingRevisionCount: number
   implementedFindingCount: number
   dismissedFindingCount: number
 }
@@ -90,8 +92,19 @@ export function isReviewSessionCurrent(review: QodoStructuredReview, headSha: st
 const openAttributionStatuses = new Set(['pending', 'partial_implementation', 'not_implemented', 'focus_areas_edited'])
 const closedAttributionStatuses = new Set(['implemented', 'full_implementation', 'dismissed', 'detected_after_merge', 'outdated'])
 
-function findingStatus(finding: QodoManagedFinding): string {
-  return (finding.attributionStatus ?? finding.status ?? '').trim().toLowerCase()
+export function findingLifecycleStatus(finding: QodoManagedFinding): string {
+  const attributionStatus = (finding.attributionStatus ?? '').trim().toLowerCase()
+  const legacyStatus = (finding.status ?? '').trim().toLowerCase()
+  const lifecycleStatuses = new Set(['open', 'implemented', 'dismissed', ...openAttributionStatuses, ...closedAttributionStatuses])
+  if (lifecycleStatuses.has(attributionStatus)) return attributionStatus
+  if (lifecycleStatuses.has(legacyStatus)) return legacyStatus
+  return attributionStatus || legacyStatus
+}
+
+function staleFindingDetail(staleFindingCount: number, review: QodoStructuredReview, headSha: string): string {
+  if (staleFindingCount === 0) return ''
+  const staleFinding = review.findings.find((finding) => findingRevisionFreshness(finding, headSha) === 'stale')!
+  return ` For example, ${staleFinding.id} references ${staleFinding.gitSha!.slice(0, 7)}, while the imported PR head is ${headSha.slice(0, 7)}.`
 }
 
 function freshnessFindingDetail(openFindingCount: number, unclassifiedFindingCount: number): string {
@@ -122,7 +135,7 @@ function freshnessNextAction(
 }
 
 export function reviewAttentionSummary(review: QodoStructuredReview, headSha: string): ReviewAttentionSummary {
-  const statuses = review.findings.map(findingStatus)
+  const statuses = review.findings.map(findingLifecycleStatus)
   const openStatuses = new Set(['open', ...openAttributionStatuses])
   const closedStatuses = new Set(['implemented', 'dismissed', ...closedAttributionStatuses])
   const knownStatuses = new Set([...openStatuses, ...closedStatuses])
@@ -132,6 +145,8 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
   const dismissedFindingCount = statuses.filter((status) => status === 'dismissed').length
   const unrecognizedFindingCount = statuses.filter((status) => status !== '' && !knownStatuses.has(status)).length
   const unclassifiedFindingCount = unspecifiedFindingCount + unrecognizedFindingCount
+  const staleFindingCount = review.findings.filter((finding) => findingRevisionFreshness(finding, headSha) === 'stale').length
+  const unknownFindingRevisionCount = review.findings.filter((finding) => !finding.gitSha).length
   const counts = {
     findingCount: review.findings.length,
     openFindingCount,
@@ -139,6 +154,8 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
     unrecognizedFindingCount,
     implementedFindingCount,
     dismissedFindingCount,
+    staleFindingCount,
+    unknownFindingRevisionCount,
   }
 
   if (!review.reviewSession) {
@@ -170,6 +187,16 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
       title: 'Review revision unconfirmed',
       detail: `Ghostline cannot compare Qodo’s reviewed revision with a known pull-request head. Findings remain source data, but their freshness is unknown.${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
       nextAction: freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'inspect the original Qodo source and confirm which revision it reviewed.'),
+    }
+  }
+
+  if (staleFindingCount > 0) {
+    return {
+      ...counts,
+      kind: 'attention',
+      title: 'Finding revision needs review',
+      detail: `${staleFindingCount} Qodo finding${staleFindingCount === 1 ? ' references' : 's reference'} a revision different from the imported PR head.${staleFindingDetail(staleFindingCount, review, headSha)}${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)} Its Qodo status may reflect later attribution; inspect the linked review run before relying on that status for the current head.`,
+      nextAction: freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'confirm its Qodo status against the current PR head using the finding source and linked run evidence.'),
     }
   }
 
@@ -211,6 +238,17 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
       title: `${unclassifiedFindingCount} finding${unclassifiedFindingCount === 1 ? '' : 's'} need status review`,
       detail: `${unclassifiedFindingCount} finding${unclassifiedFindingCount === 1 ? ' has' : 's have'} no recognized Qodo status. Ghostline does not infer whether they are resolved.`,
       nextAction: 'Inspect those findings and their revision-linked source evidence.',
+    }
+  }
+
+  if (unknownFindingRevisionCount > 0) {
+    const revisionDetail = `${unknownFindingRevisionCount} finding${unknownFindingRevisionCount === 1 ? ' has' : 's have'} no finding-specific revision. A linked run revision identifies that run, not the finding’s source revision.`
+    return {
+      ...counts,
+      kind: 'attention',
+      title: 'Finding revision unconfirmed',
+      detail: revisionDetail,
+      nextAction: 'Inspect the source finding and linked review run before relying on its status for the current PR head.',
     }
   }
 

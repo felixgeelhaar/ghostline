@@ -138,6 +138,43 @@ func TestQodoReviewDataPreservesCamelCaseFindingDetails(t *testing.T) {
 	}
 }
 
+func TestQodoReviewDataPrefersNonEmptyCanonicalFindings(t *testing.T) {
+	var data qodoReviewData
+	payload := `{"findings":[{"id":"f-1","title":"Canonical finding","evidence":{"explanation":"Keep citation context"}}],"camelFindings":[],"review_runs":[],"reviewRuns":[]}`
+	if err := json.Unmarshal([]byte(payload), &data); err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Findings) != 1 || data.Findings[0].ID != "f-1" || data.Findings[0].Evidence == nil || data.Findings[0].Evidence.Explanation != "Keep citation context" {
+		t.Fatalf("canonical finding or evidence was dropped: %+v", data.Findings)
+	}
+}
+
+func TestQodoReviewDataFallsBackToCamelFindingsWhenCanonicalArrayIsEmpty(t *testing.T) {
+	var data qodoReviewData
+	payload := `{"findings":[],"camelFindings":[{"id":"f-2","title":"Alternate finding"}],"review_runs":[],"reviewRuns":[]}`
+	if err := json.Unmarshal([]byte(payload), &data); err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Findings) != 1 || data.Findings[0].ID != "f-2" {
+		t.Fatalf("non-empty alternate findings were dropped: %+v", data.Findings)
+	}
+}
+
+func TestQodoReviewDataNormalizesSnakeCaseRevisionFieldsInCamelContainers(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	var data qodoReviewData
+	payload := `{"reviewSession":{"status":"completed","commit_sha":"` + sha + `","started_at":"2026-11-12T09:00:00Z"},"findings":[],"reviewRuns":[{"id":"run-1","status":"completed","commit_sha":"` + sha + `","started_at":"2026-11-12T09:01:00Z"}]}`
+	if err := json.Unmarshal([]byte(payload), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.ReviewSession == nil || data.ReviewSession.CommitSHA != sha || data.ReviewSession.StartedAt.IsZero() {
+		t.Fatalf("review session revision fields were lost: %+v", data.ReviewSession)
+	}
+	if len(data.ReviewRuns) != 1 || data.ReviewRuns[0].CommitSHA != sha || data.ReviewRuns[0].StartedAt.IsZero() {
+		t.Fatalf("review run revision fields were lost: %+v", data.ReviewRuns)
+	}
+}
+
 func TestQodoReviewDataRejectsNullFindingOrRunArrays(t *testing.T) {
 	for _, payload := range []string{
 		`{"review_session":null,"findings":null,"review_runs":[]}`,

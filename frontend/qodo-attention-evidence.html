@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ghostline · Qodo finding revision attention</title>
+    <title>Ghostline · Qodo finding revision evidence</title>
     <link rel="stylesheet" href="/src/presentation/style.css" />
     <style>
       body { min-height: 100vh; padding: 28px; background: #090b16; }
@@ -26,12 +26,12 @@
         review: {
           availability: 'available',
           source: 'Qodo Agentic Toolbox · get-pr-review-findings',
-          reviewSession: null,
+          reviewSession: { status: 'completed', commitSha: currentSha },
           findings: [
-            { id: 'finding-demo-1', title: 'Validate the idempotency key before replay', attributionStatus: 'pending', gitSha: reviewedSha, category: 'Correctness', actionLevel: 'action_required', filePath: 'backend/payments.go', startLine: 84 },
-            { id: 'finding-demo-2', title: 'Bound the retry window for duplicate requests', attributionStatus: 'pending', gitSha: reviewedSha, category: 'Reliability', actionLevel: 'action_required', filePath: 'backend/payments.go', startLine: 121 },
+            { id: 'finding-demo-1', title: 'Validate the idempotency key before replay', attributionStatus: 'attributed', status: 'implemented', gitSha: reviewedSha, reviewRunId: 'run-demo-2', category: 'Correctness', actionLevel: 'action_required', filePath: 'backend/payments.go', startLine: 84 },
+            { id: 'finding-demo-2', title: 'Bound the retry window for duplicate requests', attributionStatus: 'pending', reviewRunId: 'run-demo-2', category: 'Reliability', actionLevel: 'action_required', filePath: 'backend/payments.go', startLine: 121 },
           ],
-          reviewRuns: [],
+          reviewRuns: [{ id: 'run-demo-2', status: 'completed', commitSha: currentSha }],
         },
       }).mount('#app')
     </script>

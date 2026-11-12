@@ -93,6 +93,25 @@ describe('structured Qodo review presentation', () => {
     expect(host.textContent).not.toContain('REPORTED NO STATUS')
   })
 
+  it('shows both raw statuses when attribution is not a lifecycle status', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: { status: 'completed', commitSha: currentSha },
+        findings: [{ id: 'finding-attributed', title: 'Guard retries', attributionStatus: 'attributed', status: 'implemented', gitSha: currentSha }],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('QODO STATUS implemented · ATTRIBUTION attributed · LEGACY STATUS implemented')
+    expect(host.querySelector('.qodo-attention')?.textContent).toContain('Qodo marks 1 finding implemented')
+  })
+
   it('keeps open finding urgency visible when the review is stale', async () => {
     host = document.createElement('div')
     document.body.append(host)
@@ -207,5 +226,102 @@ describe('structured Qodo review presentation', () => {
     expect(host.textContent).toContain('Finding revision does not match the imported PR head.')
     expect(host.textContent).toContain(reviewedSha.slice(0, 7))
     expect(host.textContent).toContain(currentSha.slice(0, 7))
+  })
+
+  it('marks a closed finding with an old revision as requiring inspection', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: { status: 'completed', commitSha: currentSha },
+        findings: [{ id: 'finding-old-closed', title: 'Guard replay', status: 'implemented', gitSha: reviewedSha }],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.querySelector('.qodo-attention')?.textContent).toContain('Finding revision needs review')
+    expect(host.textContent).toContain('Finding revision does not match the imported PR head.')
+  })
+
+  it('shows the effective lifecycle beside conflicting source status fields', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: { status: 'completed', commitSha: currentSha },
+        findings: [{ id: 'finding-conflict', title: 'Guard replay', attributionStatus: 'pending', status: 'implemented', gitSha: currentSha }],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('QODO STATUS pending · ATTRIBUTION pending · LEGACY STATUS implemented')
+    expect(host.querySelector('.qodo-attention')?.textContent).toContain('1 finding reported open')
+  })
+
+  it('keeps missing finding revision visible when its linked run matches the PR head', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: { status: 'completed', commitSha: currentSha },
+        findings: [{ id: 'finding-no-sha-closed', title: 'Guard replay', status: 'implemented', reviewRunId: 'run-2' }],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.querySelector('.qodo-attention')?.textContent).toContain('Finding revision unconfirmed')
+    expect(host.querySelector('.qodo-attention')?.textContent).toContain('1 finding has no finding-specific revision')
+    expect(host.textContent).toContain('QODO DID NOT RETURN A FINDING-SPECIFIC REVISION · LINKED RUN REVISION')
+  })
+
+  it('states when Qodo omitted a finding revision, even if a linked run has one', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: { status: 'completed', commitSha: currentSha },
+        findings: [{ id: 'finding-no-sha', title: 'Guard replay', status: 'open', reviewRunId: 'run-2' }],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('QODO DID NOT RETURN A FINDING-SPECIFIC REVISION')
+    expect(host.textContent).toContain(`QODO DID NOT RETURN A FINDING-SPECIFIC REVISION · LINKED RUN REVISION ${currentSha.slice(0, 7)}`)
+  })
+
+  it('states when neither a finding nor its linked run has a revision', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: null,
+        findings: [{ id: 'finding-no-sha', title: 'Guard replay', status: 'open', reviewRunId: 'run-no-sha' }],
+        reviewRuns: [{ id: 'run-no-sha', status: 'completed' }],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('QODO DID NOT RETURN A FINDING-SPECIFIC REVISION')
+    expect(host.textContent).toContain('LINKED RUN REVISION NOT RETURNED')
   })
 })
