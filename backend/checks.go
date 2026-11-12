@@ -35,6 +35,7 @@ type revisionChecks struct {
 }
 
 type check struct {
+	ID         int64  `json:"id,omitempty"`
 	Name       string `json:"name"`
 	Kind       string `json:"kind"`
 	Source     string `json:"source,omitempty"`
@@ -46,6 +47,7 @@ type check struct {
 type githubCheckRuns struct {
 	TotalCount int `json:"total_count"`
 	CheckRuns  []struct {
+		ID         int64   `json:"id"`
 		Name       string  `json:"name"`
 		HeadSHA    string  `json:"head_sha"`
 		Status     string  `json:"status"`
@@ -108,7 +110,7 @@ func fetchCheckRuns(ctx context.Context, gh *githubClient, commitPath, sha strin
 			if run.HeadSHA != sha {
 				return nil, errRevisionMismatch
 			}
-			item := check{Name: run.Name, Kind: kindCheckRun, Status: run.Status, URL: safeURL(run.HTMLURL)}
+			item := check{ID: run.ID, Name: run.Name, Kind: kindCheckRun, Status: run.Status, URL: safeURL(run.HTMLURL)}
 			if run.Conclusion != nil {
 				item.Conclusion = *run.Conclusion
 			}

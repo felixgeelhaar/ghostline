@@ -7,7 +7,7 @@ const payload = {
   revisionSha: sha,
   revisionShortSha: sha.slice(0, 7),
   revisionUrl: `https://github.com/acme/app/commit/${sha}`,
-  items: [{ name: 'historical-build', kind: 'check_run', status: 'completed', conclusion: 'success' }],
+  items: [{ id: 314, name: 'historical-build', kind: 'check_run', status: 'completed', conclusion: 'success' }],
 }
 
 afterEach(() => vi.unstubAllGlobals())

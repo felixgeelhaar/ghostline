@@ -145,7 +145,7 @@ func checkRun(name, sha, status, conclusion string) string {
 	if conclusion != "" {
 		c = `"` + conclusion + `"`
 	}
-	return `{"name":"` + name + `","head_sha":"` + sha + `","status":"` + status + `","conclusion":` + c + `,"html_url":"https://github.com/acme/app/runs/1","app":{"name":"GitHub Actions"}}`
+	return `{"id":1,"name":"` + name + `","head_sha":"` + sha + `","status":"` + status + `","conclusion":` + c + `,"html_url":"https://github.com/acme/app/runs/1","app":{"name":"GitHub Actions"}}`
 }
 
 const noStatuses = `{"sha":"` + headSHA + `","total_count":0,"statuses":[]}`
@@ -169,8 +169,8 @@ func TestImportReturnsChecksForHeadCommit(t *testing.T) {
 		t.Fatalf("availability = %q (%q)", got.Availability, got.Reason)
 	}
 	want := []check{
-		{Name: "frontend", Kind: kindCheckRun, Source: "GitHub Actions", Status: "in_progress", URL: "https://github.com/acme/app/runs/1"},
-		{Name: "go", Kind: kindCheckRun, Source: "GitHub Actions", Status: "completed", Conclusion: "success", URL: "https://github.com/acme/app/runs/1"},
+		{ID: 1, Name: "frontend", Kind: kindCheckRun, Source: "GitHub Actions", Status: "in_progress", URL: "https://github.com/acme/app/runs/1"},
+		{ID: 1, Name: "go", Kind: kindCheckRun, Source: "GitHub Actions", Status: "completed", Conclusion: "success", URL: "https://github.com/acme/app/runs/1"},
 		{Name: "legacy", Kind: kindCommitStatus, Status: "completed", Conclusion: "failure"},
 		{Name: "warden/gate", Kind: kindCommitStatus, Status: "pending", URL: "https://ci.example/1"},
 	}

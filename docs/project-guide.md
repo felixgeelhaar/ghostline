@@ -2,7 +2,7 @@
 
 ## Short specification
 
-Ghostline is a change-centric engineering control room for engineers using coding agents. Its current slice imports a **public GitHub pull request** and presents the change’s metadata, commit history, revision-linked GitHub checks, and published Qodo review comments. Repeated Qodo finding titles can be traced across comments when their revision markers support it. Warden runs local developer gates and Nox scans; repository CI also runs Nox. Ghostline does not currently ingest Nox reports.
+Ghostline is a change-centric engineering control room for engineers using coding agents. Its current slice imports a **public GitHub pull request** and presents the change’s metadata, commit history, revision-linked GitHub checks and check-run line annotations, and published Qodo review comments. Repeated Qodo finding titles can be traced across comments when their revision markers support it. Warden runs local developer gates and Nox scans; repository CI also runs Nox. Ghostline does not currently ingest Nox reports.
 
 The product helps an engineer inspect what changed, understand which revision review feedback and checks describe, and decide what to inspect next. GitHub remains authoritative for pull-request facts; Qodo remains the review source. Ghostline does not run agents, repair code, prove that a finding was fixed, or replace CI, Qodo, Nox, or Warden. It does not scan a developer’s local filesystem.
 
@@ -15,23 +15,27 @@ Ghostline is a small Go API and Vue single-page application. It has no database 
 ```text
 Browser (Vue 3 + TypeScript)
   presentation: App.vue, ReviewCard.vue, DeepTrace.vue
-  application: importPullRequest, fetchRevisionChecks
+  application: importPullRequest, fetchRevisionChecks, fetchCheckAnnotations
   domain: pullRequest, checks, reviews, trace
           │ /api/import, /api/checks
           ▼
 Go + Gin API
   HTTP handlers and GitHub response normalization
-  GitHub client, check aggregation, Qodo comment parsing
+  GitHub client, check aggregation and annotation paging, Qodo comment parsing
           │ HTTPS GitHub REST API
           ▼
-GitHub: pull request, commits, checks, published issue comments
+GitHub: pull request, commits, checks, check annotations, published issue comments
 ```
 
 The frontend validates API payloads with Zod at the boundary in `frontend/src/domain`. Keep business rules in domain modules, request orchestration in application modules, and HTTP or rendering details at the edges. In the backend, domain concepts such as the canonical repository identity live in `backend/internal/domain`; HTTP handling, GitHub calls, and orchestration stay in the small files under `backend`. Put new business rules in the domain package, and avoid adding infrastructure layers without a concrete need.
 
 For code changes, preserve these domain boundaries and use test-driven development: write or update a focused failing test for the behavior first, then implement the smallest change that makes it pass.
 
-The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, normalize the response, and render the timeline and review evidence. `POST /api/checks` fetches checks for a focused full commit SHA. Checks are always labeled with the revision GitHub returned.
+The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, normalize the response, and render the timeline and review evidence. `POST /api/checks` fetches checks for a focused full commit SHA. `POST /api/check-annotations` fetches one GitHub annotation page for an identified check run. Checks and annotations are always labeled with the revision GitHub returned.
+
+For a check run, `POST /api/check-annotations` verifies that the target repository is public, confirms the run's head SHA matches the requested revision, and retrieves GitHub's paginated annotations. The response links annotations to their source file and line range on that exact commit. Pagination follows GitHub's `Link` header so a full final page does not imply another page. A check run without a usable source URL can still return its annotations.
+
+The [check-run annotations screenshot](evidence/check-run-annotations.md) shows this panel using a clearly labeled recorded replay. It displays three sampled annotations from a public GitHub Nox run; it is not a live scan or a live GitHub fetch.
 
 ## Setup and verification
 
@@ -61,7 +65,7 @@ To run both services in containers:
 docker compose up --build
 ```
 
-Open `http://localhost:5173`, or the configured `GHOSTLINE_PORT`. Compose exposes the frontend on network interfaces by default; use `GHOSTLINE_BIND_ADDRESS` to select a bind address. The Compose backend does not currently receive `GITHUB_TOKEN`, so use the local API run above when authenticated GitHub API access is needed.
+Open `http://localhost:5173`, or the configured `GHOSTLINE_PORT`. Compose exposes the frontend on network interfaces by default; use `GHOSTLINE_BIND_ADDRESS` to select a bind address. Compose forwards `GITHUB_TOKEN` from the environment to the backend when set. When a server token is configured, Ghostline confirms repository visibility before serving pull-request, check, or annotation data and fails closed if visibility is private or unknown. Never commit or paste a token into a report.
 
 Run the project checks:
 
