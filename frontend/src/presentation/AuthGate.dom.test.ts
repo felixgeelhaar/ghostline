@@ -1,12 +1,30 @@
 // @vitest-environment happy-dom
-import { createApp } from 'vue'
+import { createApp, nextTick } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ApiResponseError } from '../application/apiError'
 import { fetchAuthStatus } from '../application/fetchAuthStatus'
+import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
+import { importPullRequest } from '../application/importPullRequest'
+import type { PullRequest } from '../domain/pullRequest'
 import App from './App.vue'
 
 vi.mock('../application/fetchAuthStatus', () => ({ fetchAuthStatus: vi.fn() }))
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
 vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
+
+const headSha = 'a'.repeat(40)
+const earlierSha = 'b'.repeat(40)
+const makePR = (): PullRequest => ({
+  repository: 'acme/app', owner: 'acme', repo: 'app', number: 12, title: 'Session-bound change', state: 'open',
+  url: 'https://github.com/acme/app/pull/12', createdAt: '2026-11-11T09:00:00Z', updatedAt: '2026-11-11T10:00:00Z',
+  commits: [{ sha: earlierSha, shortSha: 'bbbbbbb', message: 'Add behavior', author: 'felix', committedAt: '2026-11-11T09:00:00Z', url: `https://github.com/acme/app/commit/${earlierSha}` }],
+  checks: { availability: 'available', revisionSha: headSha, revisionShortSha: 'aaaaaaa', revisionUrl: `https://github.com/acme/app/commit/${headSha}`, items: [] },
+  qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] },
+})
+
+function unauthorized() {
+  return new ApiResponseError('Sign in with GitHub to continue.', 401)
+}
 
 let app: ReturnType<typeof createApp> | undefined
 let host: HTMLDivElement | undefined
@@ -52,6 +70,40 @@ describe('hosted GitHub sign-in gate', () => {
     await mount()
 
     expect(host?.querySelector('[role="alert"]')?.textContent).toContain('Status API unavailable.')
+    expect(host?.querySelector('#pr-url')).toBeNull()
+  })
+
+  it('returns to the sign-in gate when an import reports an expired session', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValueOnce({ enabled: true, login: 'felixgeelhaar' })
+    vi.mocked(importPullRequest).mockRejectedValueOnce(unauthorized())
+    await mount()
+
+    const input = host!.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = 'https://github.com/acme/app/pull/12'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+
+    await vi.waitFor(() => expect(host?.querySelector('.github-sign-in')).not.toBeNull())
+    expect(host?.querySelector('#pr-url')).toBeNull()
+    expect(host?.textContent).toContain('Sign in to continue.')
+  })
+
+  it('returns to the sign-in gate when a focused-revision check reports an expired session', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValueOnce({ enabled: true, login: 'felixgeelhaar' })
+    vi.mocked(importPullRequest).mockResolvedValueOnce(makePR())
+    vi.mocked(fetchRevisionChecks).mockRejectedValueOnce(unauthorized())
+    await mount()
+
+    const input = host!.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = 'https://github.com/acme/app/pull/12'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('h2')?.textContent).toBe('Session-bound change'))
+    host!.querySelector<HTMLButtonElement>('[aria-label="Focus history on revision bbbbbbb"]')!.click()
+
+    await vi.waitFor(() => expect(host?.querySelector('.github-sign-in')).not.toBeNull())
     expect(host?.querySelector('#pr-url')).toBeNull()
   })
 })

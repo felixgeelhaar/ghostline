@@ -1,3 +1,14 @@
+export class ApiResponseError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = 'ApiResponseError'
+  }
+}
+
+export function isAuthenticationRequired(error: unknown): error is ApiResponseError {
+  return error instanceof ApiResponseError && error.status === 401
+}
+
 export function apiErrorMessage(response: Response, payload: unknown, fallback: string): string {
   if (response.status === 429) {
     const seconds = Number(response.headers.get('Retry-After'))

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { apiErrorMessage } from './apiError'
+import { ApiResponseError, apiErrorMessage, isAuthenticationRequired } from './apiError'
 import { importPullRequest } from './importPullRequest'
 import { fetchRevisionChecks } from './fetchRevisionChecks'
 
@@ -40,5 +40,27 @@ describe('rate-limited requests', () => {
   it('fetchRevisionChecks surfaces the retry time', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(rateLimited()))
     await expect(fetchRevisionChecks('https://github.com/acme/app/pull/7', 'b'.repeat(40))).rejects.toThrow('Try again in 42 seconds')
+  })
+})
+
+describe('authentication-required requests', () => {
+  it('preserves the unauthorized status for a rejected PR import', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'Sign in with GitHub to continue.' }), { status: 401 })))
+
+    await expect(importPullRequest('https://github.com/acme/app/pull/7'))
+      .rejects.toMatchObject({ name: 'ApiResponseError', status: 401 })
+  })
+
+  it('preserves the unauthorized status for a rejected revision-check request', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'Sign in with GitHub to continue.' }), { status: 401 })))
+
+    await expect(fetchRevisionChecks('https://github.com/acme/app/pull/7', 'b'.repeat(40)))
+      .rejects.toMatchObject({ name: 'ApiResponseError', status: 401 })
+  })
+
+  it('classifies only HTTP 401 API errors as authentication-required', () => {
+    expect(isAuthenticationRequired(new ApiResponseError('Sign in', 401))).toBe(true)
+    expect(isAuthenticationRequired(new ApiResponseError('Unavailable', 502))).toBe(false)
+    expect(isAuthenticationRequired(new Error('Sign in'))).toBe(false)
   })
 })

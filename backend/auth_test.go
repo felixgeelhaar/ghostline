@@ -1,9 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/felixgeelhaar/ghostline/backend/internal/domain"
+	"github.com/gin-gonic/gin"
 )
 
 func TestLoadAuthConfigRequiresCompleteHostedCredentials(t *testing.T) {
@@ -172,11 +175,18 @@ func TestOAuthHTTPClientRejectsRedirects(t *testing.T) {
 }
 
 func TestRouterLogsOAuthCallbackPathWithoutQuerySecrets(t *testing.T) {
+	previousWriter := gin.DefaultWriter
+	var logs bytes.Buffer
+	gin.DefaultWriter = &logs
+	defer func() { gin.DefaultWriter = previousWriter }()
+
+	router := newGhostlineRouter()
+	router.GET("/auth/github/callback", func(c *gin.Context) { c.Status(http.StatusOK) })
 	request := httptest.NewRequest(http.MethodGet, "/auth/github/callback?code=oauth-secret&state=state-secret", nil)
-	pathOnly := request.URL.Path
-	logLine := fmt.Sprintf("[GIN] %v | %3d | %13v | %15s | %-7s %s\n", time.Now(), http.StatusOK, time.Millisecond, "127.0.0.1", http.MethodGet, pathOnly)
-	if strings.Contains(logLine, "oauth-secret") || strings.Contains(logLine, "state-secret") {
-		t.Fatalf("log formatter leaked query secret: %q", logLine)
+	router.ServeHTTP(httptest.NewRecorder(), request)
+
+	if strings.Contains(logs.String(), "oauth-secret") || strings.Contains(logs.String(), "state-secret") {
+		t.Fatalf("router log leaked OAuth query secrets: %q", logs.String())
 	}
 }
 
@@ -251,7 +261,7 @@ func testAuthSettings() authSettings {
 		ClientSecret: "client-secret",
 		CallbackURL:  "http://localhost/auth/github/callback",
 		SigningKey:   []byte(strings.Repeat("k", 32)),
-		AllowedUsers: map[string]struct{}{"felixgeelhaar": {}},
+		AllowedUsers: domain.NewGitHubAccountAllowlist([]string{"felixgeelhaar"}),
 		CookieSecure: true,
 		Now:          time.Now,
 		HTTPClient:   &http.Client{Timeout: 10 * time.Second, CheckRedirect: rejectOAuthRedirect},

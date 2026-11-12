@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { fetchAuthStatus } from '../application/fetchAuthStatus'
+import { isAuthenticationRequired } from '../application/apiError'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
 import type { AuthStatus } from '../domain/auth'
 import { buildChangeActivity, countReviewsWithUnavailableDetails, describeCheckActivity } from '../domain/changeActivity'
@@ -73,7 +74,9 @@ async function loadPR() {
     const importedPR = await importPullRequest(url.value)
     if (request === importRequest) pr.value = importedPR
   } catch (e) {
-    if (request === importRequest) error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
+    if (request === importRequest && !(isAuthenticationRequired(e) && returnToSignIn())) {
+      error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
+    }
   } finally {
     if (request === importRequest) loading.value = false
   }
@@ -95,10 +98,31 @@ async function focusRevision(sha: string) {
     const checks = await fetchRevisionChecks(importedPR.url, sha)
     if (request === revisionRequest && selectedRevision.value === sha) focusedChecks.value = checks
   } catch (e) {
-    if (request === revisionRequest && selectedRevision.value === sha) checksError.value = e instanceof Error ? e.message : 'Could not load checks for this revision.'
+    if (request === revisionRequest && selectedRevision.value === sha && !(isAuthenticationRequired(e) && returnToSignIn())) {
+      checksError.value = e instanceof Error ? e.message : 'Could not load checks for this revision.'
+    }
   } finally {
     if (request === revisionRequest) checksLoading.value = false
   }
+}
+function returnToSignIn(): boolean {
+  if (!authStatus.value?.enabled) return false
+  authStatus.value = { enabled: true, login: null }
+  pr.value = undefined
+  loading.value = false
+  selectedRevision.value = ''
+  selectedTraceId.value = ''
+  traceTrigger = undefined
+  focusedChecks.value = undefined
+  checksLoading.value = false
+  checksError.value = ''
+  copyResult.value = undefined
+  error.value = ''
+  authError.value = ''
+  importRequest++
+  revisionRequest++
+  copyRequest++
+  return true
 }
 let copyRequest = 0
 async function copySha(sha: string) {

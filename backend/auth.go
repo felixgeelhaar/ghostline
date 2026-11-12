@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/felixgeelhaar/ghostline/backend/internal/domain"
 	"github.com/gin-gonic/gin"
 )
 
@@ -38,7 +39,7 @@ type authSettings struct {
 	ClientSecret string
 	CallbackURL  string
 	SigningKey   []byte
-	AllowedUsers map[string]struct{}
+	AllowedUsers domain.GitHubAccountAllowlist
 	CookieSecure bool
 	Now          func() time.Time
 	HTTPClient   *http.Client
@@ -80,7 +81,7 @@ func loadAuthConfig(getenv func(string) string) (authSettings, error) {
 		ClientSecret: getenv("GITHUB_OAUTH_CLIENT_SECRET"),
 		CallbackURL:  strings.TrimSpace(getenv("GITHUB_OAUTH_CALLBACK_URL")),
 		SigningKey:   []byte(getenv("GHOSTLINE_SESSION_SIGNING_KEY")),
-		AllowedUsers: make(map[string]struct{}),
+		AllowedUsers: make(domain.GitHubAccountAllowlist),
 		CookieSecure: true,
 		Now:          time.Now,
 		HTTPClient:   &http.Client{Timeout: 10 * time.Second, CheckRedirect: rejectOAuthRedirect},
@@ -165,9 +166,9 @@ func newRouterWithAuth(gh *githubClient, limiter *rateLimiter, identity clientId
 
 func newGhostlineRouter() *gin.Engine {
 	r := gin.New()
-	r.Use(gin.LoggerWithFormatter(func(params gin.LogFormatterParams) string {
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipQueryString: true, Formatter: func(params gin.LogFormatterParams) string {
 		return fmt.Sprintf("[GIN] %v | %3d | %13v | %15s | %-7s %s\n", params.TimeStamp.Format("2006/01/02 - 15:04:05"), params.StatusCode, params.Latency, params.ClientIP, params.Method, params.Path)
-	}))
+	}}))
 	r.Use(gin.Recovery())
 	return r
 }
@@ -216,15 +217,10 @@ func (a githubAuth) currentLogin(r *http.Request) string {
 		return ""
 	}
 	login := verifySession(a.settings, cookie.Value)
-	if !a.allowed(login) {
+	if !a.settings.AllowedUsers.Allows(login) {
 		return ""
 	}
 	return login
-}
-
-func (a githubAuth) allowed(login string) bool {
-	_, ok := a.settings.AllowedUsers[strings.ToLower(login)]
-	return login != "" && ok
 }
 
 func (a githubAuth) login(c *gin.Context) {
@@ -285,7 +281,7 @@ func (a githubAuth) callback(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Could not verify the GitHub account. Try again."})
 		return
 	}
-	if !a.allowed(login) {
+	if !a.settings.AllowedUsers.Allows(login) {
 		clearCookie(c, sessionCookieName, "/", a.settings.CookieSecure)
 		c.JSON(http.StatusForbidden, gin.H{"error": "This GitHub account is not on this Ghostline instance’s access list."})
 		return
