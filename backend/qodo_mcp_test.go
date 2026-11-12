@@ -173,6 +173,43 @@ func TestMergeQodoReviewDataAcceptsCaseInsensitiveDuplicateFindingRevisions(t *t
 	}
 }
 
+func TestDeduplicateQodoFindingsMergesRepeatedIDsInOriginalOrder(t *testing.T) {
+	values := []qodoManagedFinding{
+		{ID: "f-1", Title: "First"},
+		{ID: "f-2", Title: "Second"},
+		{ID: "f-1", Title: "First", Evidence: &qodoFindingEvidence{Explanation: "first evidence"}},
+		{ID: "f-2", Title: "Second", FilePath: "backend/second.go"},
+	}
+
+	merged, err := deduplicateQodoFindings(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged) != 2 || merged[0].ID != "f-1" || merged[1].ID != "f-2" {
+		t.Fatalf("finding order = %+v; want f-1 then f-2", merged)
+	}
+	if merged[0].Evidence == nil || merged[0].Evidence.Explanation != "first evidence" || merged[1].FilePath != "backend/second.go" {
+		t.Fatalf("duplicate details were not merged in place: %+v", merged)
+	}
+}
+
+func BenchmarkDeduplicateQodoFindingsRepeatedIDs(b *testing.B) {
+	const distinctFindings = 5000
+	values := make([]qodoManagedFinding, 0, distinctFindings*2)
+	for i := 0; i < distinctFindings; i++ {
+		values = append(values, qodoManagedFinding{ID: fmt.Sprintf("f-%d", i), Title: "finding"})
+	}
+	for i := 0; i < distinctFindings; i++ {
+		values = append(values, qodoManagedFinding{ID: fmt.Sprintf("f-%d", i), Title: "finding", FilePath: "backend/example.go"})
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := deduplicateQodoFindings(values); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func TestQodoReviewEndpointReturnsExplicitNoSessionState(t *testing.T) {
 	router := newRouterWithQodoAndLimiter(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, qodoSourceFunc(func(context.Context, string, string) (qodoReviewData, error) {
 		return qodoReviewData{Availability: "available", Source: "Qodo Agentic Toolbox", ReviewSession: nil, Findings: []qodoManagedFinding{}, ReviewRuns: []qodoManagedReviewRun{}}, nil

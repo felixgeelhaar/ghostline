@@ -123,24 +123,18 @@ func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
 }
 
 func deduplicateQodoFindings(values []qodoManagedFinding) ([]qodoManagedFinding, error) {
-	seen := make(map[string]qodoManagedFinding, len(values))
+	indexes := make(map[string]int, len(values))
 	result := make([]qodoManagedFinding, 0, len(values))
 	for _, value := range values {
-		if prior, exists := seen[value.ID]; exists {
-			merged, err := mergeQodoFindings(prior, value)
+		if index, exists := indexes[value.ID]; exists {
+			merged, err := mergeQodoFindings(result[index], value)
 			if err != nil {
 				return nil, fmt.Errorf("Qodo returned a conflicting duplicate finding %q: %w", value.ID, err)
 			}
-			seen[value.ID] = merged
-			for i := range result {
-				if result[i].ID == value.ID {
-					result[i] = merged
-					break
-				}
-			}
+			result[index] = merged
 			continue
 		}
-		seen[value.ID] = value
+		indexes[value.ID] = len(result)
 		result = append(result, value)
 	}
 	return result, nil
