@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildChangeActivity } from './changeActivity'
+import { buildChangeActivity, countReviewsWithUnavailableDetails } from './changeActivity'
 import type { RevisionChecks } from './checks'
 import type { RevisionRef } from './reviews'
 import type { QodoReview } from './reviews'
@@ -40,6 +40,12 @@ describe('change activity', () => {
     expect(event?.detail).not.toContain('0 FINDINGS')
   })
 
+  it('counts recognized reviews without parsed findings in the domain layer', () => {
+    const complete = { ...review, id: 22, findings: [{ id: '22:1', title: 'Guard retries', categories: [], sourceUrl: review.url }] }
+
+    expect(countReviewsWithUnavailableDetails([review, complete])).toBe(1)
+  })
+
   it('uses deterministic ordering for equal timestamps without claiming a causal order', () => {
     const sameTime = { ...review, createdAt: commit.committedAt }
     const activity = buildChangeActivity([commit], [sameTime])
@@ -48,11 +54,14 @@ describe('change activity', () => {
     expect(activity.every((event) => event.timestamp === commit.committedAt)).toBe(true)
   })
 
-  it('does not invent an in-PR revision link for a review marker outside the imported commit list', () => {
+  it('preserves a review marker and source link when its revision is outside the imported commit list', () => {
     const outside = { ...review, commitSha: 'b'.repeat(40), commitUrl: `https://github.com/acme/app/commit/${'b'.repeat(40)}` }
     const event = buildChangeActivity([], [outside])[0]
 
-    expect(event).toMatchObject({ revisionLabel: 'MARKED REVISION OUTSIDE IMPORT' })
+    expect(event).toMatchObject({
+      revisionLabel: `MARKED REVISION OUTSIDE IMPORT · ${'b'.repeat(7)}`,
+      markedRevision: { sha: 'b'.repeat(40), shortSha: 'bbbbbbb', url: outside.commitUrl },
+    })
     expect(event).not.toHaveProperty('revision')
   })
 

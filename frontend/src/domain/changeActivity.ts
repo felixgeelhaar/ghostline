@@ -12,6 +12,11 @@ export type ChangeActivityEvent = {
   sourceLabel: string
   revisionLabel: string
   revision?: RevisionRef
+  markedRevision?: { sha: string; shortSha: string; url?: string }
+}
+
+export function countReviewsWithUnavailableDetails(reviews: QodoReview[]): number {
+  return reviews.filter((review) => review.kind === 'findings' && review.findings.length === 0).length
 }
 
 function checkTimestamp(check: Check): { timestamp: string; label: ChangeActivityEvent['timestampLabel'] } | undefined {
@@ -72,11 +77,16 @@ export function buildChangeActivity(commits: RevisionRef[], reviews: QodoReview[
     })),
     ...checkActivity(checks, revisionBySha),
     ...reviews.map((review): ChangeActivityEvent => {
-      const revision = review.commitSha ? revisionBySha.get(review.commitSha.toLowerCase()) : undefined
+      const markedRevision = review.commitSha ? {
+        sha: review.commitSha.toLowerCase(),
+        shortSha: review.commitSha.slice(0, 7).toLowerCase(),
+        ...(review.commitUrl ? { url: review.commitUrl } : {}),
+      } : undefined
+      const revision = markedRevision ? revisionBySha.get(markedRevision.sha) : undefined
       const revisionLabel = revision
         ? `REVIEWED REVISION ${revision.shortSha}`
-        : review.commitSha
-          ? 'MARKED REVISION OUTSIDE IMPORT'
+        : markedRevision
+          ? `MARKED REVISION OUTSIDE IMPORT · ${markedRevision.shortSha}`
           : 'REVISION NOT MARKED'
       const detail = review.kind === 'findings'
         ? review.findings.length === 0
@@ -103,6 +113,7 @@ export function buildChangeActivity(commits: RevisionRef[], reviews: QodoReview[
         sourceLabel: `QODO COMMENT #${review.id}`,
         revisionLabel,
         ...(revision ? { revision } : {}),
+        ...(markedRevision ? { markedRevision } : {}),
       }
     }),
   ]

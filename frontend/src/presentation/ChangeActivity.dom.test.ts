@@ -3,6 +3,7 @@ import { createApp, nextTick } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PullRequest } from '../domain/pullRequest'
 import { importPullRequest } from '../application/importPullRequest'
+import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import App from './App.vue'
 
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
@@ -133,5 +134,95 @@ describe('change activity index', () => {
     expect(activity.textContent).toContain('FINDING DETAILS UNAVAILABLE')
     expect(activity.textContent).toContain('recognized Qodo review comment')
     expect(activity.textContent).not.toContain('0 FINDINGS')
+    expect(activity.textContent).toContain('Finding details unavailable for 1 recognized Qodo review comment')
+  })
+
+  it('reports unavailable GitHub checks in the activity index', async () => {
+    vi.mocked(importPullRequest).mockResolvedValue({
+      ...pullRequest,
+      checks: { availability: 'unavailable', reason: 'GitHub denied access.', revisionSha: sha, revisionShortSha: 'aaaaaaa', revisionUrl: commit.url, items: [] },
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = pullRequest.url
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.activity-index')).not.toBeNull())
+
+    expect(host.querySelector('.activity-index')?.textContent).toContain('Check activity unavailable for revision aaaaaaa')
+    expect(host.querySelector('.activity-index')?.textContent).toContain('GitHub denied access.')
+  })
+
+  it('distinguishes a revision with no reported check records from missing activity data', async () => {
+    vi.mocked(importPullRequest).mockResolvedValue(pullRequest)
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = pullRequest.url
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.activity-index')).not.toBeNull())
+
+    expect(host.querySelector('.activity-index')?.textContent).toContain('GitHub reported no check runs or commit statuses for revision aaaaaaa')
+  })
+
+  it('shows loading status when focused revision checks are absent from the activity feed', async () => {
+    const laterSha = 'b'.repeat(40)
+    vi.mocked(importPullRequest).mockResolvedValue({
+      ...pullRequest,
+      commits: [commit, { ...commit, sha: laterSha, shortSha: 'bbbbbbb', url: `https://github.com/acme/app/commit/${laterSha}` }],
+    })
+    vi.mocked(fetchRevisionChecks).mockImplementation(() => new Promise(() => {}))
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = pullRequest.url
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelectorAll('.timeline li')).toHaveLength(2))
+    host.querySelector<HTMLButtonElement>('[aria-label="Focus history on revision bbbbbbb"]')!.click()
+    await nextTick()
+
+    expect(host.querySelector('.activity-index')?.textContent).toContain('Loading GitHub check activity for revision bbbbbbb')
+  })
+
+  it('links an out-of-import Qodo revision marker without treating it as an imported commit', async () => {
+    const markedSha = 'b'.repeat(40)
+    vi.mocked(importPullRequest).mockResolvedValue({
+      ...pullRequest,
+      qodoReviews: {
+        ...pullRequest.qodoReviews,
+        items: [{ ...pullRequest.qodoReviews.items[0]!, commitSha: markedSha, commitUrl: `https://github.com/acme/app/commit/${markedSha}` }],
+      },
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = pullRequest.url
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.activity-index')).not.toBeNull())
+
+    const reviewEvent = host.querySelector('.activity-qodo_review')!
+    expect(reviewEvent.textContent).toContain('MARKED REVISION OUTSIDE IMPORT · bbbbbbb')
+    expect(reviewEvent.querySelector('a[href="https://github.com/acme/app/commit/' + markedSha + '"]')?.textContent).toContain('VIEW MARKED REVISION bbbbbbb')
+    expect(reviewEvent.querySelector('[aria-label="Focus activity revision bbbbbbb"]')).toBeNull()
   })
 })
