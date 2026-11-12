@@ -144,6 +144,27 @@ describe('structured Qodo review evidence', () => {
     expect(reviewAttentionSummary(review, shaA).nextAction.toLowerCase()).toContain('wait')
   })
 
+  it('keeps open and unclassified findings visible during running and incomplete sessions', () => {
+    for (const status of ['running', 'failed']) {
+      const review = QodoStructuredReviewSchema.parse({
+        availability: 'available', source: 'Qodo',
+        reviewSession: { status, commitSha: shaA },
+        findings: [
+          { id: 'finding-open', title: 'Check idempotency', status: 'open' },
+          { id: 'finding-unclassified', title: 'Bound retries' },
+        ],
+        reviewRuns: [],
+      })
+
+      const summary = reviewAttentionSummary(review, shaA)
+      expect(summary.openFindingCount).toBe(1)
+      expect(summary.detail).toContain('Qodo reports 1 finding as open')
+      expect(summary.detail).toContain('1 finding has no recognized status')
+      expect(summary.nextAction).toContain('Inspect the 1 Qodo-reported open finding')
+      expect(summary.nextAction).toContain('1 finding with no recognized status')
+    }
+  })
+
   it('surfaces Qodo-reported open and unspecified findings without claiming repairs', () => {
     const review = QodoStructuredReviewSchema.parse({
       availability: 'available', source: 'Qodo',

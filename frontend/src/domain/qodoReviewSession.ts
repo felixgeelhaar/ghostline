@@ -164,8 +164,8 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
       ...counts,
       kind: 'in-progress',
       title: 'Qodo review is still running',
-      detail: `Qodo reports session status “${review.reviewSession.status}” for the current PR head.`,
-      nextAction: 'Wait for the Qodo session to complete, then refresh its findings.',
+      detail: `Qodo reports session status “${review.reviewSession.status}” for the current PR head.${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
+      nextAction: freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'wait for the Qodo session to complete before refreshing its findings.'),
     }
   }
   if (sessionStatus !== 'completed') {
@@ -173,8 +173,8 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
       ...counts,
       kind: 'incomplete',
       title: 'Qodo review is not complete',
-      detail: `Qodo reports session status “${review.reviewSession.status}” for the current PR head.`,
-      nextAction: 'Inspect the Qodo session and decide whether to retry before acting on its findings.',
+      detail: `Qodo reports session status “${review.reviewSession.status}” for the current PR head.${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
+      nextAction: freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'inspect the Qodo session and decide whether to retry before acting on its findings.'),
     }
   }
 

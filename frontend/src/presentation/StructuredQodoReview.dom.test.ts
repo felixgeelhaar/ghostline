@@ -98,6 +98,28 @@ describe('structured Qodo review presentation', () => {
     expect(host.textContent).toContain('Review evidence is stale.')
   })
 
+  it('shows open finding urgency while Qodo is still reviewing the current head', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: { status: 'running', commitSha: currentSha },
+        findings: [{ id: 'finding-running', title: 'Validate retry key', status: 'open', gitSha: currentSha }],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    const summary = host.querySelector('.qodo-attention')
+    expect(summary?.textContent).toContain('Qodo review is still running')
+    expect(summary?.textContent).toContain('Qodo reports 1 finding as open')
+    expect(summary?.textContent).toContain('Inspect the 1 Qodo-reported open finding below')
+    expect(summary?.textContent.toLowerCase()).toContain('wait for the qodo session to complete')
+  })
+
   it('does not call a session stale when Qodo omitted its reviewed revision', async () => {
     host = document.createElement('div')
     document.body.append(host)
