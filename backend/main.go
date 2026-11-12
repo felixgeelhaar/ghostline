@@ -207,6 +207,120 @@ func (a api) loadRevisionChecks(c *gin.Context) {
 	c.JSON(http.StatusOK, fetchRevisionChecks(c.Request.Context(), a.gh, owner, repo, body.SHA))
 }
 
+type revisionComparison struct {
+	BaseSHA      string         `json:"baseSha"`
+	HeadSHA      string         `json:"headSha"`
+	CompareURL   string         `json:"compareUrl"`
+	Status       string         `json:"status"`
+	AheadBy      int            `json:"aheadBy"`
+	BehindBy     int            `json:"behindBy"`
+	TotalCommits int            `json:"totalCommits"`
+	Files        []comparedFile `json:"files"`
+}
+
+type comparedFile struct {
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Changes   int    `json:"changes"`
+	URL       string `json:"url"`
+}
+
+func (a api) compareRevisions(c *gin.Context) {
+	var body struct {
+		URL     string `json:"url"`
+		BaseSHA string `json:"baseSha"`
+		HeadSHA string `json:"headSha"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Provide a GitHub pull request URL and two full commit SHAs."})
+		return
+	}
+	owner, repo, _, err := parsePRURL(body.URL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !fullSHA.MatchString(body.BaseSHA) || !fullSHA.MatchString(body.HeadSHA) || strings.EqualFold(body.BaseSHA, body.HeadSHA) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Choose two different full 40-character commit SHAs."})
+		return
+	}
+	path := fmt.Sprintf("/repos/%s/%s/compare/%s...%s?per_page=100", url.PathEscape(owner), url.PathEscape(repo), strings.ToLower(body.BaseSHA), strings.ToLower(body.HeadSHA))
+	var raw struct {
+		Status       string `json:"status"`
+		AheadBy      int    `json:"ahead_by"`
+		BehindBy     int    `json:"behind_by"`
+		TotalCommits int    `json:"total_commits"`
+		HTMLURL      string `json:"html_url"`
+		Base         struct {
+			SHA string `json:"sha"`
+		} `json:"base_commit"`
+		Head struct {
+			SHA string `json:"sha"`
+		} `json:"head_commit"`
+		Files []struct {
+			Filename  string `json:"filename"`
+			Status    string `json:"status"`
+			Additions int    `json:"additions"`
+			Deletions int    `json:"deletions"`
+			Changes   int    `json:"changes"`
+			BlobURL   string `json:"blob_url"`
+		} `json:"files"`
+	}
+	if err := a.gh.get(c.Request.Context(), path, &raw); err != nil {
+		respondGitHubError(c, err)
+		return
+	}
+	if !strings.EqualFold(raw.Base.SHA, body.BaseSHA) || !strings.EqualFold(raw.Head.SHA, body.HeadSHA) {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned a comparison for different revisions. Please retry."})
+		return
+	}
+	expectedComparePath := fmt.Sprintf("/%s/%s/compare/%s...%s", owner, repo, strings.ToLower(body.BaseSHA), strings.ToLower(body.HeadSHA))
+	if !validGitHubSourceURL(raw.HTMLURL, expectedComparePath) {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned an invalid comparison source link."})
+		return
+	}
+	if raw.Status != "ahead" && raw.Status != "behind" && raw.Status != "identical" && raw.Status != "diverged" {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned an unrecognized comparison status."})
+		return
+	}
+	if raw.AheadBy < 0 || raw.BehindBy < 0 || raw.TotalCommits < 0 {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned invalid comparison counts."})
+		return
+	}
+	files := make([]comparedFile, 0, len(raw.Files))
+	for _, file := range raw.Files {
+		if strings.TrimSpace(file.Filename) == "" || file.Additions < 0 || file.Deletions < 0 || file.Changes < 0 || !validGitHubSourceURL(file.BlobURL, fmt.Sprintf("/%s/%s/blob/", owner, repo)) {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned an invalid changed-file source link."})
+			return
+		}
+		files = append(files, comparedFile{Path: file.Filename, Status: file.Status, Additions: file.Additions, Deletions: file.Deletions, Changes: file.Changes, URL: file.BlobURL})
+	}
+	c.JSON(http.StatusOK, revisionComparison{
+		BaseSHA: strings.ToLower(body.BaseSHA), HeadSHA: strings.ToLower(body.HeadSHA), CompareURL: raw.HTMLURL,
+		Status: raw.Status, AheadBy: raw.AheadBy, BehindBy: raw.BehindBy, TotalCommits: raw.TotalCommits, Files: files,
+	})
+}
+
+func validGitHubSourceURL(raw, expectedPath string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Host, "github.com") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	path := strings.ToLower(u.EscapedPath())
+	expected := strings.ToLower(expectedPath)
+	if strings.HasSuffix(expected, "/") {
+		if !strings.HasPrefix(path, expected) {
+			return false
+		}
+		remainder := strings.TrimPrefix(path, expected)
+		parts := strings.Split(strings.Trim(remainder, "/"), "/")
+		return len(parts) >= 2 && fullSHA.MatchString(parts[0])
+	}
+	return path == expected
+}
+
 func respondGitHubError(c *gin.Context, err error) {
 	var statusErr statusError
 	switch {

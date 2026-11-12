@@ -5,11 +5,13 @@ import type { PullRequest } from '../domain/pullRequest'
 import { buildRevisionSpans, type FindingTrace, type TracedOccurrence } from '../domain/trace'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
+import { compareRevisions } from '../application/compareRevisions'
 import App from './App.vue'
 import DeepTrace from './DeepTrace.vue'
 
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
 vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
+vi.mock('../application/compareRevisions', () => ({ compareRevisions: vi.fn() }))
 vi.mock('../application/fetchAuthStatus', () => ({ fetchAuthStatus: vi.fn().mockResolvedValue({ enabled: false, login: null }) }))
 
 const shaA = 'a'.repeat(40)
@@ -136,7 +138,7 @@ describe('Deep Trace browser interactions', () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
     const current = ref(findingTrace('one', 'Finding one'))
-    const Parent = defineComponent({ setup: () => () => h(DeepTrace, { trace: current.value }) })
+    const Parent = defineComponent({ setup: () => () => h(DeepTrace, { trace: current.value, pullRequestUrl: pullRequest.url }) })
     host = document.createElement('div')
     document.body.append(host)
     mounted = createApp(Parent)
@@ -155,7 +157,7 @@ describe('Deep Trace browser interactions', () => {
   it('focuses a candidate revision from the explicit PR-order span', async () => {
     const current = findingTrace('one', 'Finding one')
     let focusedSha = ''
-    const Parent = defineComponent({ setup: () => () => h(DeepTrace, { trace: current, onFocusRevision: (sha: string) => { focusedSha = sha } }) })
+    const Parent = defineComponent({ setup: () => () => h(DeepTrace, { trace: current, pullRequestUrl: pullRequest.url, onFocusRevision: (sha: string) => { focusedSha = sha } }) })
     host = document.createElement('div')
     document.body.append(host)
     mounted = createApp(Parent)
@@ -194,5 +196,51 @@ describe('Deep Trace browser interactions', () => {
     await vi.waitFor(() => expect(fetchRevisionChecks).toHaveBeenCalled())
 
     expect(fetchRevisionChecks).toHaveBeenCalledWith('https://github.com/acme/app/pull/7', shaMiddle)
+  })
+
+  it('compares the selected candidate to its earlier review anchor and labels the diff as context', async () => {
+    vi.mocked(compareRevisions).mockResolvedValue({
+      baseSha: shaA, headSha: shaMiddle, compareUrl: `https://github.com/acme/app/compare/${shaA}...${shaMiddle}`,
+      status: 'ahead', aheadBy: 1, behindBy: 0, totalCommits: 1,
+      files: [{ path: 'backend/retry.go', status: 'modified', additions: 4, deletions: 1, changes: 5, url: `https://github.com/acme/app/blob/${shaMiddle}/backend/retry.go` }],
+    })
+    const current = findingTrace('one', 'Finding one')
+    const Parent = defineComponent({ setup: () => () => h(DeepTrace, { trace: current, pullRequestUrl: pullRequest.url }) })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(Parent)
+    mounted.mount(host)
+
+    host.querySelector<HTMLButtonElement>('[aria-label="Compare candidate ccccccc with earlier review revision aaaaaaa"]')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.candidate-comparison')).not.toBeNull())
+    expect(compareRevisions).toHaveBeenCalledWith(pullRequest.url, shaA, shaMiddle)
+    expect(host.querySelector('.candidate-comparison')?.textContent).toContain('does not prove a finding was addressed')
+    expect(host.querySelector('.comparison-files')?.textContent).toContain('backend/retry.go')
+  })
+
+  it('ignores an earlier comparison if a newer candidate comparison resolves first', async () => {
+    let resolveOld!: (value: Awaited<ReturnType<typeof compareRevisions>>) => void
+    let resolveNew!: (value: Awaited<ReturnType<typeof compareRevisions>>) => void
+    vi.mocked(compareRevisions)
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveNew = resolve }))
+    const current = findingTrace('one', 'Finding one')
+    const secondCandidateSha = 'd'.repeat(40)
+    current.revisionSpans[0]!.candidateRevisions.push({ ...commitMiddle, sha: secondCandidateSha, shortSha: 'ddddddd', url: `https://github.com/acme/app/commit/${secondCandidateSha}` })
+    const Parent = defineComponent({ setup: () => () => h(DeepTrace, { trace: current, pullRequestUrl: pullRequest.url }) })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(Parent)
+    mounted.mount(host)
+
+    const buttons = host.querySelectorAll<HTMLButtonElement>('.review-followups-list button[aria-label^="Compare candidate"]')
+    buttons[0]!.click()
+    buttons[1]!.click()
+    resolveNew({ baseSha: shaA, headSha: secondCandidateSha, compareUrl: `https://github.com/acme/app/compare/${shaA}...${secondCandidateSha}`, status: 'ahead', aheadBy: 2, behindBy: 0, totalCommits: 2, files: [] })
+    await vi.waitFor(() => expect(host?.textContent).toContain(`${secondCandidateSha.slice(0, 7)}`))
+    resolveOld({ baseSha: shaA, headSha: shaMiddle, compareUrl: `https://github.com/acme/app/compare/${shaA}...${shaMiddle}`, status: 'ahead', aheadBy: 1, behindBy: 0, totalCommits: 1, files: [] })
+    await settleVue()
+    expect(host.querySelector('.candidate-comparison')?.textContent).toContain(`${secondCandidateSha.slice(0, 7)}`)
+    expect(host.querySelector('.candidate-comparison')?.textContent).not.toContain(`${shaMiddle.slice(0, 7)}`)
   })
 })
