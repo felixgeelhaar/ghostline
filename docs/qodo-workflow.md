@@ -77,10 +77,24 @@ review is not proof it was fixed, and a Qodo outcome is not independent
 verification. Inspect the linked comments and candidate patches, then use
 relevant checks for the exact revision you intend to ship.
 
-This is a GitHub-comment integration, not a private Qodo findings API. If Qodo
-changes its published comment format or omits evidence, Ghostline should show
-what it can attribute and surface the original source rather than fill in
-missing review details.
+Published GitHub comments remain available without a Qodo credential. For a
+Qodo workspace's structured findings and review runs, an engineer can supply a
+personal Qodo API key for one request from an HTTPS Ghostline origin (or
+localhost during development). Ghostline forwards it only to Qodo's fixed
+Agentic Toolbox MCP endpoint, clears the input before waiting for the result,
+and does not store it. Use this only on a Ghostline instance you trust. The
+structured result preserves Qodo's finding/run identifiers, statuses, source,
+revision references, locations, and citation evidence; it is shown separately
+from published comments.
+Workspace access and current availability depend on the supplied key. A result
+whose reviewed SHA differs from the imported PR head is explicitly labeled
+stale. If Qodo omits evidence, Ghostline shows that gap rather than filling it
+with an inferred relationship.
+
+The running UI's structured-review entry point is shown in the
+[feature screenshot](feature-evidence/qodo-structured-review.jpg). It shows
+the optional per-request credential control alongside the imported PR's
+source-backed review context; it does not depict a fetched structured session.
 
 ## Features to evaluate in the Qodo workspace
 

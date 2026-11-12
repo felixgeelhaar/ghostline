@@ -1,0 +1,66 @@
+// @vitest-environment happy-dom
+import { createApp, nextTick } from 'vue'
+import { afterEach, describe, expect, it } from 'vitest'
+import StructuredQodoReview from './StructuredQodoReview.vue'
+import type { QodoStructuredReview } from '../domain/qodoReviewSession'
+
+const reviewedSha = 'a'.repeat(40)
+const currentSha = 'b'.repeat(40)
+const review: QodoStructuredReview = {
+  availability: 'available',
+  source: 'Qodo Agentic Toolbox · get-pr-review-findings',
+  reviewSession: { status: 'completed', commitSha: reviewedSha },
+  findings: [{ id: 'finding-17', title: 'Handle replay safely', status: 'implemented', gitSha: reviewedSha, reviewRunId: 'run-2', filePath: 'backend/replay.go', startLine: 19, side: 'RIGHT', evidence: { explanation: 'The reviewer cited this branch.', citations: [{ sourceType: 'code', source: 'https://github.com/acme/payments/blob/main/backend/replay.go#L19', text: 'apply(request)', context: 'inside the replay handler' }] } }],
+  reviewRuns: [{ id: 'run-2', status: 'completed', commitSha: currentSha }],
+}
+
+let app: ReturnType<typeof createApp> | undefined
+let host: HTMLDivElement | undefined
+
+afterEach(() => {
+  app?.unmount()
+  app = undefined
+  host?.remove()
+  host = undefined
+})
+
+describe('structured Qodo review presentation', () => {
+  it('keeps Qodo statuses source-attributed and warns when reviewed revision is stale', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review,
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('OBSERVED · Qodo Agentic Toolbox · get-pr-review-findings')
+    expect(host.textContent).toContain('DOES NOT MATCH PR HEAD')
+    expect(host.textContent).toContain('Review evidence is stale.')
+    expect(host.textContent).toContain('QODO FINDING finding-17 · REPORTED implemented')
+    expect(host.textContent).toContain('QODO-LINKED REVIEW RUN run-2 · completed')
+    expect(host.textContent).toContain('QODO EVIDENCE · The reviewer cited this branch.')
+    expect(host.textContent).toContain('inside the replay handler')
+    expect(host.textContent).toContain('does not independently verify that a finding was fixed')
+    expect(host.querySelector<HTMLAnchorElement>('a[href*="/commit/"]')?.href).toBe(`https://github.com/acme/payments/commit/${reviewedSha}`)
+    expect(host.querySelector<HTMLAnchorElement>('a[href*="/blob/main/"]')?.href).toBe('https://github.com/acme/payments/blob/main/backend/replay.go#L19')
+  })
+
+  it('does not call a session stale when Qodo omitted its reviewed revision', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: { ...review, reviewSession: { status: 'completed' } },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('REVISION UNKNOWN')
+    expect(host.textContent).toContain('Review freshness is unknown.')
+    expect(host.textContent).not.toContain('Review evidence is stale.')
+  })
+})

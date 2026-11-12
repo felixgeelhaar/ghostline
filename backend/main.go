@@ -93,7 +93,10 @@ func parsePRURL(raw string) (string, string, int, error) {
 	return matches[1], matches[2], n, nil
 }
 
-type api struct{ gh *githubClient }
+type api struct {
+	gh   *githubClient
+	qodo qodoReviewSource
+}
 
 func (a api) importPR(c *gin.Context) {
 	var body struct {
@@ -200,6 +203,43 @@ func (a api) loadRevisionChecks(c *gin.Context) {
 	c.JSON(http.StatusOK, fetchRevisionChecks(c.Request.Context(), a.gh, owner, repo, body.SHA))
 }
 
+func (a api) loadQodoReview(c *gin.Context) {
+	apiKey := c.GetHeader("X-Qodo-API-Key")
+	if apiKey == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Enter a Qodo API key to load structured review data."})
+		return
+	}
+	if !secureCredentialOrigin(c.GetHeader("Origin")) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Qodo keys can only be sent from a secure Ghostline origin or localhost."})
+		return
+	}
+	if len(apiKey) > maxQodoAPIKeyLength || strings.ContainsAny(apiKey, "\r\n") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The Qodo API key is invalid or too long."})
+		return
+	}
+	var body struct {
+		URL string `json:"url"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.URL) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Provide a GitHub pull request URL."})
+		return
+	}
+	if _, _, _, err := parsePRURL(body.URL); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if a.qodo == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Structured Qodo review access is not configured on this Ghostline instance."})
+		return
+	}
+	result, err := a.qodo.fetch(c.Request.Context(), apiKey, strings.TrimSpace(body.URL))
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Qodo structured review data could not be loaded. Check the key, workspace access, and pull request, then retry."})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func respondGitHubError(c *gin.Context, err error) {
 	var statusErr statusError
 	switch {
@@ -219,11 +259,17 @@ func newRouter(gh *githubClient) *gin.Engine {
 }
 
 func newRouterWithLimiter(gh *githubClient, limiter *rateLimiter, identity clientIdentity) *gin.Engine {
+	return newRouterWithQodoAndLimiter(gh, nil, limiter, identity)
+}
+
+func newRouterWithQodoAndLimiter(gh *githubClient, qodo qodoReviewSource, limiter *rateLimiter, identity clientIdentity) *gin.Engine {
 	r := gin.Default()
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	limited := r.Group("/api", rateLimitMiddleware(limiter, identity))
-	limited.POST("/import", api{gh: gh}.importPR)
-	limited.POST("/checks", api{gh: gh}.loadRevisionChecks)
+	client := api{gh: gh, qodo: qodo}
+	limited.POST("/import", client.importPR)
+	limited.POST("/checks", client.loadRevisionChecks)
+	limited.POST("/qodo-review", client.loadQodoReview)
 	return r
 }
 
@@ -233,7 +279,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	r := newRouterWithLimiter(newGitHubClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity)
+	r := newRouterWithQodoAndLimiter(newGitHubClient(), newQodoReviewClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
