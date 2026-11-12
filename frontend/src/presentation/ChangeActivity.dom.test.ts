@@ -35,7 +35,13 @@ afterEach(() => {
 
 describe('change activity index', () => {
   it('shows commit and Qodo evidence in source-time order with explicit time semantics', async () => {
-    vi.mocked(importPullRequest).mockResolvedValue(pullRequest)
+    vi.mocked(importPullRequest).mockResolvedValue({
+      ...pullRequest,
+      checks: { ...pullRequest.checks, items: [{
+        id: 314, name: 'Nox security scan', kind: 'check_run', status: 'completed', conclusion: 'failure',
+        url: 'https://github.com/acme/app/actions/runs/314', completedAt: '2026-11-04T09:03:00Z',
+      }] },
+    })
     host = document.createElement('div')
     document.body.append(host)
     mounted = createApp(App)
@@ -46,14 +52,19 @@ describe('change activity index', () => {
     input.dispatchEvent(new Event('input', { bubbles: true }))
     await nextTick()
     host.querySelector<HTMLButtonElement>('.input-row button')!.click()
-    await vi.waitFor(() => expect(host?.querySelectorAll('.activity-list li')).toHaveLength(2))
+    await vi.waitFor(() => expect(host?.querySelectorAll('.activity-list li')).toHaveLength(3))
 
     const entries = [...host.querySelectorAll('.activity-list li')]
     expect(entries[0]?.textContent).toContain('COMMIT METADATA TIME')
     expect(entries[0]?.textContent).toContain('Add retry guard')
-    expect(entries[1]?.textContent).toContain('QODO COMMENT TIME')
-    expect(entries[1]?.textContent).toContain('Guard concurrent retries')
-    expect(entries[1]?.querySelector('a')?.getAttribute('href')).toBe(pullRequest.qodoReviews.items[0]?.url)
+    expect(entries[1]?.textContent).toContain('CHECK RUN COMPLETION TIME')
+    expect(entries[1]?.textContent).toContain('Nox security scan')
+    expect(entries[1]?.textContent).toContain('VIEW CHECK RUN #314')
+    expect(entries[1]?.querySelector('a')?.getAttribute('href')).toBe('https://github.com/acme/app/actions/runs/314')
+    expect(entries[2]?.textContent).toContain('QODO COMMENT TIME')
+    expect(entries[2]?.textContent).toContain('Guard concurrent retries')
+    expect(entries[2]?.querySelector('a')?.getAttribute('href')).toBe(pullRequest.qodoReviews.items[0]?.url)
+    expect(host.querySelector('.activity-index .footnote')?.textContent).toContain('not a complete run history')
     expect(host.querySelector('.activity-index .footnote')?.textContent).toContain('sequence alone does not establish causation')
     expect(host.querySelector('[aria-label="Focus activity revision aaaaaaa"]')).not.toBeNull()
   })

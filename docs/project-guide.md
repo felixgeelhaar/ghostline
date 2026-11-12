@@ -31,7 +31,7 @@ The frontend validates API payloads with Zod at the boundary in `frontend/src/do
 
 For code changes, preserve these domain boundaries and use test-driven development: write or update a focused failing test for the behavior first, then implement the smallest change that makes it pass.
 
-The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, normalize the response, and render the activity index and review evidence. The activity index orders commit and Qodo comment events by their source timestamps while labeling commit metadata time separately from Qodo comment time. It does not treat their sequence as causation. `POST /api/checks` fetches checks for a focused full commit SHA. Checks are always labeled with the revision GitHub returned and remain in their own revision-scoped section because they are snapshots, not timeline events.
+The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, normalize the response, and render the activity index and review evidence. The activity index orders commit metadata times, check-run start/completion/update times, commit-status creation/update times, and Qodo comment times while preserving each source's timestamp label and native check/status ID. Check entries are GitHub's latest records for the focused revision at fetch time, not a complete check-run history. The timeline does not treat sequence as causation. `POST /api/checks` fetches checks for a focused full commit SHA. Checks are always labeled with the revision GitHub returned and shown in a revision-scoped section.
 
 ## Setup and verification
 
@@ -79,4 +79,4 @@ For current trust boundaries, abuse cases, and hosting limitations, see the [thr
 
 ## Feature evidence
 
-The running change activity index, imported from Ghostline PR #49, is shown in [this screenshot](feature-evidence/change-activity-index.jpg). Event times and sources come from GitHub commit metadata and published Qodo comments.
+The running change activity index, imported from Ghostline PR #49, is shown in [this screenshot](feature-evidence/change-activity-index.jpg). The revision-linked GitHub check events are shown in [this screenshot](feature-evidence/revision-linked-check-activity.jpg), imported from Ghostline PR #50 at revision `286dcc7`. These are live GitHub records from the PR's current checks at capture time; the activity index does not represent complete check-run history.

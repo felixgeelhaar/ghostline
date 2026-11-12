@@ -28,7 +28,7 @@ const activeChecks = computed(() => selectedRevision.value ? focusedChecks.value
 const orderedChecks = computed(() => orderChecks(activeChecks.value?.availability === 'available' ? activeChecks.value.items : []))
 const checksSummary = computed(() => summarizeChecks(orderedChecks.value))
 const recurringFindings = computed(() => findRecurringFindings(pr.value?.qodoReviews.items ?? []))
-const changeActivity = computed(() => buildChangeActivity(pr.value?.commits ?? [], pr.value?.qodoReviews.items ?? []))
+const changeActivity = computed(() => buildChangeActivity(pr.value?.commits ?? [], pr.value?.qodoReviews.items ?? [], activeChecks.value))
 const reviewsWithUnavailableDetails = computed(() => pr.value?.qodoReviews.items.filter((review) => review.kind === 'findings' && review.findings.length === 0).length ?? 0)
 const visibleCommits = computed(() => pr.value?.commits.filter((commit) => !selectedRevision.value || commit.sha === selectedRevision.value) ?? [])
 const selectedReviews = computed(() => reviewsForRevision(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
@@ -139,7 +139,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
 
       <section class="activity-index" aria-labelledby="activity-index-title">
         <h3 id="activity-index-title" class="section-title"><span>CHANGE ACTIVITY · OBSERVED SOURCES</span><span>{{ changeActivity.length }} EVENTS</span></h3>
-        <p class="footnote">Events are ordered by their source timestamps. Commit metadata time and Qodo comment time describe different things; sequence alone does not establish causation. GitHub checks remain listed above for the exact revision they report.</p>
+        <p class="footnote">Events are ordered by their source timestamps. Check entries are GitHub’s latest records for the focused revision at fetch time, not a complete run history. Commit, check, and Qodo timestamps describe different source fields; sequence alone does not establish causation.</p>
         <p v-if="pr.qodoReviews.availability === 'unavailable'" class="checks-note warn" role="status"><strong>Qodo activity unavailable.</strong> {{ pr.qodoReviews.reason }} This index may omit Qodo review events.</p>
         <p v-else-if="pr.qodoReviews.unrecognizedCommentCount > 0" class="checks-note warn" role="status"><strong>{{ pr.qodoReviews.unrecognizedCommentCount }} additional Qodo comments could not be parsed.</strong> The activity index may omit review events. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect all comments on GitHub ↗</a></p>
         <p v-if="pr.qodoReviews.availability === 'available' && reviewsWithUnavailableDetails > 0" class="checks-note warn" role="status"><strong>Finding details unavailable for {{ reviewsWithUnavailableDetails }} recognized Qodo review comment{{ reviewsWithUnavailableDetails === 1 ? '' : 's' }}.</strong> The activity index records the comment but could not extract its finding details. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect the source review on GitHub ↗</a></p>

@@ -4,8 +4,10 @@ const webURL = z.url({ protocol: /^https?$/ })
 const fullSha = z.string().regex(/^[0-9a-f]{40}$/)
 
 export const CheckSchema = z.object({
-  name: z.string(), kind: z.enum(['check_run', 'commit_status']), source: z.string().optional(),
+  id: z.number().int().positive().optional(), name: z.string(), kind: z.enum(['check_run', 'commit_status']), source: z.string().optional(),
   status: z.string(), conclusion: z.string().optional(), url: webURL.optional(),
+  startedAt: z.string().datetime().optional(), completedAt: z.string().datetime().optional(),
+  createdAt: z.string().datetime().optional(), updatedAt: z.string().datetime().optional(),
 })
 export type Check = z.infer<typeof CheckSchema>
 
