@@ -15,8 +15,40 @@ export type ChangeActivityEvent = {
   markedRevision?: { sha: string; shortSha: string; url?: string }
 }
 
+export type CheckActivityNotice = { kind: 'loading' | 'info' | 'warn'; text: string }
+
 export function countReviewsWithUnavailableDetails(reviews: QodoReview[]): number {
-  return reviews.filter((review) => review.kind === 'findings' && review.findings.length === 0).length
+  return reviews.filter((review) => review.kind === 'findings' && (review.findings.length === 0 || (review.unparsedFindingCount ?? 0) > 0)).length
+}
+
+export function describeCheckActivity(input: {
+  checks?: RevisionChecks
+  events: ChangeActivityEvent[]
+  loading?: boolean
+  error?: string
+  revisionSha?: string
+}): CheckActivityNotice | undefined {
+  const { checks, events, loading = false, error, revisionSha = '' } = input
+  const revision = checks?.revisionShortSha || revisionSha.slice(0, 7)
+  if (loading) return { kind: 'loading', text: `Loading GitHub check activity for revision ${revision}…` }
+  if (error) return { kind: 'warn', text: `Check activity unavailable for revision ${revision}. ${error}` }
+  if (checks?.availability === 'unavailable') return { kind: 'warn', text: `Check activity unavailable for revision ${revision}. ${checks.reason}` }
+  if (!checks) return undefined
+  if (checks.items.length === 0) return { kind: 'info', text: `GitHub reported no check runs or commit statuses for revision ${revision}.` }
+
+  const representedCount = events.filter((event) => event.kind === 'github_check').length
+  if (representedCount === checks.items.length) return undefined
+  if (representedCount === 0) {
+    return {
+      kind: 'warn',
+      text: `The activity index could not represent any of the ${checks.items.length} GitHub check records for revision ${revision}. See the Checks section for revision-scoped source results.`,
+    }
+  }
+  const omittedCount = checks.items.length - representedCount
+  return {
+    kind: 'warn',
+    text: `The activity index represents ${representedCount} of ${checks.items.length} GitHub check records for revision ${revision}; the other ${omittedCount} could not be represented. See the Checks section for revision-scoped source results.`,
+  }
 }
 
 function checkTimestamp(check: Check): { timestamp: string; label: ChangeActivityEvent['timestampLabel'] } | undefined {
@@ -91,7 +123,9 @@ export function buildChangeActivity(commits: RevisionRef[], reviews: QodoReview[
       const detail = review.kind === 'findings'
         ? review.findings.length === 0
           ? 'FINDING DETAILS UNAVAILABLE'
-          : `${review.findings.length} FINDING${review.findings.length === 1 ? '' : 'S'}`
+          : (review.unparsedFindingCount ?? 0) > 0
+            ? `${review.findings.length} FINDING${review.findings.length === 1 ? '' : 'S'} · ADDITIONAL DETAILS UNAVAILABLE`
+            : `${review.findings.length} FINDING${review.findings.length === 1 ? '' : 'S'}`
         : review.kind === 'no_open_findings'
           ? 'QODO REPORTED NO OPEN FINDINGS'
           : review.summary

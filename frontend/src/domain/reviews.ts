@@ -19,6 +19,7 @@ const QodoReviewSchema = z.object({
   kind: z.enum(['summary', 'findings', 'no_open_findings']),
   summary: z.string().optional(),
   findings: z.array(QodoFindingSchema),
+  unparsedFindingCount: z.number().int().nonnegative().optional(),
   commitSha: fullSha.optional(),
   commitUrl: z.url({ protocol: /^https$/ }).optional(),
   createdAt: z.string(),

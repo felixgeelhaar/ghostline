@@ -134,7 +134,34 @@ describe('change activity index', () => {
     expect(activity.textContent).toContain('FINDING DETAILS UNAVAILABLE')
     expect(activity.textContent).toContain('recognized Qodo review comment')
     expect(activity.textContent).not.toContain('0 FINDINGS')
-    expect(activity.textContent).toContain('Finding details unavailable for 1 recognized Qodo review comment')
+    expect(activity.textContent).toContain('Finding details unavailable or incomplete for 1 recognized Qodo review comment')
+  })
+
+  it('warns when a recognized Qodo review has both parsed and unparsed finding details', async () => {
+    const partialReview = {
+      ...pullRequest.qodoReviews.items[0]!,
+      findings: [{ id: '21:1', title: 'Keep revision links scoped', categories: [], sourceUrl: pullRequest.url }],
+      unparsedFindingCount: 1,
+    }
+    vi.mocked(importPullRequest).mockResolvedValue({
+      ...pullRequest,
+      qodoReviews: { ...pullRequest.qodoReviews, items: [partialReview] },
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = pullRequest.url
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.activity-index')).not.toBeNull())
+
+    const activity = host.querySelector('.activity-index')!
+    expect(activity.textContent).toContain('1 FINDING · ADDITIONAL DETAILS UNAVAILABLE')
+    expect(activity.textContent).toContain('Finding details unavailable or incomplete for 1 recognized Qodo review comment')
   })
 
   it('reports unavailable GitHub checks in the activity index', async () => {
@@ -173,6 +200,34 @@ describe('change activity index', () => {
     await vi.waitFor(() => expect(host?.querySelector('.activity-index')).not.toBeNull())
 
     expect(host.querySelector('.activity-index')?.textContent).toContain('GitHub reported no check runs or commit statuses for revision aaaaaaa')
+  })
+
+  it('warns when some GitHub check records are omitted from the activity index', async () => {
+    vi.mocked(importPullRequest).mockResolvedValue({
+      ...pullRequest,
+      checks: {
+        availability: 'available', revisionSha: sha, revisionShortSha: 'aaaaaaa', revisionUrl: commit.url,
+        items: [
+          { name: 'Dated check', kind: 'check_run', status: 'completed', conclusion: 'success', completedAt: '2026-11-04T09:10:00Z' },
+          { name: 'Undated check', kind: 'check_run', status: 'queued' },
+        ],
+      },
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = pullRequest.url
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.activity-index')).not.toBeNull())
+
+    const activity = host.querySelector('.activity-index')!
+    expect(activity.textContent).toContain('1 of 2 GitHub check records')
+    expect(activity.textContent).toContain('the other 1 could not be represented')
   })
 
   it('shows loading status when focused revision checks are absent from the activity feed', async () => {

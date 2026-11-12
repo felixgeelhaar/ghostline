@@ -92,6 +92,21 @@ func TestParseQodoDoesNotMarkUnreadableFindingGroupAsClean(t *testing.T) {
 	}
 }
 
+func TestParseQodoReportsPartiallyUnparsedFindings(t *testing.T) {
+	comments := []githubIssueComment{{
+		ID: 28, User: githubUser{Login: "qodo-code-review[bot]"}, HTMLURL: "https://github.com/acme/app/pull/7#issuecomment-28",
+		Body: `<h3>Code Review by Qodo</h3><details><summary>View medium (2)</summary><details><summary>1. Keep revision links scoped <code>🐞 Bug</code></summary><details><summary>Description</summary><pre>Use the imported revision.</pre></details></details><details><summary>2.</summary></details></details>`,
+	}}
+
+	got, unrecognized := parseQodoReviews(comments, acmeApp)
+	if unrecognized != 0 || len(got) != 1 {
+		t.Fatalf("review was not preserved: reviews=%+v unrecognized=%d", got, unrecognized)
+	}
+	if got[0].Kind != "findings" || len(got[0].Findings) != 1 || got[0].Findings[0].Title != "Keep revision links scoped" || got[0].UnparsedFindingCount != 1 {
+		t.Fatalf("parsed and unparsed findings = %+v", got[0])
+	}
+}
+
 func TestQodoSummaryStopsAtDividerSourceEvenWithoutDescriptiveAlt(t *testing.T) {
 	comments := []githubIssueComment{{ID: 25, User: githubUser{Login: "qodo-free-for-open-source-projects[bot]"}, Body: `<h3>PR Summary by Qodo</h3>Keep checks revision-specific.<img src="https://www.qodo.ai/light-grey-line.svg" alt="divider"><code>Post-divider category</code>`}}
 	got, _ := parseQodoReviews(comments, acmeApp)

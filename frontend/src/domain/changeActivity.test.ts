@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildChangeActivity, countReviewsWithUnavailableDetails } from './changeActivity'
+import { buildChangeActivity, countReviewsWithUnavailableDetails, describeCheckActivity } from './changeActivity'
 import type { RevisionChecks } from './checks'
 import type { RevisionRef } from './reviews'
 import type { QodoReview } from './reviews'
@@ -44,6 +44,17 @@ describe('change activity', () => {
     const complete = { ...review, id: 22, findings: [{ id: '22:1', title: 'Guard retries', categories: [], sourceUrl: review.url }] }
 
     expect(countReviewsWithUnavailableDetails([review, complete])).toBe(1)
+  })
+
+  it('counts reviews with some unparsed findings as incomplete', () => {
+    const partial = {
+      ...review,
+      findings: [{ id: '21:1', title: 'Guard retries', categories: [], sourceUrl: review.url }],
+      unparsedFindingCount: 1,
+    }
+
+    expect(countReviewsWithUnavailableDetails([partial])).toBe(1)
+    expect(buildChangeActivity([], [partial])[0]?.detail).toContain('DETAILS UNAVAILABLE')
   })
 
   it('uses deterministic ordering for equal timestamps without claiming a causal order', () => {
@@ -140,5 +151,35 @@ describe('change activity', () => {
 
     expect(buildChangeActivity([], [], unavailable)).toEqual([])
     expect(buildChangeActivity([commit], [], mismatched).some((event) => event.kind === 'github_check')).toBe(false)
+  })
+
+  it('describes partially omitted check records through the domain policy', () => {
+    const checks: RevisionChecks = {
+      availability: 'available', revisionSha: commit.sha, revisionShortSha: commit.shortSha,
+      revisionUrl: commit.url, items: [
+        { name: 'Dated scan', kind: 'check_run', status: 'completed', conclusion: 'success', completedAt: '2026-11-04T09:10:00Z' },
+        { name: 'Undated scan', kind: 'check_run', status: 'queued' },
+      ],
+    }
+    const events = buildChangeActivity([commit], [], checks)
+
+    expect(describeCheckActivity({ checks, events, revisionSha: commit.sha })).toMatchObject({
+      kind: 'warn',
+      text: expect.stringContaining('1 of 2 GitHub check records'),
+    })
+  })
+
+  it('reports an unplaced check revision and leaves complete or empty results unmarked', () => {
+    const checks: RevisionChecks = {
+      availability: 'available', revisionSha: 'b'.repeat(40), revisionShortSha: 'bbbbbbb',
+      revisionUrl: `https://github.com/acme/app/commit/${'b'.repeat(40)}`,
+      items: [{ name: 'Undated scan', kind: 'check_run', status: 'queued' }],
+    }
+    const event = buildChangeActivity([], [], checks)
+
+    expect(describeCheckActivity({ checks, events: event, revisionSha: checks.revisionSha })?.text).toContain('could not represent any of the 1 GitHub check records')
+    expect(describeCheckActivity({ checks: { ...checks, items: [] }, events: [], revisionSha: checks.revisionSha })?.kind).toBe('info')
+    const complete = { ...checks, revisionSha: commit.sha, revisionShortSha: commit.shortSha, revisionUrl: commit.url, items: [{ name: 'Dated scan', kind: 'check_run' as const, status: 'queued', startedAt: '2026-11-04T09:12:00Z' }] }
+    expect(describeCheckActivity({ checks: complete, events: buildChangeActivity([commit], [], complete), revisionSha: commit.sha })).toBeUndefined()
   })
 })

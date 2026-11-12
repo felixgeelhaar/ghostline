@@ -14,6 +14,7 @@ describe('Qodo review evidence', () => {
         sourceType: 'github_issue_comment',
         sourceAuthor: 'qodo-code-review[bot]',
         kind: 'findings',
+        unparsedFindingCount: 1,
         findings: [{ id: '17:1', title: 'Reject stale checks', categories: ['🐞 Bug', '⛨ Security'], lifecycle: '⭐ New', severity: 'Medium', actionLevel: 'Remediation recommended', description: 'Checks from the previous revision can appear current.', sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-17' }],
         commitSha: sha,
         commitUrl: `https://github.com/acme/app/commit/${sha}`,
@@ -25,7 +26,24 @@ describe('Qodo review evidence', () => {
     expect(reviews.items[0]?.findings[0]?.description).toContain('previous revision')
     expect(reviews.items[0]?.sourceType).toBe('github_issue_comment')
     expect(reviews.items[0]?.findings[0]?.categories).toEqual(['🐞 Bug', '⛨ Security'])
+    expect(reviews.items[0]?.unparsedFindingCount).toBe(1)
     expect(qodoReviewState(reviews)).toBe('recorded')
+  })
+
+  it('rejects negative counts for findings that could not be parsed', () => {
+    const review = {
+      id: 17,
+      provider: 'Qodo',
+      sourceType: 'github_issue_comment',
+      sourceAuthor: 'qodo-code-review[bot]',
+      kind: 'findings',
+      unparsedFindingCount: -1,
+      findings: [],
+      createdAt: '2026-11-04T09:00:00Z',
+      url: 'https://github.com/acme/app/pull/7#issuecomment-17',
+    }
+
+    expect(QodoReviewSetSchema.safeParse({ availability: 'available', unrecognizedCommentCount: 0, items: [review] }).success).toBe(false)
   })
 
   it('distinguishes no Qodo review from unavailable GitHub evidence', () => {

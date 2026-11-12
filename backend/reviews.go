@@ -27,17 +27,18 @@ type qodoReviewSet struct {
 }
 
 type qodoReview struct {
-	ID           int64         `json:"id"`
-	Provider     string        `json:"provider"`
-	SourceType   string        `json:"sourceType"`
-	SourceAuthor string        `json:"sourceAuthor"`
-	Kind         string        `json:"kind"`
-	Summary      string        `json:"summary,omitempty"`
-	Findings     []qodoFinding `json:"findings"`
-	CommitSHA    string        `json:"commitSha,omitempty"`
-	CommitURL    string        `json:"commitUrl,omitempty"`
-	CreatedAt    time.Time     `json:"createdAt"`
-	URL          string        `json:"url"`
+	ID                   int64         `json:"id"`
+	Provider             string        `json:"provider"`
+	SourceType           string        `json:"sourceType"`
+	SourceAuthor         string        `json:"sourceAuthor"`
+	Kind                 string        `json:"kind"`
+	Summary              string        `json:"summary,omitempty"`
+	Findings             []qodoFinding `json:"findings"`
+	UnparsedFindingCount int           `json:"unparsedFindingCount"`
+	CommitSHA            string        `json:"commitSha,omitempty"`
+	CommitURL            string        `json:"commitUrl,omitempty"`
+	CreatedAt            time.Time     `json:"createdAt"`
+	URL                  string        `json:"url"`
 }
 
 type qodoFinding struct {
@@ -104,7 +105,7 @@ func parseQodoReviews(comments []githubIssueComment, repo domain.RepositoryIdent
 			review.Kind = "summary"
 			review.Summary = qodoSummaryText(heading)
 		case "Code Review by Qodo":
-			review.Findings = qodoFindings(doc, comment.ID, comment.HTMLURL)
+			review.Findings, review.UnparsedFindingCount = qodoFindings(doc, comment.ID, comment.HTMLURL)
 			if len(review.Findings) == 0 && qodoReportsNoOpenFindings(nodeText(doc)) && !qodoHasNonzeroFindingGroup(doc) {
 				review.Kind = "no_open_findings"
 			} else {
@@ -196,13 +197,18 @@ func isQodoDivider(node *html.Node) bool {
 	return strings.Contains(alt, "grey divider") || strings.Contains(src, "light-grey-line")
 }
 
-func qodoFindings(root *html.Node, commentID int64, sourceURL string) []qodoFinding {
+func qodoFindings(root *html.Node, commentID int64, sourceURL string) ([]qodoFinding, int) {
 	findings := make([]qodoFinding, 0)
+	unparsed := 0
+	ordinal := 0
 	var walk func(*html.Node)
 	walk = func(node *html.Node) {
 		if node.Type == html.ElementNode && node.Data == "summary" && qodoFindingHeadingText.MatchString(nodeText(node)) {
-			if finding := qodoFindingFromSummary(node, commentID, len(findings)+1, sourceURL); finding.Title != "" {
+			ordinal++
+			if finding := qodoFindingFromSummary(node, commentID, ordinal, sourceURL); finding.Title != "" {
 				findings = append(findings, finding)
+			} else {
+				unparsed++
 			}
 		}
 		for child := node.FirstChild; child != nil; child = child.NextSibling {
@@ -210,7 +216,7 @@ func qodoFindings(root *html.Node, commentID int64, sourceURL string) []qodoFind
 		}
 	}
 	walk(root)
-	return findings
+	return findings, unparsed
 }
 
 func qodoFindingFromSummary(summary *html.Node, commentID int64, ordinal int, sourceURL string) qodoFinding {

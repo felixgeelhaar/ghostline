@@ -3,7 +3,7 @@ import { computed, nextTick, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
-import { buildChangeActivity, countReviewsWithUnavailableDetails } from '../domain/changeActivity'
+import { buildChangeActivity, countReviewsWithUnavailableDetails, describeCheckActivity } from '../domain/changeActivity'
 import { checkOutcome, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
 import { findRecurringFindings, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import { buildFindingTrace } from '../domain/trace'
@@ -30,17 +30,13 @@ const checksSummary = computed(() => summarizeChecks(orderedChecks.value))
 const recurringFindings = computed(() => findRecurringFindings(pr.value?.qodoReviews.items ?? []))
 const changeActivity = computed(() => buildChangeActivity(pr.value?.commits ?? [], pr.value?.qodoReviews.items ?? [], activeChecks.value))
 const reviewsWithUnavailableDetails = computed(() => countReviewsWithUnavailableDetails(pr.value?.qodoReviews.items ?? []))
-const checkActivityNotice = computed(() => {
-  const checks = activeChecks.value
-  const revision = checks?.revisionShortSha || selectedRevision.value.slice(0, 7)
-  const checkEvents = changeActivity.value.filter((event) => event.kind === 'github_check')
-  if (checksLoading.value) return { kind: 'loading', text: `Loading GitHub check activity for revision ${revision}…` }
-  if (checksError.value) return { kind: 'warn', text: `Check activity unavailable for revision ${revision}. ${checksError.value}` }
-  if (checks?.availability === 'unavailable') return { kind: 'warn', text: `Check activity unavailable for revision ${revision}. ${checks.reason}` }
-  if (checkEvents.length > 0 || !checks) return undefined
-  if (checks.items.length === 0) return { kind: 'info', text: `GitHub reported no check runs or commit statuses for revision ${revision}.` }
-  return { kind: 'warn', text: `GitHub returned ${checks.items.length} check record${checks.items.length === 1 ? '' : 's'} for revision ${revision}, but none could be placed in this activity timeline. See the Checks section for revision-scoped source results.` }
-})
+const checkActivityNotice = computed(() => describeCheckActivity({
+  checks: activeChecks.value,
+  events: changeActivity.value,
+  loading: checksLoading.value,
+  error: checksError.value || undefined,
+  revisionSha: selectedRevision.value,
+}))
 const visibleCommits = computed(() => pr.value?.commits.filter((commit) => !selectedRevision.value || commit.sha === selectedRevision.value) ?? [])
 const selectedReviews = computed(() => reviewsForRevision(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
 const reviewCount = computed(() => reviewCountSummary(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
@@ -153,7 +149,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         <p class="footnote">Events are ordered by their source timestamps. Check entries are GitHub’s latest records for the focused revision at fetch time, not a complete run history. Commit, check, and Qodo timestamps describe different source fields; sequence alone does not establish causation.</p>
         <p v-if="pr.qodoReviews.availability === 'unavailable'" class="checks-note warn" role="status"><strong>Qodo activity unavailable.</strong> {{ pr.qodoReviews.reason }} This index may omit Qodo review events.</p>
         <p v-else-if="pr.qodoReviews.unrecognizedCommentCount > 0" class="checks-note warn" role="status"><strong>{{ pr.qodoReviews.unrecognizedCommentCount }} additional Qodo comments could not be parsed.</strong> The activity index may omit review events. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect all comments on GitHub ↗</a></p>
-        <p v-if="pr.qodoReviews.availability === 'available' && reviewsWithUnavailableDetails > 0" class="checks-note warn" role="status"><strong>Finding details unavailable for {{ reviewsWithUnavailableDetails }} recognized Qodo review comment{{ reviewsWithUnavailableDetails === 1 ? '' : 's' }}.</strong> The activity index records the comment but could not extract its finding details. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect the source review on GitHub ↗</a></p>
+        <p v-if="pr.qodoReviews.availability === 'available' && reviewsWithUnavailableDetails > 0" class="checks-note warn" role="status"><strong>Finding details unavailable or incomplete for {{ reviewsWithUnavailableDetails }} recognized Qodo review comment{{ reviewsWithUnavailableDetails === 1 ? '' : 's' }}.</strong> The activity index may omit finding details. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect the source review on GitHub ↗</a></p>
         <p v-if="checkActivityNotice" class="checks-note" :class="{ warn: checkActivityNotice.kind === 'warn' }" role="status">{{ checkActivityNotice.text }}</p>
         <ol class="activity-list">
           <li v-for="event in changeActivity" :key="event.id" :class="`activity-${event.kind}`">
