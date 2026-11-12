@@ -62,6 +62,7 @@ async function copyGuidance(trace: FindingTrace) {
           <span>COMMENT #{{ occurrence.reviewId }}</span>
           <time :datetime="occurrence.createdAt">{{ date(occurrence.createdAt) }}</time>
         </div>
+        <p class="trace-repeat-role" :class="occurrence.possibleRepeatAnchor ? 'is-anchor' : 'is-context'">{{ occurrence.possibleRepeatAnchor ? 'COUNTED · DISTINCT MARKED REVISION' : occurrence.commitSha ? 'CONTEXT ONLY · SAME REVISION NOT COUNTED AGAIN' : 'CONTEXT ONLY · REVISION NOT MARKED' }}</p>
         <h6 class="trace-event-title">{{ occurrence.title }}</h6>
         <p class="trace-match-note">Possible match based on normalized title only. Compare the source evidence before treating this as the same issue.</p>
         <p v-if="[...occurrence.categories, occurrence.lifecycle, occurrence.severity, occurrence.actionLevel].some(Boolean)" class="finding-labels">{{ [...occurrence.categories, occurrence.lifecycle, occurrence.severity, occurrence.actionLevel].filter(Boolean).join(' · ') }}</p>

@@ -64,6 +64,7 @@ export type RecurringFinding = {
   id: string
   title: string
   occurrences: FindingOccurrence[]
+  titleMatches?: FindingOccurrence[]
 }
 
 export function noOpenFindingsNote(review: Pick<QodoReview, 'commitSha'>): string {
@@ -122,9 +123,15 @@ export function findRecurringFindings(reviews: QodoReview[]): RecurringFinding[]
       grouped.set(normalized, groupedFinding)
     }
   }
-  return [...grouped.values()].filter((finding) => {
-    const markedRevisions = new Set(finding.occurrences.flatMap((occurrence) => occurrence.commitSha ? [occurrence.commitSha.toLowerCase()] : []))
-    return markedRevisions.size > 1
+  return [...grouped.values()].flatMap((finding) => {
+    const occurrenceByRevision = new Map<string, FindingOccurrence>()
+    for (const occurrence of finding.occurrences) {
+      if (!occurrence.commitSha) continue
+      const revision = occurrence.commitSha.toLowerCase()
+      if (!occurrenceByRevision.has(revision)) occurrenceByRevision.set(revision, occurrence)
+    }
+    const occurrences = [...occurrenceByRevision.values()]
+    return occurrences.length > 1 ? [{ ...finding, occurrences, titleMatches: finding.occurrences }] : []
   })
 }
 

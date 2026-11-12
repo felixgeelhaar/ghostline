@@ -42,7 +42,7 @@ function occurrence(id: number, sha: string): TracedOccurrence {
     reviewId: id, findingId: `${id}:1`, title: 'Test finding', createdAt: '2026-11-04T10:00:00Z',
     url: `https://github.com/acme/app/pull/7#issuecomment-${id}`,
     sourceUrl: `https://github.com/acme/app/pull/7#issuecomment-${id}`, categories: [],
-    commitSha: sha, commitUrl: revision.url, revisionInPullRequest: true, revision,
+    commitSha: sha, commitUrl: revision.url, revisionInPullRequest: true, possibleRepeatAnchor: true, revision,
   }
 }
 
@@ -154,12 +154,14 @@ describe('Deep Trace browser interactions', () => {
     expect(host.querySelector('.trace-open')).toBeNull()
   })
 
-  it('labels title matches as possible repeats and shows each occurrence title', async () => {
+  it('counts distinct marked revisions and shows one source occurrence per revision', async () => {
     vi.mocked(importPullRequest).mockResolvedValue({
       ...pullRequest,
       qodoReviews: { ...pullRequest.qodoReviews, items: [
         { ...reviews[0]!, findings: [{ ...reviews[0]!.findings[0]!, title: 'Finding one', description: 'First report detail.' }] },
+        { ...reviews[0]!, id: 203, findings: [{ ...reviews[0]!.findings[0]!, id: '203:1', title: 'Finding one', description: 'Same revision repost.', sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-203' }], url: 'https://github.com/acme/app/pull/7#issuecomment-203' },
         { ...reviews[1]!, findings: [{ ...reviews[1]!.findings[0]!, title: 'Finding one', description: 'Second report detail.' }] },
+        { ...reviews[1]!, id: 204, findings: [{ ...reviews[1]!.findings[0]!, id: '204:1', title: 'Finding one', description: 'Unmarked repost.', sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-204' }], commitSha: undefined, commitUrl: undefined, url: 'https://github.com/acme/app/pull/7#issuecomment-204' },
       ] },
     })
     host = document.createElement('div')
@@ -174,12 +176,16 @@ describe('Deep Trace browser interactions', () => {
     await vi.waitFor(() => expect(host?.querySelector('.recurrence-list')).not.toBeNull())
 
     expect(host.querySelector('.recurrence')?.textContent).toContain('POSSIBLE REPEATS')
+    expect(host.querySelector('.recurrence-count')?.textContent).toBe('2 distinct revisions')
+    expect(host.querySelectorAll('.recurrence-list > li > ul > li')).toHaveLength(2)
     host.querySelector<HTMLButtonElement>('.trace-open')!.click()
     await settleVue()
-    expect(host.querySelectorAll('.trace-event-title')).toHaveLength(2)
-    expect(host.querySelectorAll('.trace-event-description')).toHaveLength(2)
+    expect(host.querySelectorAll('.trace-event-title')).toHaveLength(4)
+    expect(host.querySelectorAll('.trace-event-description')).toHaveLength(4)
+    expect(host.querySelectorAll('.trace-repeat-role.is-anchor')).toHaveLength(2)
+    expect(host.querySelectorAll('.trace-repeat-role.is-context')).toHaveLength(2)
     expect(host.querySelector('.trace-event-title')?.textContent).toContain('Finding one')
-    expect(host.querySelectorAll('.trace-event-description')[1]?.textContent).toContain('Second report detail.')
+    expect([...host.querySelectorAll('.trace-event-description')].map((item) => item.textContent)).toContain('Second report detail.')
     expect(host.querySelector('.trace-events')?.textContent).toContain('Possible match based on normalized title only. Compare the source evidence')
   })
 
