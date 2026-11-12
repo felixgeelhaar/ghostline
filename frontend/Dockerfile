@@ -1,9 +1,6 @@
-FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914
+FROM node:22-bookworm-slim@sha256:18052396bf1d0c6e0a8c58181b5c1457da19409efbd5032a3f4d86974e74d13c
 LABEL maintainer="Ghostline maintainers"
 WORKDIR /app
-# zlib: ALPINE-CVE-2026-4738 is fixed in 1.4-r0, which the pinned base image does not ship yet.
-# The version constraint fails the build if the fixed package cannot be installed.
-RUN apk add --no-cache 'zlib>=1.4-r0'
 COPY --chown=node:node package*.json ./
 RUN chown node:node /app
 USER node

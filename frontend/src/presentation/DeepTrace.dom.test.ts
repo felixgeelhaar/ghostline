@@ -39,10 +39,10 @@ const pullRequest: PullRequest = {
 function occurrence(id: number, sha: string): TracedOccurrence {
   const revision = sha === shaA ? commitA : commitB
   return {
-    reviewId: id, findingId: `${id}:1`, createdAt: '2026-11-04T10:00:00Z',
+    reviewId: id, findingId: `${id}:1`, title: 'Test finding', createdAt: '2026-11-04T10:00:00Z',
     url: `https://github.com/acme/app/pull/7#issuecomment-${id}`,
     sourceUrl: `https://github.com/acme/app/pull/7#issuecomment-${id}`, categories: [],
-    commitSha: sha, commitUrl: revision.url, revisionInPullRequest: true, revision,
+    commitSha: sha, commitUrl: revision.url, revisionInPullRequest: true, possibleRepeatAnchor: true, revision,
   }
 }
 
@@ -107,7 +107,7 @@ describe('Deep Trace browser interactions', () => {
     expect(document.activeElement).toBe(opener)
   })
 
-  it('shows the live empty state without exposing a trace opener when no title repeats', async () => {
+  it('shows the live empty state without exposing a trace opener when no cross-revision repeat exists', async () => {
     vi.mocked(importPullRequest).mockResolvedValue({
       ...pullRequest,
       qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [
@@ -124,8 +124,69 @@ describe('Deep Trace browser interactions', () => {
     await nextTick()
     host.querySelector<HTMLButtonElement>('.input-row button')!.click()
     await vi.waitFor(() => expect(host?.querySelector('.recurrence')).not.toBeNull())
-    expect(host.querySelector('.recurrence')?.textContent).toContain('No repeated finding title appears')
+    expect(host.querySelector('.recurrence')?.textContent).toContain('No candidate repeat across distinct marked revisions was found')
     expect(host.querySelector('.trace-open')).toBeNull()
+  })
+
+  it('does not claim matching titles are absent when they occur only on one marked revision', async () => {
+    vi.mocked(importPullRequest).mockResolvedValue({
+      ...pullRequest,
+      qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [
+        { ...reviews[0]!, findings: [reviews[0]!.findings[0]!], commitSha: shaA },
+        { ...reviews[1]!, findings: [reviews[1]!.findings[0]!], commitSha: shaA, commitUrl: commitA.url },
+      ] },
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = 'https://github.com/acme/app/pull/7'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.recurrence')).not.toBeNull())
+
+    const emptyState = host.querySelector('.recurrence')?.textContent ?? ''
+    expect(emptyState).toContain('No candidate repeat across distinct marked revisions was found')
+    expect(emptyState).toContain('Same-revision or unmarked title matches are not shown as possible repeats')
+    expect(emptyState).not.toContain('No normalized finding title match appears')
+    expect(host.querySelector('.trace-open')).toBeNull()
+  })
+
+  it('counts distinct marked revisions and shows one source occurrence per revision', async () => {
+    vi.mocked(importPullRequest).mockResolvedValue({
+      ...pullRequest,
+      qodoReviews: { ...pullRequest.qodoReviews, items: [
+        { ...reviews[0]!, findings: [{ ...reviews[0]!.findings[0]!, title: 'Finding one', description: 'First report detail.' }] },
+        { ...reviews[0]!, id: 203, findings: [{ ...reviews[0]!.findings[0]!, id: '203:1', title: 'Finding one', description: 'Same revision repost.', sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-203' }], url: 'https://github.com/acme/app/pull/7#issuecomment-203' },
+        { ...reviews[1]!, findings: [{ ...reviews[1]!.findings[0]!, title: 'Finding one', description: 'Second report detail.' }] },
+        { ...reviews[1]!, id: 204, findings: [{ ...reviews[1]!.findings[0]!, id: '204:1', title: 'Finding one', description: 'Unmarked repost.', sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-204' }], commitSha: undefined, commitUrl: undefined, url: 'https://github.com/acme/app/pull/7#issuecomment-204' },
+      ] },
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = 'https://github.com/acme/app/pull/7'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.recurrence-list')).not.toBeNull())
+
+    expect(host.querySelector('.recurrence')?.textContent).toContain('POSSIBLE REPEATS')
+    expect(host.querySelector('.recurrence-count')?.textContent).toBe('2 distinct revisions')
+    expect(host.querySelectorAll('.recurrence-list > li > ul > li')).toHaveLength(2)
+    host.querySelector<HTMLButtonElement>('.trace-open')!.click()
+    await settleVue()
+    expect(host.querySelectorAll('.trace-event-title')).toHaveLength(4)
+    expect(host.querySelectorAll('.trace-event-description')).toHaveLength(4)
+    expect(host.querySelectorAll('.trace-repeat-role.is-anchor')).toHaveLength(2)
+    expect(host.querySelectorAll('.trace-repeat-role.is-context')).toHaveLength(2)
+    expect(host.querySelector('.trace-event-title')?.textContent).toContain('Finding one')
+    expect([...host.querySelectorAll('.trace-event-description')].map((item) => item.textContent)).toContain('Second report detail.')
+    expect(host.querySelector('.trace-events')?.textContent).toContain('Possible match based on normalized title only. Compare the source evidence')
   })
 
   it('clears copied guidance status when the reused panel switches findings', async () => {
