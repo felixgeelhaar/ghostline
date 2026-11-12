@@ -16,10 +16,19 @@ func TestLoadCheckAnnotationsReturnsRevisionBoundGitHubEvidence(t *testing.T) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		switch r.URL.Path {
 		case "/repos/acme/app":
+			if r.Header.Get("Authorization") != "Bearer test-token" {
+				t.Errorf("visibility request Authorization = %q", r.Header.Get("Authorization"))
+			}
 			_, _ = w.Write([]byte(`{"private":false}`))
 		case "/repos/acme/app/check-runs/314":
+			if got := r.Header.Get("Authorization"); got != "" {
+				t.Errorf("check-run request unexpectedly used server token: %q", got)
+			}
 			_, _ = w.Write([]byte(`{"id":314,"head_sha":"` + headSHA + `","html_url":"https://github.com/acme/app/actions/runs/314"}`))
 		case "/repos/acme/app/check-runs/314/annotations":
+			if got := r.Header.Get("Authorization"); got != "" {
+				t.Errorf("annotation request unexpectedly used server token: %q", got)
+			}
 			if r.URL.Query().Get("per_page") != "100" || r.URL.Query().Get("page") != "1" {
 				t.Errorf("annotation query = %s, want page 1 at 100 per page", r.URL.RawQuery)
 			}

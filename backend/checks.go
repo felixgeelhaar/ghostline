@@ -165,7 +165,7 @@ func checksUnavailableReason(err error) string {
 	case errors.Is(err, errRevisionMismatch):
 		return "GitHub returned checks for a different commit than the pull request's head, so they are not shown."
 	case errors.Is(err, errRateLimit):
-		return "GitHub’s API rate limit was reached before checks could be loaded. Try again later or configure GITHUB_TOKEN."
+		return "GitHub’s public API rate limit was reached before checks could be loaded. Try again later."
 	case errors.Is(err, errNotFound):
 		return "GitHub did not return checks for the head commit."
 	case errors.As(err, &statusErr) && statusErr.code == http.StatusForbidden:

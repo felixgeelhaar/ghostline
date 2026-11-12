@@ -57,7 +57,7 @@ npm ci
 npm run dev
 ```
 
-Open the URL Vite prints. The frontend proxies `/api` requests to `http://localhost:8080`. Public GitHub API access works without credentials but has a low rate limit; export `GITHUB_TOKEN` before starting the local Go API to raise it. Never commit or paste a token into a report.
+Open the URL Vite prints. The frontend proxies `/api` requests to `http://localhost:8080`. Public GitHub API access works without credentials and uses GitHub's public API quota. If `GITHUB_TOKEN` is configured, it is used only for repository visibility metadata; pull-request data requests remain unauthenticated and the token does not raise their quota. Never commit or paste a token into a report.
 
 To run both services in containers:
 
@@ -65,7 +65,7 @@ To run both services in containers:
 docker compose up --build
 ```
 
-Open `http://localhost:5173`, or the configured `GHOSTLINE_PORT`. Compose exposes the frontend on network interfaces by default; use `GHOSTLINE_BIND_ADDRESS` to select a bind address. Compose forwards `GITHUB_TOKEN` from the environment to the backend when set. When a server token is configured, Ghostline confirms repository visibility before serving pull-request, check, or annotation data and fails closed if visibility is private or unknown. Never commit or paste a token into a report.
+Open `http://localhost:5173`, or the configured `GHOSTLINE_PORT`. Compose exposes the frontend on network interfaces by default; use `GHOSTLINE_BIND_ADDRESS` to select a bind address. Compose forwards `GITHUB_TOKEN` from the environment to the backend when set. The token is used only for repository visibility metadata; public PR, check, review-comment, and annotation data are fetched without credentials. If a repository becomes private after the metadata check, GitHub rejects the later unauthenticated data request. Never commit or paste a token into a report.
 
 Run the project checks:
 

@@ -26,11 +26,11 @@ npm ci
 npm run dev
 ```
 
-Open the URL printed by Vite. Public GitHub API requests work without a token; set `GITHUB_TOKEN` to increase the unauthenticated rate limit.
+Open the URL printed by Vite. Public GitHub API requests work without a token. If `GITHUB_TOKEN` is configured, Ghostline uses it only to check repository visibility; pull-request, commit, check, and annotation data are fetched without credentials. The token does not raise the quota for those public-data requests.
 
 ## Request rate limit
 
-`POST /api/import` and `POST /api/checks` share one per-client budget so a single caller cannot use up the GitHub API quota for everyone else. The limiter is in-memory and fixed-window: the window starts at a client's first request, and the count and any recorded clients are lost when the backend restarts or if you run more than one instance. A request over the limit receives HTTP 429, a `Retry-After` header in seconds, and a JSON `{"error": "..."}` body; the UI shows when to retry. `GET /api/health` is not limited.
+`POST /api/import`, `POST /api/checks`, and `POST /api/check-annotations` share one per-client budget so a single caller cannot use up the GitHub API quota for everyone else. The limiter is in-memory and fixed-window: the window starts at a client's first request, and the count and any recorded clients are lost when the backend restarts or if you run more than one instance. A request over the limit receives HTTP 429, a `Retry-After` header in seconds, and a JSON `{"error": "..."}` body; the UI shows when to retry. `GET /api/health` is not limited.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -59,7 +59,7 @@ The `Security` GitHub Actions workflow calls the shared `klarlabs-studio/.github
 docker compose up --build
 ```
 
-Open http://localhost:5173 (or set `GHOSTLINE_PORT` if that port is occupied). Compose binds the frontend to all network interfaces by default, so other devices on the LAN can use `http://<host-lan-ip>:5173`; set `GHOSTLINE_BIND_ADDRESS` to a specific interface address to restrict access. The development frontend proxies API requests to the backend container. Compose forwards `GITHUB_TOKEN` from the environment to the backend when set; otherwise requests use GitHub's unauthenticated public API quota.
+Open http://localhost:5173 (or set `GHOSTLINE_PORT` if that port is occupied). Compose binds the frontend to all network interfaces by default, so other devices on the LAN can use `http://<host-lan-ip>:5173`; set `GHOSTLINE_BIND_ADDRESS` to a specific interface address to restrict access. The development frontend proxies API requests to the backend container. Compose forwards `GITHUB_TOKEN` from the environment to the backend only for repository visibility checks; public pull-request data requests remain unauthenticated and use GitHub's public API quota.
 
 ## Verify
 

@@ -24,8 +24,8 @@ const pullRequest: PullRequest = {
   checks: { availability: 'available', revisionSha: head, revisionShortSha: 'bbbbbbb', revisionUrl: `https://github.com/acme/app/commit/${head}`, items: [run(314)] },
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] },
 }
-const page = (sha: string, checkRunId: number, message: string, details?: string) => ({
-  revisionSha: sha, checkRunId, checkRunUrl: `https://github.com/acme/app/actions/runs/${checkRunId}`, page: 1, pageSize: 100, hasMore: false,
+const page = (sha: string, checkRunId: number, message: string, details?: string, pageNumber = 1, hasMore = false) => ({
+  revisionSha: sha, checkRunId, checkRunUrl: `https://github.com/acme/app/actions/runs/${checkRunId}`, page: pageNumber, pageSize: 100, hasMore,
   items: [{ path: 'backend/payments.go', startLine: 12, endLine: 14, level: 'warning', title: 'Idempotency', message, ...(details ? { details } : {}), sourceUrl: `https://github.com/acme/app/blob/${sha}/backend/payments.go#L12-L14` }],
 })
 
@@ -49,7 +49,7 @@ async function mountImportedPR() {
 afterEach(() => {
   app?.unmount(); app = undefined
   host?.remove(); host = undefined
-  vi.clearAllMocks()
+  vi.resetAllMocks()
 })
 
 describe('GitHub check annotations', () => {
@@ -88,6 +88,25 @@ describe('GitHub check annotations', () => {
 
     expect(host!.textContent).toContain('Finding without a run link.')
     expect(host!.textContent).not.toContain('Unable to load annotations')
+  })
+
+  it('uses cached annotation pages when navigating back after they were loaded', async () => {
+    vi.mocked(fetchCheckAnnotations)
+      .mockResolvedValueOnce(page(head, 314, 'First-page annotation.', undefined, 1, true))
+      .mockResolvedValueOnce(page(head, 314, 'Second-page annotation.', undefined, 2, false))
+      .mockRejectedValue(new Error('Temporary GitHub error'))
+    await mountImportedPR()
+
+    host!.querySelector<HTMLButtonElement>('.annotation-toggle')!.click()
+    await vi.waitFor(() => expect(host?.textContent).toContain('First-page annotation.'))
+    host!.querySelector<HTMLButtonElement>('.annotation-pagination button')!.click()
+    await vi.waitFor(() => expect(host?.textContent).toContain('Second-page annotation.'))
+    host!.querySelector<HTMLButtonElement>('.annotation-pagination button')!.click()
+    await settle()
+
+    expect(fetchCheckAnnotations).toHaveBeenCalledTimes(2)
+    expect(host!.textContent).toContain('First-page annotation.')
+    expect(host!.textContent).not.toContain('Temporary GitHub error')
   })
 
   it('discards an older annotation response after the selected revision changes', async () => {

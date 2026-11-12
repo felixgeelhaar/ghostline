@@ -139,7 +139,7 @@ func (a api) loadCheckAnnotations(c *gin.Context) {
 	case errors.Is(err, errRepositoryVisibilityUnknown):
 		c.JSON(http.StatusBadGateway, map[string]string{"error": "GitHub did not confirm that this repository is public, so annotations were not loaded."})
 	case err == errRateLimit:
-		c.JSON(http.StatusTooManyRequests, map[string]string{"error": "GitHub’s public API rate limit has been reached. Try again later or configure GITHUB_TOKEN."})
+		c.JSON(http.StatusTooManyRequests, map[string]string{"error": "GitHub’s public API rate limit has been reached. Try again later."})
 	case err == errRevisionMismatch:
 		c.JSON(http.StatusConflict, map[string]string{"error": "That check run does not belong to the selected revision. Re-import the pull request before viewing its annotations."})
 	case errors.As(err, &statusErr) && statusErr.code == http.StatusForbidden:

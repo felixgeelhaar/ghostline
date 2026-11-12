@@ -109,7 +109,12 @@ function showAnnotationPage(check: Check, page: number) {
   const sha = activeChecks.value?.revisionSha
   if (!sha || check.kind !== 'check_run') return
   annotationPageNumbers.value = { ...annotationPageNumbers.value, [annotationPanelKey(sha, check.id)]: page }
-  void loadAnnotations(check, sha, page)
+  const key = annotationKey(sha, check.id, page)
+  if (annotationPages.value[key]) {
+    annotationErrors.value = { ...annotationErrors.value, [key]: '' }
+    return
+  }
+  if (!annotationLoading.value[key]) void loadAnnotations(check, sha, page)
 }
 async function focusRevision(sha: string) {
   const importedPR = pr.value

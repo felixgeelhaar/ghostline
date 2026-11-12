@@ -224,7 +224,7 @@ func respondGitHubError(c *gin.Context, err error) {
 	case errors.Is(err, errNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "Pull request not found. Check the URL and confirm the repository is public."})
 	case errors.Is(err, errRateLimit):
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "GitHub’s public API rate limit has been reached. Try again later or configure GITHUB_TOKEN."})
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "GitHub’s public API rate limit has been reached. Try again later."})
 	case errors.As(err, &statusErr) && statusErr.code >= 500:
 		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub is having trouble right now. Try again shortly."})
 	default:

@@ -72,6 +72,44 @@ func TestAuthenticatedAPIRejectsPrivateRepository(t *testing.T) {
 	}
 }
 
+func TestImportDoesNotUseVisibilityTokenForPullRequestData(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch r.URL.Path {
+		case "/repos/acme/app":
+			if r.Header.Get("Authorization") != "Bearer visibility-token" {
+				t.Errorf("visibility request Authorization = %q", r.Header.Get("Authorization"))
+			}
+			_, _ = w.Write([]byte(`{"private":false}`))
+		case "/repos/acme/app/pulls/7":
+			if got := r.Header.Get("Authorization"); got != "" {
+				t.Errorf("pull request data request unexpectedly used server token: %q", got)
+			}
+			// Simulate a public repository becoming private after visibility was checked.
+			http.NotFound(w, r)
+		default:
+			t.Errorf("unexpected GitHub request: %s", r.URL.RequestURI())
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	gin.SetMode(gin.TestMode)
+	router := newRouter(&githubClient{baseURL: server.URL, token: "visibility-token", http: server.Client()})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNotFound || strings.Contains(recorder.Body.String(), "private pull request title") {
+		t.Fatalf("status/body = %d/%s, want no data after repository became private", recorder.Code, recorder.Body.String())
+	}
+	if len(requests) != 2 || requests[0] != "GET /repos/acme/app" || requests[1] != "GET /repos/acme/app/pulls/7" {
+		t.Fatalf("GitHub requests = %v", requests)
+	}
+}
+
 func TestImportPRUsesCanonicalRepositoryReturnedByGitHub(t *testing.T) {
 	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	var requests []string
