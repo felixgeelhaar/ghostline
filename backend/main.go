@@ -1,11 +1,15 @@
 package main
 
 import (
+	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,6 +18,9 @@ import (
 	"github.com/felixgeelhaar/ghostline/backend/internal/domain"
 	"github.com/gin-gonic/gin"
 )
+
+//go:embed all:web
+var frontendAssets embed.FS
 
 type pullRequest struct {
 	Repository string         `json:"repository"`
@@ -222,6 +229,65 @@ func newRouterWithLimiter(gh *githubClient, limiter *rateLimiter, identity clien
 	return newRouterWithAuth(gh, limiter, identity, authSettings{Now: time.Now})
 }
 
+func newProductionRouter(gh *githubClient, limiter *rateLimiter, identity clientIdentity, settings authSettings, assets fs.FS) *gin.Engine {
+	r := newRouterWithAuth(gh, limiter, identity, settings)
+	if assets == nil {
+		return r
+	}
+	static, err := fs.Sub(assets, "web")
+	if err != nil {
+		// Unit tests may provide an already-rooted asset filesystem.
+		static = assets
+	}
+	index, err := fs.ReadFile(static, "index.html")
+	if err != nil {
+		// `go run ./backend` is an API-only local development mode.
+		return r
+	}
+	r.NoRoute(func(c *gin.Context) {
+		if c.Request.URL.Path == "/api" || strings.HasPrefix(c.Request.URL.Path, "/api/") || c.Request.URL.Path == "/auth" || strings.HasPrefix(c.Request.URL.Path, "/auth/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Not found."})
+			return
+		}
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		name := strings.TrimPrefix(strings.TrimPrefix(c.Request.URL.Path, "/"), "/")
+		if name != "." && name != "" {
+			if body, readErr := fs.ReadFile(static, name); readErr == nil {
+				contentType := mime.TypeByExtension(filepath.Ext(name))
+				if contentType == "" {
+					switch filepath.Ext(name) {
+					case ".js":
+						contentType = "text/javascript; charset=utf-8"
+					case ".css":
+						contentType = "text/css; charset=utf-8"
+					case ".svg":
+						contentType = "image/svg+xml"
+					case ".woff2":
+						contentType = "font/woff2"
+					}
+				}
+				if contentType != "" {
+					c.Header("Content-Type", contentType)
+				}
+				if strings.HasPrefix(name, "assets/") {
+					c.Header("Cache-Control", "public, max-age=31536000, immutable")
+				}
+				c.Data(http.StatusOK, contentType, body)
+				return
+			}
+			if strings.HasPrefix(name, "assets/") || filepath.Ext(name) != "" {
+				http.NotFound(c.Writer, c.Request)
+				return
+			}
+		}
+		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
+	})
+	return r
+}
+
 func main() {
 	cfg, err := loadRateLimitConfig(os.Getenv)
 	if err != nil {
@@ -233,7 +299,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	r := newRouterWithAuth(newGitHubClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity, auth)
+	r := newProductionRouter(newGitHubClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity, auth, frontendAssets)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

@@ -6,7 +6,55 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
+	"time"
 )
+
+func TestProductionRouterServesFrontendAndKeepsAPIAvailable(t *testing.T) {
+	assets := fstest.MapFS{
+		"web/index.html":    &fstest.MapFile{Data: []byte("<!doctype html><div id=app>Ghostline</div>")},
+		"web/assets/app.js": &fstest.MapFile{Data: []byte("console.log('ghostline')")},
+	}
+	router := newProductionRouter(&githubClient{}, newRateLimiter(defaultRateLimitRequests, defaultRateLimitWindow, time.Now), clientIdentity{}, authSettings{Now: time.Now}, assets)
+
+	for _, path := range []string{"/", "/deep-link"} {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "id=app") {
+			t.Fatalf("GET %s = %d, body %q; want SPA index", path, recorder.Code, recorder.Body.String())
+		}
+	}
+
+	asset := httptest.NewRecorder()
+	router.ServeHTTP(asset, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	if asset.Code != http.StatusOK || !strings.Contains(asset.Body.String(), "ghostline") || !strings.HasPrefix(asset.Header().Get("Content-Type"), "text/javascript") || asset.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" {
+		t.Fatalf("asset response = %d, content-type %q, body %q", asset.Code, asset.Header().Get("Content-Type"), asset.Body.String())
+	}
+
+	missingAsset := httptest.NewRecorder()
+	router.ServeHTTP(missingAsset, httptest.NewRequest(http.MethodGet, "/assets/missing.js", nil))
+	if missingAsset.Code != http.StatusNotFound || strings.Contains(missingAsset.Body.String(), "id=app") {
+		t.Fatalf("missing asset response = %d, %q; want an asset 404, not SPA fallback", missingAsset.Code, missingAsset.Body.String())
+	}
+
+	missingAPI := httptest.NewRecorder()
+	router.ServeHTTP(missingAPI, httptest.NewRequest(http.MethodGet, "/api/not-found", nil))
+	if missingAPI.Code != http.StatusNotFound || strings.Contains(missingAPI.Body.String(), "id=app") {
+		t.Fatalf("missing API response = %d, %q; want API 404, not SPA fallback", missingAPI.Code, missingAPI.Body.String())
+	}
+
+	unknownWrite := httptest.NewRecorder()
+	router.ServeHTTP(unknownWrite, httptest.NewRequest(http.MethodPost, "/unknown-action", nil))
+	if unknownWrite.Code != http.StatusNotFound || strings.Contains(unknownWrite.Body.String(), "id=app") {
+		t.Fatalf("unknown write response = %d, %q; want 404, not SPA fallback", unknownWrite.Code, unknownWrite.Body.String())
+	}
+
+	health := httptest.NewRecorder()
+	router.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	if health.Code != http.StatusOK {
+		t.Fatalf("API health status = %d, want 200", health.Code)
+	}
+}
 
 func TestParsePRURL(t *testing.T) {
 	tests := []struct {

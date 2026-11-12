@@ -34,12 +34,12 @@ Open the URL printed by Vite. Public GitHub API requests work without a token; s
 | --- | --- | --- |
 | `RATE_LIMIT_REQUESTS` | `30` | Requests allowed per client per window (positive integer). |
 | `RATE_LIMIT_WINDOW` | `1m` | Window length as a Go duration, such as `30s` or `5m`. |
-| `RATE_LIMIT_CLIENT_IP_HEADER` | unset | Header carrying exactly one client IP, set by a proxy you operate. |
-| `RATE_LIMIT_TRUSTED_PROXIES` | unset | Comma-separated CIDR ranges of proxies allowed to set that header. Required together with the header. |
+| `RATE_LIMIT_CLIENT_IP_HEADER` | unset for direct backend; required by Compose | Header carrying exactly one client IP, overwritten by a proxy you operate. |
+| `RATE_LIMIT_TRUSTED_PROXIES` | unset for direct backend; required by Compose | Comma-separated, exact CIDR ranges of proxies allowed to set that header. Required together with the header. |
 
 Invalid values stop the backend at startup with an error. By default a client is its TCP peer address and forwarded headers are ignored, because callers can forge them. The header is read only when the request arrives from a trusted proxy, and only when it holds a single IP; forwarding chains such as a multi-hop `X-Forwarded-For` fall back to the peer address. The proxy must overwrite the header with the address of the connection it received, not append to it.
 
-The Vite proxy used for local development and Docker Compose does this: it sets `X-Ghostline-Client-IP` to each browser's address, replacing any value the browser sent. Docker Compose configures the backend to trust that header from private network ranges, since the backend is not published and only the frontend container can reach it. When running `go run ./backend` and `npm run dev` directly, every request comes from `127.0.0.1` and shares one budget unless you set both variables.
+The Vite proxy used for local development sets `X-Ghostline-Client-IP` to each browser's address, replacing any value the browser sent. Docker Compose binds its published port to `127.0.0.1` by default and requires the proxy header and its exact trusted CIDR range. A host-based reverse proxy must overwrite the header with the connecting client's IP; configure the CIDR for the proxy address as seen by the container. If the reverse proxy is another container, use its exact Docker network CIDR. Keep the app port private behind the TLS proxy for a hosted deployment. Setting `GHOSTLINE_BIND_ADDRESS` to a network interface publishes plain HTTP there and can bypass proxy protections. When running `go run ./backend` and `npm run dev` directly, every request comes from `127.0.0.1` and shares one budget unless you set both variables.
 
 This limit does not replace authentication, does not protect or meter a `GITHUB_TOKEN`, and does not stop a distributed caller using many addresses. GitHub's own 429 responses are reported separately, without a retry time.
 
@@ -51,13 +51,15 @@ Pull requests also run GitHub Actions CI for Go tests/vetting and frontend tests
 
 The `Security` GitHub Actions workflow calls the shared `klarlabs-studio/.github` Nox workflow, pinned to a reviewed commit, against pull request revisions and pushes to `main`. It installs a checksum-verified Nox 1.63.0, scans the repository, annotates findings on pull requests, and uploads SARIF to code scanning on a best-effort basis. `nox ci-gate` then fails the check on a missing report, a required analyzer that did not run, any code-security finding (HARDEN, PERM, CRYPTO, MEMSAFE), net-new critical or high findings above the committed `.nox/baseline.json`, or a baseline that no longer matches any finding. New medium and low findings are reported but do not fail the check. Reports are kept as a `nox-results` workflow artifact for 7 days; they are not attested, so treat them as the run's output rather than signed provenance.
 
-## Docker Compose
+## Docker Compose hosted-style run
 
 ```sh
 docker compose up --build
 ```
 
-Open http://localhost:5173 (or set `GHOSTLINE_PORT` if that port is occupied). Compose binds the frontend to all network interfaces by default, so other devices on the LAN can use `http://<host-lan-ip>:5173`; set `GHOSTLINE_BIND_ADDRESS` to a specific interface address to restrict access. The development frontend proxies API requests to the backend container.
+Compose builds the Vue app into the Go binary and serves the application from one container. Configure the GitHub OAuth variables, allowlist, proxy client-IP header, and exact trusted-proxy CIDR before starting it; required variables are listed below. By default the service listens on port `8080` and binds to loopback. Set `GHOSTLINE_PORT` to change the host port. Put a TLS-terminating reverse proxy in front of the service for internet access; Compose does not provide TLS or shared multi-instance rate limiting.
+
+For a local frontend development server, keep using `go run ./backend` and `cd frontend && npm run dev` as described above. The Compose image is the production-style single-process build and requires hosted GitHub authentication.
 
 ### GitHub sign-in for a hosted instance
 
@@ -76,7 +78,7 @@ Ghostline supports an identity-only GitHub OAuth gate for hosted instances. The 
 
 The browser receives an eight-hour, HttpOnly, SameSite=Lax signed session cookie. Removing an account from the allowlist blocks its existing session; signing-key rotation invalidates every session. OAuth callback codes and state values are excluded from request logs. Configure secrets through the hosting provider's secret manager, never in a committed `.env` file.
 
-This authentication gate does not make the current Compose setup an internet-ready deployment: Compose still serves Vite's development server, and the rate limiter is in-memory and per backend process. Use a production frontend server, TLS termination, and shared or edge-level rate limiting before public hosting. See the [threat model](docs/threat-model.md) for remaining boundaries.
+Compose serves the compiled Vue app from the Go process; it does not run Vite's development server. Before public hosting, put TLS termination and shared or edge-level rate limiting in front of it, and configure operational monitoring and secret rotation. See the [threat model](docs/threat-model.md) for remaining boundaries.
 
 ## Verify
 

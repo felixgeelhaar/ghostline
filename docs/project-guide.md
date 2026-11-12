@@ -58,13 +58,13 @@ npm run dev
 
 Open the URL Vite prints. The frontend proxies `/api` requests to `http://localhost:8080`. Public GitHub API access works without credentials but has a low rate limit; export `GITHUB_TOKEN` before starting the local Go API to raise it. Never commit or paste a token into a report.
 
-To run both services in containers:
+To build and run the production-style application container:
 
 ```sh
 docker compose up --build
 ```
 
-Open `http://localhost:5173`, or the configured `GHOSTLINE_PORT`. Compose exposes the frontend on network interfaces by default; use `GHOSTLINE_BIND_ADDRESS` to select a bind address. This is a Vite development server intended for local/LAN demos, not public hosting. For a local OAuth demo, create a GitHub OAuth App with a localhost callback and set the environment variables in the README; `GHOSTLINE_SESSION_COOKIE_SECURE=false` is allowed only for localhost HTTP. The Compose backend does not currently receive `GITHUB_TOKEN`, so use the local API run above when authenticated GitHub API access is needed.
+Open `http://localhost:8080`, or the configured `GHOSTLINE_PORT`. Compose builds the Vue assets and serves them from the Go API. Hosted authentication is required by default; configure a GitHub OAuth App and the required environment variables described in the README, including the client-IP header and exact trusted proxy CIDR. The app expects TLS termination at the hosting edge for internet access. Compose does not provide TLS or distributed rate limiting. The local development commands above remain available and run the Vite dev server separately.
 
 Run the project checks:
 
@@ -83,6 +83,8 @@ For current trust boundaries, abuse cases, and hosting limitations, see the [thr
 ## Feature evidence
 
 The hosted GitHub sign-in gate is shown in [this screenshot](feature-evidence/hosted-github-sign-in.jpg), captured from the running app with a signed-out session. The OAuth provider exchange itself was not exercised with a real GitHub OAuth App in this local capture.
+
+The app served by the production-style Docker Compose container is shown in [this screenshot](feature-evidence/production-compose-app.jpg). It was captured from the running container with the GitHub sign-in gate enabled and placeholder OAuth settings. It demonstrates the compiled frontend and hosted sign-in screen; no live GitHub OAuth exchange was performed.
 
 An expired hosted session returns the browser to that sign-in gate after an API request receives HTTP 401. [This screenshot](feature-evidence/hosted-session-expiry.jpg) shows the resulting screen in the running app; the local run seeded a test session and invalidated its cookie to exercise the 401 path, without a real OAuth exchange.
 

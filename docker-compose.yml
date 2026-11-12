@@ -1,25 +1,25 @@
 services:
-  backend:
+  ghostline:
     build:
       context: .
       dockerfile: Dockerfile
     environment:
       HOST: 0.0.0.0
       PORT: 8080
-      # Only the frontend proxy can reach the backend (it is not published), and that
-      # proxy overwrites this header with each browser's address.
-      RATE_LIMIT_CLIENT_IP_HEADER: X-Ghostline-Client-IP
-      RATE_LIMIT_TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7
-      GHOSTLINE_ENV: ${GHOSTLINE_ENV:-development}
-      GHOSTLINE_AUTH_MODE: ${GHOSTLINE_AUTH_MODE:-off}
-      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
-      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
-      GITHUB_OAUTH_CALLBACK_URL: ${GITHUB_OAUTH_CALLBACK_URL:-}
-      GHOSTLINE_SESSION_SIGNING_KEY: ${GHOSTLINE_SESSION_SIGNING_KEY:-}
-      GHOSTLINE_ALLOWED_GITHUB_USERS: ${GHOSTLINE_ALLOWED_GITHUB_USERS:-}
+      GHOSTLINE_ENV: ${GHOSTLINE_ENV:-production}
+      GHOSTLINE_AUTH_MODE: ${GHOSTLINE_AUTH_MODE:-github}
+      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:?Set GITHUB_OAUTH_CLIENT_ID}
+      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:?Set GITHUB_OAUTH_CLIENT_SECRET}
+      GITHUB_OAUTH_CALLBACK_URL: ${GITHUB_OAUTH_CALLBACK_URL:?Set GITHUB_OAUTH_CALLBACK_URL}
+      GHOSTLINE_SESSION_SIGNING_KEY: ${GHOSTLINE_SESSION_SIGNING_KEY:?Set GHOSTLINE_SESSION_SIGNING_KEY}
+      GHOSTLINE_ALLOWED_GITHUB_USERS: ${GHOSTLINE_ALLOWED_GITHUB_USERS:?Set GHOSTLINE_ALLOWED_GITHUB_USERS}
       GHOSTLINE_SESSION_COOKIE_SECURE: ${GHOSTLINE_SESSION_COOKIE_SECURE:-true}
-    expose:
-      - "8080"
+      RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-30}
+      RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-1m}
+      RATE_LIMIT_CLIENT_IP_HEADER: ${RATE_LIMIT_CLIENT_IP_HEADER:?Set the proxy-overwritten client IP header}
+      RATE_LIMIT_TRUSTED_PROXIES: ${RATE_LIMIT_TRUSTED_PROXIES:?Set the exact trusted proxy CIDR range}
+    ports:
+      - "${GHOSTLINE_BIND_ADDRESS:-127.0.0.1}:${GHOSTLINE_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/health || exit 1"]
       interval: 10s
@@ -31,25 +31,3 @@ services:
         limits:
           cpus: "1.0"
           memory: 1G
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    environment:
-      GHOSTLINE_API_URL: http://backend:8080
-    ports:
-      - "${GHOSTLINE_BIND_ADDRESS:-0.0.0.0}:${GHOSTLINE_PORT:-5173}:5173"
-    depends_on:
-      backend:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 10s
-      timeout: 3s
-      retries: 6
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
