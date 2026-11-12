@@ -12,7 +12,7 @@ Current feature evidence: [Qodo review revision coverage in the running app](doc
 
 ## Run locally
 
-Requirements: Go 1.27.3+ and Node.js 22.12+.
+Requirements: Go 1.27.4+ and Node.js 22.23.5+.
 
 ```sh
 go run ./backend

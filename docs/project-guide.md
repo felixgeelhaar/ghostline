@@ -37,7 +37,7 @@ The Qodo coverage panel compares the timestamp-latest published code-review comm
 
 ## Setup and verification
 
-Requirements for a local run: Go 1.27.3 or newer, Node.js 22.12 or newer, and npm.
+Requirements for a local run: Go 1.27.4 or newer, Node.js 22.23.5 or newer, and npm.
 
 Run the API from the repository root:
 
