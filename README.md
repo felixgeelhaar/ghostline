@@ -75,10 +75,15 @@ Ghostline supports an identity-only GitHub OAuth gate for hosted instances. The 
 | `GHOSTLINE_SESSION_SIGNING_KEY` | Yes | Random secret of at least 32 bytes; rotate it to revoke all sessions. |
 | `GHOSTLINE_ALLOWED_GITHUB_USERS` | Yes | Comma-separated GitHub logins allowed to sign in. |
 | `GHOSTLINE_SESSION_COOKIE_SECURE` | No | Defaults to `true`; `false` is accepted only for an HTTP localhost development callback. |
+| `GHOSTLINE_QODO_REQUEST_KEY_ENABLED` | No | Structured Qodo lookup is disabled by default in production. Set `true` only on a trusted, self-hosted instance; leave unset/false for public multi-user hosting. |
 
 The browser receives an eight-hour, HttpOnly, SameSite=Lax signed session cookie. Removing an account from the allowlist blocks its existing session; signing-key rotation invalidates every session. OAuth callback codes and state values are excluded from request logs. Configure secrets through the hosting provider's secret manager, never in a committed `.env` file.
 
 Compose serves the compiled Vue app from the Go process; it does not run Vite's development server. Before public hosting, put TLS termination and shared or edge-level rate limiting in front of it, and configure operational monitoring and secret rotation. See the [threat model](docs/threat-model.md) for remaining boundaries.
+
+### Optional structured Qodo review lookup
+
+After importing a PR, an engineer can explicitly request structured findings and review-run history using their personal Qodo API key. The key is sent in a request header, forwarded to Qodo's fixed Agentic Toolbox MCP endpoint, and not stored by Ghostline. Findings remain separate from published GitHub review comments and retain Qodo's reported revision and finding-to-run links; missing or stale revision evidence is labeled rather than guessed. This is a trusted-instance feature: the key passes through the Ghostline server and hosting edge, so do not enable it for a public multi-user deployment. It is available by default in local development and requires `GHOSTLINE_QODO_REQUEST_KEY_ENABLED=true` in production.
 
 ## Verify
 

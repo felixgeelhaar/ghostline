@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -150,6 +151,10 @@ func validGitHubLogin(login string) bool {
 }
 
 func newRouterWithAuth(gh *githubClient, limiter *rateLimiter, identity clientIdentity, settings authSettings) *gin.Engine {
+	return newRouterWithQodo(gh, limiter, identity, settings, newQodoMCPClient(), qodoRequestKeyEnabled(os.Getenv))
+}
+
+func newRouterWithQodo(gh *githubClient, limiter *rateLimiter, identity clientIdentity, settings authSettings, qodo *qodoMCPClient, qodoEnabled bool) *gin.Engine {
 	r := newGhostlineRouter()
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	auth := githubAuth{settings: settings}
@@ -161,6 +166,7 @@ func newRouterWithAuth(gh *githubClient, limiter *rateLimiter, identity clientId
 	limited := r.Group("/api", auth.middleware(), authenticatedRateLimitMiddleware(limiter, identity))
 	limited.POST("/import", api{gh: gh}.importPR)
 	limited.POST("/checks", api{gh: gh}.loadRevisionChecks)
+	limited.POST("/qodo/reviews", api{gh: gh, qodo: qodo, qodoEnabled: qodoEnabled}.loadStructuredQodoReview)
 	return r
 }
 

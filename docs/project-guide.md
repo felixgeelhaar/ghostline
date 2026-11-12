@@ -17,12 +17,13 @@ Browser (Vue 3 + TypeScript)
   presentation: App.vue, ReviewCard.vue, DeepTrace.vue
   application: auth status, importPullRequest, fetchRevisionChecks
   domain: pullRequest, checks, reviews, trace
-          │ /api/import, /api/checks
+          │ /api/import, /api/checks, /api/qodo/reviews
           ▼
 Go + Gin API
   optional GitHub identity gate and signed session cookie
   HTTP handlers and GitHub response normalization
-  GitHub client, check aggregation, Qodo comment parsing
+  GitHub client, check aggregation, Qodo comment parsing, request-scoped
+  Qodo Agentic Toolbox MCP client
           │ HTTPS GitHub REST API
           ▼
 GitHub: OAuth identity, pull request, commits, checks, published issue comments
@@ -33,6 +34,8 @@ The frontend validates API payloads with Zod at the boundary in `frontend/src/do
 For code changes, preserve these domain boundaries and use test-driven development: write or update a focused failing test for the behavior first, then implement the smallest change that makes it pass.
 
 The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, normalize the response, and render the activity index and review evidence. The activity index orders commit metadata times, check-run start/completion/update times, commit-status creation/update times, and Qodo comment times while preserving each source's timestamp label and native check/status ID. Check entries are GitHub's latest records for the focused revision at fetch time, not a complete check-run history. The timeline does not treat sequence as causation. `POST /api/checks` fetches checks for a focused full commit SHA. Checks are always labeled with the revision GitHub returned and shown in a revision-scoped section.
+
+`POST /api/qodo/reviews` is an explicit, optional lookup for the selected imported PR. The browser sends a personal Qodo API key in `X-Qodo-API-Key`; the backend forwards it to the fixed Qodo Agentic Toolbox MCP endpoint and does not persist it. The backend independently fetches the PR's current GitHub head and commit SHAs, then classifies each Qodo finding and review run as current, stale, missing, or unknown. Missing finding revisions are never filled from a parent run. The API rechecks the PR head after Qodo responds and returns a conflict if the PR changed during the lookup. Structured Qodo data is shown separately from published GitHub comments. This result is Qodo review evidence, not independent verification or proof a repair occurred. The lookup is enabled by default for local development and disabled by default in production; production requires `GHOSTLINE_QODO_REQUEST_KEY_ENABLED=true` to enable it. Use it only on a trusted local or self-hosted instance. Do not enable it for public multi-user hosting because the request carries a user's Qodo credential through that Ghostline server.
 
 When `GHOSTLINE_AUTH_MODE=github`, `/auth/github/login` starts an OAuth identity check and `/auth/github/callback` verifies the GitHub login against `GHOSTLINE_ALLOWED_GITHUB_USERS`, then issues a stateless signed eight-hour cookie. The token used to call GitHub's `/user` endpoint is not persisted. The auth status endpoint is public so the Vue app can render the right gate; imports and check lookups require a valid session. In production, set `GHOSTLINE_ENV=production`, which makes startup reject auth-off configuration. The local default remains unauthenticated for development.
 
@@ -91,3 +94,5 @@ An expired hosted session returns the browser to that sign-in gate after an API 
 The running change activity index, imported from Ghostline PR #49, is shown in [this screenshot](feature-evidence/change-activity-index.jpg). The revision-linked GitHub check events are shown in [this screenshot](feature-evidence/revision-linked-check-activity.jpg), imported from Ghostline PR #50 at revision `286dcc7`. The empty-check state is shown in [this screenshot](feature-evidence/activity-index-check-coverage.jpg), captured from public PR `octocat/Hello-World#1` when GitHub reported no check runs or commit statuses for the displayed revision. Qodo activity was unavailable at capture time and the UI says so. These views show current records or fetch-time availability; they do not represent complete event history.
 
 The current source-backed review timeline, imported from Ghostline PR #50 at revision `4bae19d`, is shown in [this screenshot](feature-evidence/activity-index-review-timeline.jpg). It shows observed commit and published Qodo comment events; it does not imply that event order proves a repair relationship. Parser-incompleteness and partial-check-placement warnings are edge states covered by tests, not present in this PR's current records.
+
+The optional structured Qodo lookup is shown in [this running-app screenshot](feature-evidence/structured-qodo-lookup.jpg), captured from the local app with Ghostline PR #52 imported. It shows the request-scoped API-key form alongside the published-comment evidence. No API key was entered, so the screenshot does not claim that a live structured lookup completed; the request and response behavior is covered by backend and frontend tests.

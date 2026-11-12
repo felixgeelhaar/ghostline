@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -100,7 +102,11 @@ func parsePRURL(raw string) (string, string, int, error) {
 	return matches[1], matches[2], n, nil
 }
 
-type api struct{ gh *githubClient }
+type api struct {
+	gh          *githubClient
+	qodo        *qodoMCPClient
+	qodoEnabled bool
+}
 
 func (a api) importPR(c *gin.Context) {
 	var body struct {
@@ -207,6 +213,108 @@ func (a api) loadRevisionChecks(c *gin.Context) {
 	c.JSON(http.StatusOK, fetchRevisionChecks(c.Request.Context(), a.gh, owner, repo, body.SHA))
 }
 
+func (a api) loadStructuredQodoReview(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	if !a.qodoEnabled {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Structured Qodo review lookup is disabled on this instance."})
+		return
+	}
+	apiKey := c.GetHeader("X-Qodo-API-Key")
+	if err := validateQodoAPIKey(apiKey); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	var body struct {
+		URL string `json:"url"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10))
+	if err := decoder.Decode(&body); err != nil || strings.TrimSpace(body.URL) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Enter the imported GitHub pull request URL."})
+		return
+	}
+	owner, repo, number, err := parsePRURL(body.URL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(owner), url.PathEscape(repo), number)
+	var rawPR githubPR
+	if err := a.gh.get(c.Request.Context(), path, &rawPR); err != nil {
+		respondGitHubError(c, err)
+		return
+	}
+	identity, err := domain.NewRepositoryIdentity(rawPR.Base.Repo.Owner.Login, rawPR.Base.Repo.Name)
+	if err != nil || rawPR.Number != number || !qodoFullSHA.MatchString(rawPR.Head.SHA) {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned incomplete pull request revision evidence."})
+		return
+	}
+
+	commitSHAs := make([]string, 0)
+	canonicalPath := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(identity.Owner), url.PathEscape(identity.Name), number)
+	for page := 1; page <= maxQodoPRCommitPages; page++ {
+		var commits []githubCommit
+		if err := a.gh.get(c.Request.Context(), fmt.Sprintf("%s/commits?per_page=100&page=%d", canonicalPath, page), &commits); err != nil {
+			respondGitHubError(c, err)
+			return
+		}
+		for _, commit := range commits {
+			if qodoFullSHA.MatchString(commit.SHA) {
+				commitSHAs = append(commitSHAs, strings.ToLower(commit.SHA))
+			}
+		}
+		if len(commits) < 100 {
+			break
+		}
+		if page == maxQodoPRCommitPages {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "This pull request has more commits than Ghostline can safely match for this lookup."})
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 50*time.Second)
+	defer cancel()
+	qodoClient := a.qodo
+	if qodoClient == nil {
+		qodoClient = newQodoMCPClient()
+	}
+	qodoData, err := qodoClient.fetchPRReview(ctx, strings.TrimSpace(apiKey), fmt.Sprintf("https://github.com/%s/%s/pull/%d", identity.Owner, identity.Name, number))
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	// Qodo lookup and GitHub revision reads are separate snapshots. Refuse to
+	// label evidence current if the pull request moved while Qodo was responding.
+	var verifiedPR githubPR
+	if err := a.gh.get(c.Request.Context(), canonicalPath, &verifiedPR); err != nil {
+		respondGitHubError(c, err)
+		return
+	}
+	verifiedIdentity, err := domain.NewRepositoryIdentity(verifiedPR.Base.Repo.Owner.Login, verifiedPR.Base.Repo.Name)
+	if err != nil || verifiedPR.Number != number {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned incomplete pull request revision evidence."})
+		return
+	}
+	if verifiedPR.Head.SHA != rawPR.Head.SHA || !identity.Equal(verifiedIdentity) {
+		c.JSON(http.StatusConflict, gin.H{"error": "This pull request changed while Qodo review data was loading. Import it again before comparing review evidence."})
+		return
+	}
+	result := qodoStructuredReviewSet{
+		Provider: "Qodo", SourceType: "qodo_agentic_toolbox", CurrentRevisionSHA: strings.ToLower(rawPR.Head.SHA),
+		ReviewSession: qodoData.ReviewSession, Findings: qodoData.Findings, ReviewRuns: qodoData.ReviewRuns,
+	}
+	for i := range result.Findings {
+		// A finding's revision comes only from Qodo's finding record. Never fill
+		// it from the enclosing review session or a matching run.
+		result.Findings[i].RevisionStatus = classifyQodoRevision(result.Findings[i].GitSHA, result.CurrentRevisionSHA, commitSHAs)
+	}
+	if result.ReviewSession != nil {
+		result.ReviewSession.RevisionStatus = classifyQodoRevision(result.ReviewSession.CommitSHA, result.CurrentRevisionSHA, commitSHAs)
+	}
+	for i := range result.ReviewRuns {
+		result.ReviewRuns[i].RevisionStatus = classifyQodoRevision(result.ReviewRuns[i].CommitSHA, result.CurrentRevisionSHA, commitSHAs)
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func respondGitHubError(c *gin.Context, err error) {
 	var statusErr statusError
 	switch {
@@ -227,6 +335,17 @@ func newRouter(gh *githubClient) *gin.Engine {
 
 func newRouterWithLimiter(gh *githubClient, limiter *rateLimiter, identity clientIdentity) *gin.Engine {
 	return newRouterWithAuth(gh, limiter, identity, authSettings{Now: time.Now})
+}
+
+func qodoRequestKeyEnabled(getenv func(string) string) bool {
+	switch strings.ToLower(strings.TrimSpace(getenv("GHOSTLINE_QODO_REQUEST_KEY_ENABLED"))) {
+	case "true":
+		return true
+	case "false":
+		return false
+	default:
+		return strings.ToLower(strings.TrimSpace(getenv("GHOSTLINE_ENV"))) != "production"
+	}
 }
 
 func newProductionRouter(gh *githubClient, limiter *rateLimiter, identity clientIdentity, settings authSettings, assets fs.FS) *gin.Engine {
