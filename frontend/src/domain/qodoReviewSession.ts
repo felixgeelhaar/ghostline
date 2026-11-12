@@ -179,8 +179,7 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
   }
 
   if (openFindingCount > 0) {
-    const unknownCount = unspecifiedFindingCount + unrecognizedFindingCount
-    const uncertainty = unknownCount > 0 ? ` ${unknownCount} finding${unknownCount === 1 ? ' has' : 's have'} no recognized status.` : ''
+    const uncertainty = unclassifiedFindingCount > 0 ? ` ${unclassifiedFindingCount} finding${unclassifiedFindingCount === 1 ? ' has' : 's have'} no recognized status.` : ''
     return {
       ...counts,
       kind: 'attention',
@@ -190,13 +189,12 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
     }
   }
 
-  if (unspecifiedFindingCount + unrecognizedFindingCount > 0) {
-    const unknownCount = unspecifiedFindingCount + unrecognizedFindingCount
+  if (unclassifiedFindingCount > 0) {
     return {
       ...counts,
       kind: 'attention',
-      title: `${unknownCount} finding${unknownCount === 1 ? '' : 's'} need status review`,
-      detail: `${unknownCount} finding${unknownCount === 1 ? ' has' : 's have'} no recognized Qodo status. Ghostline does not infer whether they are resolved.`,
+      title: `${unclassifiedFindingCount} finding${unclassifiedFindingCount === 1 ? '' : 's'} need status review`,
+      detail: `${unclassifiedFindingCount} finding${unclassifiedFindingCount === 1 ? ' has' : 's have'} no recognized Qodo status. Ghostline does not infer whether they are resolved.`,
       nextAction: 'Inspect those findings and their revision-linked source evidence.',
     }
   }
