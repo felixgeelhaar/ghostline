@@ -76,6 +76,20 @@ func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
 	if !recognized {
 		return errors.New("Qodo review response did not contain recognized review fields")
 	}
+	findings, hasFindings := fields["findings"]
+	if !hasFindings {
+		findings, hasFindings = fields["camelFindings"]
+	}
+	runs, hasRuns := fields["review_runs"]
+	if !hasRuns {
+		runs, hasRuns = fields["reviewRuns"]
+	}
+	if !hasFindings || bytes.Equal(bytes.TrimSpace(findings), []byte("null")) {
+		return errors.New("Qodo review response must contain a findings array")
+	}
+	if !hasRuns || bytes.Equal(bytes.TrimSpace(runs), []byte("null")) {
+		return errors.New("Qodo review response must contain a review-runs array")
+	}
 
 	var wire qodoReviewDataWire
 	if err := json.Unmarshal(payload, &wire); err != nil {

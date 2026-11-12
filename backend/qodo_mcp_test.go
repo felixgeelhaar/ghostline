@@ -138,6 +138,18 @@ func TestQodoReviewDataPreservesCamelCaseFindingDetails(t *testing.T) {
 	}
 }
 
+func TestQodoReviewDataRejectsNullFindingOrRunArrays(t *testing.T) {
+	for _, payload := range []string{
+		`{"review_session":null,"findings":null,"review_runs":[]}`,
+		`{"review_session":null,"findings":[],"review_runs":null}`,
+	} {
+		var data qodoReviewData
+		if err := json.Unmarshal([]byte(payload), &data); err == nil {
+			t.Fatalf("malformed Qodo review arrays accepted: %s", payload)
+		}
+	}
+}
+
 func TestQodoReviewEndpointLogsFailureWithoutLeakingCredential(t *testing.T) {
 	var logs strings.Builder
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
