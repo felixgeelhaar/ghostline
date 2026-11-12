@@ -35,6 +35,44 @@ export type QodoReview = QodoReviewSet['items'][number]
 export type QodoFinding = QodoReview['findings'][number]
 export type RevisionRef = { sha: string; shortSha: string; message: string; author: string; committedAt: string; url: string }
 
+export type LatestQodoReviewCoverage =
+  | { status: 'unavailable'; reason: string }
+  | { status: 'no_review' }
+  | { status: 'head_unavailable'; reviewId: number; reviewUrl: string }
+  | { status: 'revision_unmarked'; reviewId: number; reviewUrl: string }
+  | { status: 'current'; reviewId: number; reviewUrl: string; reviewSha: string; headSha: string; reviewCommitUrl?: string }
+  | { status: 'not_head'; reviewId: number; reviewUrl: string; reviewSha: string; headSha: string; reviewInImportedCommits: boolean; reviewCommitUrl?: string }
+
+// Compare the latest published Qodo code-review comment's explicit revision
+// marker with GitHub's imported PR-head SHA. PR summaries are excluded because
+// they are not code-review outcomes and may have no commit marker.
+export function latestQodoReviewCoverage(reviews: QodoReviewSet, headSha: string, commits: RevisionRef[]): LatestQodoReviewCoverage {
+  if (reviews.availability === 'unavailable') return { status: 'unavailable', reason: reviews.reason }
+
+  const latestReview = reviews.items
+    .filter((review) => review.kind === 'findings' || review.kind === 'no_open_findings')
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id - left.id)[0]
+  if (!latestReview) return { status: 'no_review' }
+  if (!headSha) return { status: 'head_unavailable', reviewId: latestReview.id, reviewUrl: latestReview.url }
+  if (!latestReview.commitSha) return { status: 'revision_unmarked', reviewId: latestReview.id, reviewUrl: latestReview.url }
+
+  const reviewSha = latestReview.commitSha.toLowerCase()
+  const normalizedHeadSha = headSha.toLowerCase()
+  const shared = {
+    reviewId: latestReview.id,
+    reviewUrl: latestReview.url,
+    reviewSha: latestReview.commitSha,
+    headSha,
+    ...(latestReview.commitUrl ? { reviewCommitUrl: latestReview.commitUrl } : {}),
+  }
+  if (reviewSha === normalizedHeadSha) return { status: 'current', ...shared }
+  return {
+    status: 'not_head',
+    ...shared,
+    reviewInImportedCommits: commits.some((commit) => commit.sha.toLowerCase() === reviewSha),
+  }
+}
+
 export type LaterRevisionToInspect = RevisionRef & { relationBasis: 'github_pr_commit_order' }
 
 export function laterRevisionsToInspect(review: Pick<QodoReview, 'commitSha'>, commits: RevisionRef[]): LaterRevisionToInspect[] {

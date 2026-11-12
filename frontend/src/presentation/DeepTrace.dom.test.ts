@@ -75,6 +75,50 @@ afterEach(() => {
 })
 
 describe('Deep Trace browser interactions', () => {
+  it('shows when the latest published Qodo code review marker matches the imported PR head', async () => {
+    vi.mocked(importPullRequest).mockResolvedValue(pullRequest)
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = 'https://github.com/acme/app/pull/7'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.review-coverage')).not.toBeNull())
+
+    expect(host.querySelector('.review-coverage')?.textContent).toContain('LATEST CODE REVIEW MARKER MATCHES THE PR HEAD')
+    expect(host.querySelector('.review-coverage')?.textContent).toContain('bbbbbbb')
+    expect(host.querySelector<HTMLAnchorElement>('.review-coverage-links a')?.href).toBe(reviews[1]!.url)
+  })
+
+  it('makes a newer PR head visible when the latest Qodo code review is marked on an earlier revision', async () => {
+    vi.mocked(importPullRequest).mockResolvedValue({
+      ...pullRequest,
+      qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [{
+        ...reviews[0]!, commitUrl: commitA.url,
+      }] },
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = 'https://github.com/acme/app/pull/7'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.review-coverage.not_head')).not.toBeNull())
+
+    expect(host.querySelector('.review-coverage')?.textContent).toContain('DOES NOT MATCH THE PR HEAD')
+    expect(host.querySelector('.review-coverage')?.textContent).toContain('aaaaaaa')
+    expect(host.querySelector('.review-coverage')?.textContent).toContain('bbbbbbb')
+    expect(host.querySelector('.review-coverage')?.textContent).toContain('does not assess whether findings were fixed')
+  })
+
   it('moves keyboard focus into the trace and restores it to its opening control', async () => {
     vi.mocked(importPullRequest).mockResolvedValue(pullRequest)
     host = document.createElement('div')

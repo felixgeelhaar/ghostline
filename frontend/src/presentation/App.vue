@@ -4,7 +4,7 @@ import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
 import { checkOutcome, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
-import { findRecurringFindings, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
+import { findRecurringFindings, latestQodoReviewCoverage, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import { buildFindingTrace } from '../domain/trace'
 import { validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import ReviewCard from './ReviewCard.vue'
@@ -29,6 +29,8 @@ const recurringFindings = computed(() => findRecurringFindings(pr.value?.qodoRev
 const visibleCommits = computed(() => pr.value?.commits.filter((commit) => !selectedRevision.value || commit.sha === selectedRevision.value) ?? [])
 const selectedReviews = computed(() => reviewsForRevision(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
 const reviewCount = computed(() => reviewCountSummary(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
+const latestReviewCoverage = computed(() => pr.value ? latestQodoReviewCoverage(pr.value.qodoReviews, pr.value.checks.revisionSha, pr.value.commits) : undefined)
+const importedHeadURL = computed(() => pr.value?.checks.revisionUrl || pr.value?.commits.find((commit) => commit.sha.toLowerCase() === pr.value?.checks.revisionSha.toLowerCase())?.url || '')
 const activeTrace = computed(() => {
   const finding = recurringFindings.value.find((item) => item.id === selectedTraceId.value)
   return finding ? buildFindingTrace(finding, pr.value?.commits ?? []) : undefined
@@ -131,6 +133,22 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
 
       <section class="qodo-reviews" aria-labelledby="qodo-reviews-title">
         <h3 id="qodo-reviews-title" class="section-title"><span>QODO REVIEW EVIDENCE <span v-if="selectedRevision">· MATCHED REVISION</span></span><span v-if="pr.qodoReviews.availability === 'available'">{{ reviewCount }}</span></h3>
+        <div v-if="latestReviewCoverage && latestReviewCoverage.status !== 'no_review' && latestReviewCoverage.status !== 'unavailable'" class="review-coverage" :class="latestReviewCoverage.status" role="status" aria-label="Latest Qodo review revision coverage">
+          <strong v-if="latestReviewCoverage.status === 'current'">LATEST CODE REVIEW MARKER MATCHES THE PR HEAD</strong>
+          <strong v-else-if="latestReviewCoverage.status === 'not_head'">LATEST CODE REVIEW MARKER DOES NOT MATCH THE PR HEAD</strong>
+          <strong v-else-if="latestReviewCoverage.status === 'revision_unmarked'">REVIEWED REVISION NOT MARKED</strong>
+          <strong v-else>LATEST REVIEW FOUND · PR HEAD UNKNOWN</strong>
+          <p v-if="latestReviewCoverage.status === 'current'">Qodo’s latest published code-review comment names revision {{ latestReviewCoverage.reviewSha.slice(0, 7) }}, matching the head SHA GitHub returned for this import.</p>
+          <p v-else-if="latestReviewCoverage.status === 'not_head'">Qodo’s latest published code-review comment names revision {{ latestReviewCoverage.reviewSha.slice(0, 7) }}; GitHub returned {{ latestReviewCoverage.headSha.slice(0, 7) }} as the PR head. {{ latestReviewCoverage.reviewInImportedCommits ? 'The marked revision appears in this PR’s imported commit list.' : 'The marked revision is outside this PR’s imported commit list.' }}</p>
+          <p v-else-if="latestReviewCoverage.status === 'revision_unmarked'">The comment has no explicit reviewed-revision marker, so Ghostline cannot determine whether it covers the current PR head.</p>
+          <p v-else>The imported data does not include a PR head SHA, so Ghostline cannot compare the latest review marker.</p>
+          <div class="review-coverage-links">
+            <a :href="latestReviewCoverage.reviewUrl" target="_blank" rel="noreferrer">OPEN QODO REVIEW COMMENT ↗</a>
+            <a v-if="'reviewCommitUrl' in latestReviewCoverage && latestReviewCoverage.reviewCommitUrl" :href="latestReviewCoverage.reviewCommitUrl" target="_blank" rel="noreferrer">REVIEWED REVISION ↗</a>
+            <a v-if="importedHeadURL && (latestReviewCoverage.status === 'current' || latestReviewCoverage.status === 'not_head')" :href="importedHeadURL" target="_blank" rel="noreferrer">CURRENT PR HEAD ↗</a>
+          </div>
+          <p class="review-coverage-note">This compares explicit SHA markers only. It does not assess whether findings were fixed or whether the change is correct.</p>
+        </div>
         <p v-if="pr.qodoReviews.availability === 'unavailable'" class="checks-note warn" role="status"><strong>Qodo review unavailable.</strong> {{ pr.qodoReviews.reason }}</p>
         <p v-else-if="pr.qodoReviews.items.length === 0 && pr.qodoReviews.unrecognizedCommentCount > 0" class="checks-note warn" role="status"><strong>{{ pr.qodoReviews.unrecognizedCommentCount }} Qodo comment{{ pr.qodoReviews.unrecognizedCommentCount === 1 ? '' : 's' }} not parsed as review output.</strong> Ghostline recognized only the published summary and code-review formats. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect the pull request on GitHub ↗</a></p>
         <p v-else-if="pr.qodoReviews.items.length === 0" class="checks-note" role="status"><strong>No recognized Qodo review comment found.</strong> Ghostline found no published Qodo summary or code-review comment in the GitHub issue-comment feed.</p>

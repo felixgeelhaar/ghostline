@@ -1,9 +1,65 @@
 import { describe, expect, it } from 'vitest'
-import { QodoReviewSetSchema, findRecurringFindings, laterRevisionsToInspect, noOpenFindingsNote, qodoReviewState, reviewCountSummary, reviewsForRevision } from './reviews'
+import { QodoReviewSetSchema, findRecurringFindings, latestQodoReviewCoverage, laterRevisionsToInspect, noOpenFindingsNote, qodoReviewState, reviewCountSummary, reviewsForRevision } from './reviews'
 
 const sha = 'a'.repeat(40)
 
 describe('Qodo review evidence', () => {
+  it('reports when the latest code review marker matches the imported PR head', () => {
+    const reviews = QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 0, items: [
+      { id: 1, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [], commitSha: sha, commitUrl: `https://github.com/acme/app/commit/${sha}`, createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-1' },
+      { id: 2, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'summary', summary: 'Summary only', findings: [], createdAt: '2026-11-04T10:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-2' },
+    ] })
+
+    expect(latestQodoReviewCoverage(reviews, sha, [{ sha, shortSha: 'aaaaaaa', message: 'Head', author: 'A', committedAt: '2026-11-04T08:00:00Z', url: `https://github.com/acme/app/commit/${sha}` }])).toMatchObject({ status: 'current', reviewId: 1, reviewUrl: 'https://github.com/acme/app/pull/7#issuecomment-1' })
+  })
+
+  it('reports an explicitly marked review on an earlier imported revision as not covering head', () => {
+    const earlier = 'b'.repeat(40)
+    const reviews = QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 0, items: [
+      { id: 2, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [], commitSha: earlier, commitUrl: `https://github.com/acme/app/commit/${earlier}`, createdAt: '2026-11-04T10:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-2' },
+    ] })
+
+    expect(latestQodoReviewCoverage(reviews, sha, [
+      { sha: earlier, shortSha: 'bbbbbbb', message: 'Earlier', author: 'A', committedAt: '2026-11-04T08:00:00Z', url: `https://github.com/acme/app/commit/${earlier}` },
+      { sha, shortSha: 'aaaaaaa', message: 'Head', author: 'A', committedAt: '2026-11-04T09:00:00Z', url: `https://github.com/acme/app/commit/${sha}` },
+    ])).toMatchObject({ status: 'not_head', reviewSha: earlier, headSha: sha, reviewInImportedCommits: true })
+  })
+
+  it('does not infer review coverage when the latest code-review comment has no revision marker', () => {
+    const reviews = QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 0, items: [
+      { id: 2, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [], createdAt: '2026-11-04T10:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-2' },
+    ] })
+
+    expect(latestQodoReviewCoverage(reviews, sha, [])).toMatchObject({ status: 'revision_unmarked', reviewId: 2 })
+  })
+
+  it('reports when the PR head SHA is unavailable instead of guessing review freshness', () => {
+    const reviews = QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 0, items: [
+      { id: 2, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [], commitSha: sha, commitUrl: `https://github.com/acme/app/commit/${sha}`, createdAt: '2026-11-04T10:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-2' },
+    ] })
+
+    expect(latestQodoReviewCoverage(reviews, '', [])).toMatchObject({ status: 'head_unavailable', reviewId: 2 })
+  })
+
+  it('distinguishes review markers outside the imported commit list from reviews of head', () => {
+    const outside = 'b'.repeat(40)
+    const reviews = QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 0, items: [
+      { id: 2, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [], commitSha: outside, commitUrl: `https://github.com/acme/app/commit/${outside}`, createdAt: '2026-11-04T10:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-2' },
+    ] })
+
+    expect(latestQodoReviewCoverage(reviews, sha, [])).toMatchObject({ status: 'not_head', reviewSha: outside, headSha: sha, reviewInImportedCommits: false })
+  })
+
+  it('does not count PR summaries as code reviews and preserves unavailable evidence', () => {
+    const summaryOnly = QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 0, items: [
+      { id: 1, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'summary', findings: [], createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-1' },
+    ] })
+    const unavailable = QodoReviewSetSchema.parse({ availability: 'unavailable', reason: 'GitHub rate limit', unrecognizedCommentCount: 0, items: [] })
+
+    expect(latestQodoReviewCoverage(summaryOnly, sha, [])).toEqual({ status: 'no_review' })
+    expect(latestQodoReviewCoverage(unavailable, sha, [])).toEqual({ status: 'unavailable', reason: 'GitHub rate limit' })
+  })
+
   it('accepts source-linked findings tied to the reviewed commit', () => {
     const reviews = QodoReviewSetSchema.parse({
       availability: 'available',
