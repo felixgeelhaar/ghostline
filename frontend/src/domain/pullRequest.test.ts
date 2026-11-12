@@ -8,6 +8,7 @@ const validPullRequest = {
   number: 12,
   title: 'Trust source links',
   state: 'open',
+  merged: false,
   url: 'https://github.com/acme/ghostline/pull/12',
   createdAt: '2026-11-06T08:00:00Z',
   updatedAt: '2026-11-06T08:00:00Z',
@@ -21,6 +22,7 @@ const validPullRequest = {
   }],
   checks: { availability: 'unavailable', reason: 'Not configured', revisionSha: '', revisionShortSha: '', revisionUrl: '', items: [] },
   qodoReviews: { availability: 'unavailable', reason: 'Not configured', unrecognizedCommentCount: 0, items: [] },
+  referencedIssues: [],
 }
 
 describe('validatePullRequestURL', () => {
@@ -61,6 +63,30 @@ describe('PullRequestSchema source links', () => {
   it('rejects an encoded slash inside a commit path segment', () => {
     const candidate = { ...validPullRequest, commits: [{ ...validPullRequest.commits[0], url: `https://github.com/acme%2Fghostline/commit/${'a'.repeat(40)}` }] }
     expect(PullRequestSchema.safeParse(candidate).success).toBe(false)
+  })
+})
+
+describe('PullRequestSchema referenced issues', () => {
+  const issue = { number: 27, title: 'Idempotency tracking', availability: 'available', state: 'open', url: 'https://github.com/acme/ghostline/issues/27' }
+
+  it('accepts same-repository issue state and source URL', () => {
+    expect(PullRequestSchema.safeParse({ ...validPullRequest, referencedIssues: [issue] }).success).toBe(true)
+  })
+
+  it.each([
+    ['another repository', 'https://github.com/acme/other/issues/27'],
+    ['another issue number', 'https://github.com/acme/ghostline/issues/28'],
+    ['another host', 'https://evil.example/acme/ghostline/issues/27'],
+  ])('rejects an issue URL for %s', (_reason, url) => {
+    expect(PullRequestSchema.safeParse({ ...validPullRequest, referencedIssues: [{ ...issue, url }] }).success).toBe(false)
+  })
+
+  it('requires a state when issue details are available', () => {
+    expect(PullRequestSchema.safeParse({ ...validPullRequest, referencedIssues: [{ ...issue, state: undefined }] }).success).toBe(false)
+  })
+
+  it('allows explicit unavailable issue data without a fabricated state', () => {
+    expect(PullRequestSchema.safeParse({ ...validPullRequest, referencedIssues: [{ number: 27, title: 'Issue #27', availability: 'unavailable', reason: 'GitHub unavailable', url: issue.url }] }).success).toBe(true)
   })
 })
 

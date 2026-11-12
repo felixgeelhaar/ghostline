@@ -2,7 +2,7 @@
 
 ## Short specification
 
-Ghostline is a change-centric engineering control room for engineers using coding agents. Its current slice imports a **public GitHub pull request** and presents the change’s metadata, commit history, revision-linked GitHub checks, and published Qodo review comments. Repeated Qodo finding titles can be traced across comments when their revision markers support it. Warden runs local developer gates and Nox scans; repository CI also runs Nox. Ghostline does not currently ingest Nox reports.
+Ghostline is a change-centric engineering control room for engineers using coding agents. Its current slice imports a **public GitHub pull request** and presents the change’s metadata, commit history, revision-linked GitHub checks, and published Qodo review comments. Repeated Qodo finding titles can be traced across comments when their revision markers support it. It also reads same-repository issue references from the PR description and shows their current GitHub state, including an open-reference warning for merged PRs. Warden runs local developer gates and Nox scans; repository CI also runs Nox. Ghostline does not currently ingest Nox reports.
 
 The product helps an engineer inspect what changed, understand which revision review feedback and checks describe, and decide what to inspect next. GitHub remains authoritative for pull-request facts; Qodo remains the review source. Ghostline does not run agents, repair code, prove that a finding was fixed, or replace CI, Qodo, Nox, or Warden. It does not scan a developer’s local filesystem.
 
@@ -16,26 +16,28 @@ Ghostline is a small Go API and Vue single-page application. It has no database 
 Browser (Vue 3 + TypeScript)
   presentation: App.vue, ReviewCard.vue, DeepTrace.vue
   application: importPullRequest, fetchRevisionChecks
-  domain: pullRequest, checks, reviews, trace
+  domain: pullRequest, checks, reviews, trace, referenced issues
           │ /api/import, /api/checks
           ▼
 Go + Gin API
   HTTP handlers and GitHub response normalization
-  GitHub client, check aggregation, Qodo comment parsing
+  GitHub client, check aggregation, Qodo comment parsing, issue lookup
           │ HTTPS GitHub REST API
           ▼
-GitHub: pull request, commits, checks, published issue comments
+GitHub: pull request, commits, checks, published issue comments and issues
 ```
 
 The frontend validates API payloads with Zod at the boundary in `frontend/src/domain`. Keep business rules in domain modules, request orchestration in application modules, and HTTP or rendering details at the edges. In the backend, domain concepts such as the canonical repository identity live in `backend/internal/domain`; HTTP handling, GitHub calls, and orchestration stay in the small files under `backend`. Put new business rules in the domain package, and avoid adding infrastructure layers without a concrete need.
 
 For code changes, preserve these domain boundaries and use test-driven development: write or update a focused failing test for the behavior first, then implement the smallest change that makes it pass.
 
-The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, normalize the response, and render the timeline and review evidence. `POST /api/checks` fetches checks for a focused full commit SHA. Checks are always labeled with the revision GitHub returned.
+The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, parse same-repository issue references from the PR description, look up their GitHub state, normalize the response, and render the timeline and evidence. Reference lookup is limited to 20 issue requests with at most five concurrent requests per import. Every parsed reference remains visible; failed or over-limit lookups are explicitly unavailable and retain a canonical issue link. `POST /api/checks` fetches checks for a focused full commit SHA. Checks are always labeled with the revision GitHub returned.
+
+Ghostline calls an issue "referenced" because this first slice reads the PR description; it does not ask GitHub for authoritative linked-issue or closing-keyword relationships. A merged PR that references an open issue is a prompt for human review, not a claim that the issue was delivered or should be closed. GitHub's issue endpoint may also resolve a `#N` to a pull request; these are identified as unavailable as issues, rather than misrepresented.
 
 ## Setup and verification
 
-Requirements for a local run: Go 1.27.3 or newer, Node.js 22.12 or newer, and npm.
+Requirements for a local run: Go 1.27.4 or newer, Node.js 22.12 or newer, and npm.
 
 Run the API from the repository root:
 

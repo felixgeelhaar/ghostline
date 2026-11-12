@@ -131,6 +131,95 @@ func TestImportRetriesWhenRepositoryChangesDuringSnapshot(t *testing.T) {
 	}
 }
 
+func TestImportReturnsSameRepositoryIssueReferences(t *testing.T) {
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	tests := []struct {
+		name             string
+		body             string
+		merged           bool
+		issueStatus      int
+		issueState       string
+		wantCount        int
+		wantAvailability string
+		wantState        string
+	}{
+		{"merged PR with open issue", "Refs #27", true, http.StatusOK, "open", 1, "available", "open"},
+		{"merged PR with closed issue", "Fixes #27", true, http.StatusOK, "closed", 1, "available", "closed"},
+		{"cross repository reference is ignored", "acme/other#27 https://github.com/acme/other/issues/28", true, http.StatusOK, "open", 0, "", ""},
+		{"unmerged PR still returns reference state", "Refs #27", false, http.StatusOK, "open", 1, "available", "open"},
+		{"failed issue lookup is unavailable", "Refs #27", true, http.StatusInternalServerError, "", 1, "unavailable", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var issueLookups []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/repos/acme/app/pulls/12":
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"number": 12, "title": "Referenced issue test", "state": "closed", "merged": tt.merged,
+						"body": tt.body, "html_url": "https://github.com/acme/app/pull/12",
+						"created_at": "2026-11-06T08:00:00Z", "updated_at": "2026-11-06T08:00:00Z",
+						"head": map[string]string{"sha": sha},
+						"base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}},
+					})
+				case r.URL.Path == "/repos/acme/app/pulls/12/commits":
+					_, _ = w.Write([]byte("[]"))
+				case r.URL.Path == "/repos/acme/app/commits/"+sha+"/check-runs":
+					_, _ = w.Write([]byte(`{"total_count":0,"check_runs":[]}`))
+				case r.URL.Path == "/repos/acme/app/commits/"+sha+"/status":
+					_, _ = w.Write([]byte(`{"sha":"` + sha + `","total_count":0,"statuses":[]}`))
+				case r.URL.Path == "/repos/acme/app/issues/27":
+					issueLookups = append(issueLookups, r.URL.Path)
+					if tt.issueStatus != http.StatusOK {
+						w.WriteHeader(tt.issueStatus)
+						return
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 27, "title": "Idempotency tracking", "state": tt.issueState, "html_url": "https://github.com/acme/app/issues/27"})
+				case strings.Contains(r.URL.Path, "/issues/") && strings.HasSuffix(r.URL.Path, "/comments"):
+					_, _ = w.Write([]byte("[]"))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			router := newRouter(&githubClient{baseURL: srv.URL, http: srv.Client()})
+			request := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(`{"url":"https://github.com/acme/app/pull/12"}`))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+			}
+			var result pullRequest
+			if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Merged != tt.merged {
+				t.Errorf("merged = %v, want %v", result.Merged, tt.merged)
+			}
+			if len(result.ReferencedIssues) != tt.wantCount {
+				t.Fatalf("referenced issues = %+v, want %d", result.ReferencedIssues, tt.wantCount)
+			}
+			if tt.wantCount == 1 {
+				issue := result.ReferencedIssues[0]
+				if issue.Number != 27 || issue.Availability != tt.wantAvailability || issue.State != tt.wantState || issue.URL != "https://github.com/acme/app/issues/27" {
+					t.Errorf("issue = %+v", issue)
+				}
+				if tt.wantAvailability == "unavailable" && issue.Reason == "" {
+					t.Error("unavailable issue has no reason")
+				}
+			}
+			wantLookups := tt.wantCount
+			if tt.name == "failed issue lookup is unavailable" {
+				wantLookups = 1
+			}
+			if len(issueLookups) != wantLookups {
+				t.Errorf("issue lookups = %v, want %d", issueLookups, wantLookups)
+			}
+		})
+	}
+}
+
 func writePRResponse(t *testing.T, w http.ResponseWriter, owner, repo, sha string) {
 	t.Helper()
 	_ = json.NewEncoder(w).Encode(map[string]any{

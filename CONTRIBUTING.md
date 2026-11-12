@@ -4,7 +4,7 @@ Ghostline is an early-stage Go and Vue application. Keep changes small, preserve
 
 ## Development setup
 
-- Go 1.27.3 or newer
+- Go 1.27.4 or newer
 - Node.js 22.12 or newer
 - Docker Compose (optional)
 

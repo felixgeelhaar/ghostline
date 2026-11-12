@@ -111,6 +111,21 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
       <div class="change-heading"><div><span class="eyebrow">{{ pr.repository }} / PULL REQUEST #{{ pr.number }}</span><h2>{{ pr.title }}</h2></div><span class="state" :class="pr.state">{{ pr.state }}</span></div>
       <div class="meta"><span>{{ pr.commits.length }} COMMITS</span><span>OPENED {{ date(pr.createdAt) }}</span><a :href="pr.url" target="_blank" rel="noreferrer">VIEW ON GITHUB ↗</a></div>
 
+      <section v-if="pr.referencedIssues.length" class="referenced-issues" aria-labelledby="referenced-issues-title">
+        <h3 id="referenced-issues-title" class="section-title">REFERENCED ISSUES</h3>
+        <ul>
+          <li v-for="issue in pr.referencedIssues" :key="issue.number" :class="{ warn: pr.merged && issue.availability === 'available' && issue.state === 'open', unavailable: issue.availability === 'unavailable' }">
+            <strong v-if="pr.merged && issue.availability === 'available' && issue.state === 'open'">Referenced issue #{{ issue.number }} is still open.</strong>
+            <strong v-else-if="issue.availability === 'unavailable'">Referenced issue #{{ issue.number }} is unavailable.</strong>
+            <strong v-else-if="pr.merged && issue.availability === 'available'">Referenced issue #{{ issue.number }} is closed.</strong>
+            <strong v-else>Referenced issue #{{ issue.number }} is {{ issue.state }}; this pull request is not merged.</strong>
+            <span v-if="issue.availability === 'unavailable' && issue.reason">{{ issue.reason }}</span>
+            <span class="reference-links"><a :href="pr.url" target="_blank" rel="noreferrer">PR #{{ pr.number }} ↗</a><a :href="issue.url" target="_blank" rel="noreferrer">{{ issue.title }} ↗</a></span>
+          </li>
+        </ul>
+        <p class="footnote">References come from the pull request description. An open issue is a signal for human review; Ghostline does not decide whether the work was delivered.</p>
+      </section>
+
       <section class="checks" aria-labelledby="checks-title">
         <h3 id="checks-title" class="section-title"><span>CHECKS · {{ selectedRevision ? 'FOCUSED REVISION' : 'PR HEAD' }}</span><span v-if="activeChecks?.revisionSha"><a :href="activeChecks.revisionUrl" target="_blank" rel="noreferrer" :aria-label="`Revision ${activeChecks.revisionShortSha} on GitHub`">{{ activeChecks.revisionShortSha }} ↗</a></span></h3>
         <p v-if="checksLoading" class="checks-note" role="status">Loading GitHub checks for revision {{ selectedRevision.slice(0, 7) }}…</p>

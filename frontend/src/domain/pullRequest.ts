@@ -2,13 +2,30 @@ import { z } from 'zod'
 import { RevisionChecksSchema } from './checks'
 import { QodoReviewSetSchema } from './reviews'
 
+const ReferencedIssueSchema = z.object({
+  number: z.number().int().positive(),
+  title: z.string(),
+  availability: z.enum(['available', 'unavailable']),
+  state: z.enum(['open', 'closed']).optional(),
+  reason: z.string().optional(),
+  url: z.string().url(),
+}).superRefine((issue, context) => {
+  if (issue.availability === 'available' && issue.state === undefined) {
+    context.addIssue({ code: 'custom', path: ['state'], message: 'An available issue must include its GitHub state.' })
+  }
+  if (issue.availability === 'unavailable' && issue.state !== undefined) {
+    context.addIssue({ code: 'custom', path: ['state'], message: 'An unavailable issue cannot claim a GitHub state.' })
+  }
+})
+
 export const PullRequestSchema = z.object({
   repository: z.string(), owner: z.string(), repo: z.string(), number: z.number(),
-  title: z.string(), state: z.string(), url: z.string().url(),
+  title: z.string(), state: z.string(), merged: z.boolean(), url: z.string().url(),
   createdAt: z.string(), updatedAt: z.string(),
   commits: z.array(z.object({ sha: z.string(), shortSha: z.string(), message: z.string(), author: z.string(), committedAt: z.string(), url: z.string().url() })),
   checks: RevisionChecksSchema,
   qodoReviews: QodoReviewSetSchema,
+  referencedIssues: z.array(ReferencedIssueSchema),
 }).superRefine((pullRequest, context) => {
   if (!matchesGitHubPath(
     pullRequest.url,
@@ -16,6 +33,16 @@ export const PullRequestSchema = z.object({
   )) {
     context.addIssue({ code: 'custom', path: ['url'], message: 'Pull request URL does not match its GitHub identity.' })
   }
+
+  pullRequest.referencedIssues.forEach((issue, index) => {
+    if (!matchesGitHubPath(issue.url, `${pullRequest.owner}/${pullRequest.repo}/issues/${issue.number}`)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['referencedIssues', index, 'url'],
+        message: 'Issue URL does not match its repository and issue number.',
+      })
+    }
+  })
 
   pullRequest.commits.forEach((commit, index) => {
     if (!matchesGitHubPath(
