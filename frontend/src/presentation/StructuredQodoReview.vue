@@ -50,7 +50,7 @@ function citationURL(source?: string) {
     <ol v-else class="qodo-managed-findings">
         <li v-for="finding in review.findings" :key="finding.id">
           <div class="finding-heading"><strong>{{ finding.title }}</strong><span v-if="finding.actionLevel">{{ finding.actionLevel.replaceAll('_', ' ') }}</span></div>
-          <p class="finding-labels">QODO FINDING {{ finding.id }} · REPORTED {{ finding.status || 'NO STATUS' }}<span v-if="finding.category"> · {{ finding.category }}</span><span v-if="finding.attributionStatus"> · {{ finding.attributionStatus }}</span></p>
+          <p class="finding-labels">QODO FINDING {{ finding.id }} · QODO STATUS {{ finding.attributionStatus || finding.status || 'NO STATUS' }}<span v-if="finding.category"> · {{ finding.category }}</span></p>
           <p v-if="finding.description" class="finding-description">{{ finding.description }}</p>
           <p v-if="finding.gitSha" class="review-revision">RAISED ON <a :href="revisionURL(finding.gitSha)" target="_blank" rel="noreferrer">{{ finding.gitSha.slice(0, 7) }} ↗</a></p>
           <p v-if="finding.gitSha && findingRevisionFreshness(finding, headSha) === 'stale'" class="checks-note warn" role="status"><strong>Finding revision does not match the imported PR head.</strong> Qodo attached this finding to {{ finding.gitSha.slice(0, 7) }}, while Ghostline imported {{ headSha.slice(0, 7) }}.</p>

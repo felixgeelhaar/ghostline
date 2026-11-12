@@ -103,6 +103,14 @@ Qodo-reported outcomes. The summary directs engineers to the underlying source
 evidence; `implemented` or `dismissed` statuses are not presented as
 independent verification.
 
+For structured findings, `attributionStatus` is the source for Qodo's open or
+closed classification: `pending`, `partial_implementation`,
+`not_implemented`, and `focus_areas_edited` are treated as open; `implemented`,
+`full_implementation`, `dismissed`, `detected_after_merge`, and `outdated` are
+treated as closed. A legacy `status` is used only when Qodo omitted the
+attribution status. Unknown values stay visible as unclassified. `actionLevel`
+describes review severity and does not determine whether a finding is open.
+
 The running UI's structured-review entry point is shown in the
 [feature screenshot](feature-evidence/qodo-structured-review.jpg). It shows
 the optional per-request credential control alongside the imported PR's
@@ -110,6 +118,10 @@ source-backed review context; it does not depict a fetched structured session.
 The next-action presentation is shown in
 [its focused screenshot](feature-evidence/qodo-attention-summary.jpg), captured
 from a prepared replay labeled as sample data rather than a live Qodo response.
+The attribution-status regression is shown in the
+[pending-finding screenshot](feature-evidence/qodo-pending-attribution-status.jpg):
+Qodo's `pending` findings remain counted as open even when the legacy status
+field is absent.
 
 ## Features to evaluate in the Qodo workspace
 

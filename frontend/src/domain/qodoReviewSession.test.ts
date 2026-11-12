@@ -195,6 +195,49 @@ describe('structured Qodo review evidence', () => {
     expect(summary.detail).toContain('not independently verify')
   })
 
+  it('counts Qodo pending attribution as an open finding when the legacy status is absent', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: [{ id: 'finding-pending', title: 'Validate retry key', attributionStatus: 'pending' }],
+      reviewRuns: [],
+    })
+
+    expect(reviewAttentionSummary(review, shaA)).toMatchObject({
+      kind: 'attention', openFindingCount: 1, unspecifiedFindingCount: 0, unrecognizedFindingCount: 0,
+      title: '1 finding reported open',
+    })
+    expect(reviewAttentionSummary(review, shaA).detail).toContain('Qodo reports 1 finding as open')
+  })
+
+  it('maps Qodo open and closed attribution states without treating them as unknown', () => {
+    const openStatuses = ['pending', 'partial_implementation', 'not_implemented', 'focus_areas_edited']
+    const closedStatuses = ['implemented', 'full_implementation', 'dismissed', 'detected_after_merge', 'outdated']
+
+    for (const attributionStatus of openStatuses) {
+      const review = QodoStructuredReviewSchema.parse({
+        availability: 'available', source: 'Qodo',
+        reviewSession: { status: 'completed', commitSha: shaA },
+        findings: [{ id: attributionStatus, title: 'Review finding', attributionStatus }], reviewRuns: [],
+      })
+      expect(reviewAttentionSummary(review, shaA)).toMatchObject({
+        kind: 'attention', openFindingCount: 1, unspecifiedFindingCount: 0, unrecognizedFindingCount: 0,
+      })
+    }
+
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: closedStatuses.map((attributionStatus, index) => ({
+        id: `finding-${index}`, title: 'Review finding', attributionStatus,
+      })), reviewRuns: [],
+    })
+    expect(reviewAttentionSummary(review, shaA)).toMatchObject({
+      kind: 'clear', openFindingCount: 0, unspecifiedFindingCount: 0, unrecognizedFindingCount: 0,
+      implementedFindingCount: 2, dismissedFindingCount: 1,
+    })
+  })
+
   it('does not describe a Qodo implemented status as independently verified correctness', () => {
     const review = QodoStructuredReviewSchema.parse({
       availability: 'available', source: 'Qodo',

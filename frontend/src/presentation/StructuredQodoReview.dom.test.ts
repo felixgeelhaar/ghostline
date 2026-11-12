@@ -39,7 +39,7 @@ describe('structured Qodo review presentation', () => {
     expect(host.textContent).toContain('OBSERVED · Qodo Agentic Toolbox · get-pr-review-findings')
     expect(host.textContent).toContain('DOES NOT MATCH PR HEAD')
     expect(host.textContent).toContain('Review evidence is stale.')
-    expect(host.textContent).toContain('QODO FINDING finding-17 · REPORTED implemented')
+    expect(host.textContent).toContain('QODO FINDING finding-17 · QODO STATUS implemented')
     expect(host.textContent).toContain('QODO-LINKED REVIEW RUN run-2 · completed')
     expect(host.textContent).toContain('QODO EVIDENCE · The reviewer cited this branch.')
     expect(host.textContent).toContain('inside the replay handler')
@@ -70,7 +70,27 @@ describe('structured Qodo review presentation', () => {
     expect(summary?.textContent).toContain('1 finding reported open')
     expect(summary?.textContent).toContain('Inspect the open findings below')
     expect(summary?.getAttribute('role')).toBe('status')
-    expect(host.textContent).toContain('QODO FINDING finding-open · REPORTED open')
+    expect(host.textContent).toContain('QODO FINDING finding-open · QODO STATUS open')
+  })
+
+  it('shows the Qodo attribution status when the legacy finding status is missing', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: { status: 'completed', commitSha: currentSha },
+        findings: [{ id: 'finding-pending', title: 'Validate retry key', attributionStatus: 'pending', gitSha: currentSha }],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.querySelector('.qodo-attention')?.textContent).toContain('1 finding reported open')
+    expect(host.textContent).toContain('QODO FINDING finding-pending · QODO STATUS pending')
+    expect(host.textContent).not.toContain('REPORTED NO STATUS')
   })
 
   it('keeps open finding urgency visible when the review is stale', async () => {
@@ -165,7 +185,7 @@ describe('structured Qodo review presentation', () => {
     await nextTick()
 
     expect(host.textContent).toContain('No review session returned.')
-    expect(host.textContent).toContain('QODO FINDING finding-17 · REPORTED implemented')
+    expect(host.textContent).toContain('QODO FINDING finding-17 · QODO STATUS implemented')
     expect(host.textContent).toContain('QODO-LINKED REVIEW RUN run-2 · completed')
   })
 

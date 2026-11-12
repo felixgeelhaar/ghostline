@@ -87,6 +87,13 @@ export function isReviewSessionCurrent(review: QodoStructuredReview, headSha: st
   return reviewSessionFreshness(review, headSha) === 'current'
 }
 
+const openAttributionStatuses = new Set(['pending', 'partial_implementation', 'not_implemented', 'focus_areas_edited'])
+const closedAttributionStatuses = new Set(['implemented', 'full_implementation', 'dismissed', 'detected_after_merge', 'outdated'])
+
+function findingStatus(finding: QodoManagedFinding): string {
+  return (finding.attributionStatus ?? finding.status ?? '').trim().toLowerCase()
+}
+
 function freshnessFindingDetail(openFindingCount: number, unclassifiedFindingCount: number): string {
   const details: string[] = []
   if (openFindingCount > 0) {
@@ -115,12 +122,15 @@ function freshnessNextAction(
 }
 
 export function reviewAttentionSummary(review: QodoStructuredReview, headSha: string): ReviewAttentionSummary {
-  const statuses = review.findings.map((finding) => finding.status?.trim().toLowerCase() ?? '')
-  const openFindingCount = statuses.filter((status) => status === 'open').length
+  const statuses = review.findings.map(findingStatus)
+  const openStatuses = new Set(['open', ...openAttributionStatuses])
+  const closedStatuses = new Set(['implemented', 'dismissed', ...closedAttributionStatuses])
+  const knownStatuses = new Set([...openStatuses, ...closedStatuses])
+  const openFindingCount = statuses.filter((status) => openStatuses.has(status)).length
   const unspecifiedFindingCount = statuses.filter((status) => status === '').length
-  const implementedFindingCount = statuses.filter((status) => status === 'implemented').length
+  const implementedFindingCount = statuses.filter((status) => ['implemented', 'full_implementation'].includes(status)).length
   const dismissedFindingCount = statuses.filter((status) => status === 'dismissed').length
-  const unrecognizedFindingCount = statuses.filter((status) => !['', 'open', 'implemented', 'dismissed'].includes(status)).length
+  const unrecognizedFindingCount = statuses.filter((status) => status !== '' && !knownStatuses.has(status)).length
   const unclassifiedFindingCount = unspecifiedFindingCount + unrecognizedFindingCount
   const counts = {
     findingCount: review.findings.length,
@@ -217,6 +227,8 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
   const reportedStatuses = [
     implementedFindingCount ? `Qodo marks ${implementedFindingCount} finding${implementedFindingCount === 1 ? '' : 's'} implemented` : '',
     dismissedFindingCount ? `Qodo marks ${dismissedFindingCount} dismissed` : '',
+    statuses.some((status) => status === 'detected_after_merge') ? 'Qodo marks findings detected after merge' : '',
+    statuses.some((status) => status === 'outdated') ? 'Qodo marks findings outdated' : '',
   ].filter(Boolean).join(' and ')
   return {
     ...counts,
