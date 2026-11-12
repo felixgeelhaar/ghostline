@@ -139,6 +139,8 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
       <section class="activity-index" aria-labelledby="activity-index-title">
         <h3 id="activity-index-title" class="section-title"><span>CHANGE ACTIVITY · OBSERVED SOURCES</span><span>{{ changeActivity.length }} EVENTS</span></h3>
         <p class="footnote">Events are ordered by their source timestamps. Commit metadata time and Qodo comment time describe different things; sequence alone does not establish causation. GitHub checks remain listed above for the exact revision they report.</p>
+        <p v-if="pr.qodoReviews.availability === 'unavailable'" class="checks-note warn" role="status"><strong>Qodo activity unavailable.</strong> {{ pr.qodoReviews.reason }} This index may omit Qodo review events.</p>
+        <p v-else-if="pr.qodoReviews.unrecognizedCommentCount > 0" class="checks-note warn" role="status"><strong>{{ pr.qodoReviews.unrecognizedCommentCount }} additional Qodo comments could not be parsed.</strong> The activity index may omit review events. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect all comments on GitHub ↗</a></p>
         <ol class="activity-list">
           <li v-for="event in changeActivity" :key="event.id" :class="`activity-${event.kind}`">
             <span class="activity-node" aria-hidden="true"></span>

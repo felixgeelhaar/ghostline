@@ -57,4 +57,46 @@ describe('change activity index', () => {
     expect(host.querySelector('.activity-index .footnote')?.textContent).toContain('sequence alone does not establish causation')
     expect(host.querySelector('[aria-label="Focus activity revision aaaaaaa"]')).not.toBeNull()
   })
+
+  it('states when Qodo activity could not be retrieved', async () => {
+    vi.mocked(importPullRequest).mockResolvedValue({
+      ...pullRequest,
+      qodoReviews: { availability: 'unavailable', reason: 'GitHub returned an error.', unrecognizedCommentCount: 0, items: [] },
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = pullRequest.url
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.activity-index')).not.toBeNull())
+
+    expect(host.querySelector('.activity-index')?.textContent).toContain('Qodo activity unavailable')
+    expect(host.querySelector('.activity-index')?.textContent).toContain('GitHub returned an error.')
+  })
+
+  it('warns when some Qodo comments were not recognized in the activity index', async () => {
+    vi.mocked(importPullRequest).mockResolvedValue({
+      ...pullRequest,
+      qodoReviews: { ...pullRequest.qodoReviews, unrecognizedCommentCount: 2 },
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = pullRequest.url
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelectorAll('.activity-list li')).toHaveLength(2))
+
+    expect(host.querySelector('.activity-index')?.textContent).toContain('2 additional Qodo comments could not be parsed')
+    expect(host.querySelector('.activity-index a[href="https://github.com/acme/app/pull/7"]')).not.toBeNull()
+  })
 })
