@@ -99,4 +99,28 @@ describe('change activity index', () => {
     expect(host.querySelector('.activity-index')?.textContent).toContain('2 additional Qodo comments could not be parsed')
     expect(host.querySelector('.activity-index a[href="https://github.com/acme/app/pull/7"]')).not.toBeNull()
   })
+
+  it('warns when a recognized Qodo finding comment has no parsed finding details', async () => {
+    const incompleteReview = { ...pullRequest.qodoReviews.items[0]!, findings: [] }
+    vi.mocked(importPullRequest).mockResolvedValue({
+      ...pullRequest,
+      qodoReviews: { ...pullRequest.qodoReviews, items: [incompleteReview] },
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted = createApp(App)
+    mounted.mount(host)
+
+    const input = host.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = pullRequest.url
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelectorAll('.activity-list li')).toHaveLength(2))
+
+    const activity = host.querySelector('.activity-index')!
+    expect(activity.textContent).toContain('FINDING DETAILS UNAVAILABLE')
+    expect(activity.textContent).toContain('recognized Qodo review comment')
+    expect(activity.textContent).not.toContain('0 FINDINGS')
+  })
 })

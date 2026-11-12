@@ -36,7 +36,9 @@ export function buildChangeActivity(commits: RevisionRef[], reviews: QodoReview[
           ? 'MARKED REVISION OUTSIDE IMPORT'
           : 'REVISION NOT MARKED'
       const detail = review.kind === 'findings'
-        ? `${review.findings.length} FINDING${review.findings.length === 1 ? '' : 'S'}`
+        ? review.findings.length === 0
+          ? 'FINDING DETAILS UNAVAILABLE'
+          : `${review.findings.length} FINDING${review.findings.length === 1 ? '' : 'S'}`
         : review.kind === 'no_open_findings'
           ? 'QODO REPORTED NO OPEN FINDINGS'
           : review.summary

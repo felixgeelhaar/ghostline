@@ -32,6 +32,13 @@ describe('change activity', () => {
     expect(event).not.toHaveProperty('revision')
   })
 
+  it('does not report zero findings when a recognized finding comment has no parsed details', () => {
+    const event = buildChangeActivity([], [{ ...review, findings: [] }])[0]
+
+    expect(event?.detail).toBe('FINDING DETAILS UNAVAILABLE')
+    expect(event?.detail).not.toContain('0 FINDINGS')
+  })
+
   it('uses deterministic ordering for equal timestamps without claiming a causal order', () => {
     const sameTime = { ...review, createdAt: commit.committedAt }
     const activity = buildChangeActivity([commit], [sameTime])
