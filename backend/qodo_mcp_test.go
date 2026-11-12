@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -99,6 +101,47 @@ func TestQodoReviewEndpointReturnsExplicitNoSessionState(t *testing.T) {
 	router.ServeHTTP(res, req)
 	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"reviewSession":null`) {
 		t.Fatalf("status = %d, body = %s; want successful explicit no-session response", res.Code, res.Body.String())
+	}
+}
+
+func TestQodoReviewDataRejectsUnrecognizedEmptyObject(t *testing.T) {
+	var data qodoReviewData
+	if err := json.Unmarshal([]byte(`{}`), &data); err == nil {
+		t.Fatal("empty Qodo object was accepted as an available review")
+	}
+
+	// An explicit null session is a valid response shape and must remain distinct
+	// from an unrecognized or malformed object.
+	if err := json.Unmarshal([]byte(`{"review_session":null,"findings":[],"review_runs":[]}`), &data); err != nil {
+		t.Fatalf("explicit no-session response was rejected: %v", err)
+	}
+	if err := validateQodoReviewData(data); err != nil {
+		t.Fatalf("explicit no-session response did not validate: %v", err)
+	}
+}
+
+func TestQodoReviewEndpointLogsFailureWithoutLeakingCredential(t *testing.T) {
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	secret := "qodo-secret-value"
+	router := newRouterWithQodoLogger(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, qodoSourceFunc(func(context.Context, string, string) (qodoReviewData, error) {
+		return qodoReviewData{}, errors.New("upstream rejected credential " + secret)
+	}), newRateLimiter(defaultRateLimitRequests, defaultRateLimitWindow, time.Now), clientIdentity{}, logger)
+	req := httptest.NewRequest(http.MethodPost, "/api/qodo-review", strings.NewReader(`{"url":"https://github.com/acme/payments/pull/42"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://ghostline.example")
+	req.Header.Set("X-Qodo-API-Key", secret)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(logs.String(), "Qodo structured review request failed") {
+		t.Fatalf("server log did not record the Qodo failure: %s", logs.String())
+	}
+	if strings.Contains(logs.String(), secret) || strings.Contains(res.Body.String(), secret) {
+		t.Fatal("Qodo credential leaked into logs or response")
 	}
 }
 

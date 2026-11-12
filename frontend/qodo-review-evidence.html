@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ghostline · Unknown revision evidence</title>
+    <link rel="stylesheet" href="/src/presentation/style.css" />
+    <style>
+      body { min-height: 100vh; padding: 28px; background: #090b16; }
+      .fixture-label { max-width: 820px; margin: 0 auto 16px; padding: 12px 14px; border: 1px solid #ffc857; color: #ffe3a0; font: 11px 'IBM Plex Mono', monospace; letter-spacing: .06em; }
+      #app { max-width: 820px; margin: 0 auto; }
+    </style>
+  </head>
+  <body>
+    <p class="fixture-label">PREPARED REPLAY · FIXTURE DATA · NOT LIVE QODO OUTPUT</p>
+    <div id="app"></div>
+    <script type="module">
+      import { createApp } from 'vue'
+      import StructuredQodoReview from '/src/presentation/StructuredQodoReview.vue'
+
+      const sha = 'a'.repeat(40)
+      createApp(StructuredQodoReview, {
+        pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+        headSha: '',
+        review: {
+          availability: 'available',
+          source: 'Qodo Agentic Toolbox · get-pr-review-findings',
+          reviewSession: { status: 'completed', commitSha: sha, startedAt: '2026-11-12T09:00:00Z' },
+          findings: [{
+            id: 'finding-demo-1',
+            title: 'Review freshness cannot be verified',
+            description: 'The pull request head was not available when this evidence was displayed.',
+            category: 'Correctness',
+            actionLevel: 'informational',
+            gitSha: sha,
+            filePath: 'backend/review.go',
+            startLine: 28,
+            side: 'RIGHT',
+            evidence: {
+              explanation: 'The session contains a revision, but the import supplied no head SHA for comparison.',
+              citations: [],
+            },
+          }],
+          reviewRuns: [],
+        },
+      }).mount('#app')
+    </script>
+  </body>
+</html>

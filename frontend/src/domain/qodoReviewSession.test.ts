@@ -39,6 +39,21 @@ describe('structured Qodo review evidence', () => {
     expect(reviewRunForFinding(review.findings[0]!, review)).toBeUndefined()
   })
 
+  it('preserves citations when Qodo metadata is null or not an object', () => {
+    for (const metadata of [null, ['line 19'], 'line 19']) {
+      const parsed = QodoStructuredReviewSchema.safeParse({
+        availability: 'available', source: 'Qodo', reviewSession: null,
+        findings: [{
+          id: 'finding-1', title: 'Guard duplicate requests',
+          evidence: { citations: [{ sourceType: 'code', source: 'backend/replay.go', metadata }] },
+        }],
+        reviewRuns: [],
+      })
+
+      expect(parsed.success).toBe(true)
+    }
+  })
+
   it('reports unknown freshness when Qodo omitted the reviewed revision', () => {
     const review = QodoStructuredReviewSchema.parse({
       availability: 'available', source: 'Qodo',
@@ -47,5 +62,15 @@ describe('structured Qodo review evidence', () => {
 
     expect(reviewSessionFreshness(review, shaA)).toBe('unknown')
     expect(isReviewSessionCurrent(review, shaA)).toBe(false)
+  })
+
+  it('reports unknown freshness when the imported head revision is missing', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA }, findings: [], reviewRuns: [],
+    })
+
+    expect(reviewSessionFreshness(review, '')).toBe('unknown')
+    expect(isReviewSessionCurrent(review, '')).toBe(false)
   })
 })

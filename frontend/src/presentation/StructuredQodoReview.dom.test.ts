@@ -63,4 +63,21 @@ describe('structured Qodo review presentation', () => {
     expect(host.textContent).toContain('Review freshness is unknown.')
     expect(host.textContent).not.toContain('Review evidence is stale.')
   })
+
+  it('explains unknown freshness when the imported pull request head is unavailable', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review,
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: '',
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('REVISION UNKNOWN')
+    expect(host.textContent).toContain('Ghostline cannot compare this session with a known pull request head revision.')
+    expect(host.textContent).not.toContain('Qodo did not return a reviewed commit SHA')
+    expect(host.textContent).not.toContain('Review evidence is stale.')
+  })
 })

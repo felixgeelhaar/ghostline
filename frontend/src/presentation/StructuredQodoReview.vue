@@ -37,7 +37,7 @@ function citationURL(source?: string) {
         <strong>{{ freshness === 'current' ? 'MATCHES PR HEAD' : freshness === 'stale' ? 'DOES NOT MATCH PR HEAD' : 'REVISION UNKNOWN' }}</strong>
       </div>
       <p v-if="freshness === 'stale'" class="checks-note warn" role="status"><strong>Review evidence is stale.</strong> The reviewed commit does not match the imported pull request head; these findings do not describe the current head.</p>
-      <p v-else-if="freshness === 'unknown'" class="checks-note warn" role="status"><strong>Review freshness is unknown.</strong> Qodo did not return a reviewed commit SHA, so Ghostline cannot compare this session with the imported pull request head.</p>
+      <p v-else-if="freshness === 'unknown'" class="checks-note warn" role="status"><strong>Review freshness is unknown.</strong> Ghostline cannot compare this session with a known pull request head revision.</p>
       <p v-if="review.findings.length === 0" class="checks-note" role="status">Qodo returned no current findings for this review session.</p>
       <ol v-else class="qodo-managed-findings">
         <li v-for="finding in review.findings" :key="finding.id">

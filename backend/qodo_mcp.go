@@ -85,6 +85,25 @@ type qodoReviewDataWire struct {
 }
 
 func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return err
+	}
+	if fields == nil {
+		return errors.New("Qodo review response must be an object")
+	}
+	knownFields := []string{"review_session", "reviewSession", "findings", "camelFindings", "review_runs", "reviewRuns"}
+	recognized := false
+	for _, name := range knownFields {
+		if _, ok := fields[name]; ok {
+			recognized = true
+			break
+		}
+	}
+	if !recognized {
+		return errors.New("Qodo review response did not contain recognized review fields")
+	}
+
 	var wire qodoReviewDataWire
 	if err := json.Unmarshal(payload, &wire); err != nil {
 		return err

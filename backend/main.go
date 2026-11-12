@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -94,8 +95,9 @@ func parsePRURL(raw string) (string, string, int, error) {
 }
 
 type api struct {
-	gh   *githubClient
-	qodo qodoReviewSource
+	gh     *githubClient
+	qodo   qodoReviewSource
+	logger *slog.Logger
 }
 
 func (a api) importPR(c *gin.Context) {
@@ -234,6 +236,12 @@ func (a api) loadQodoReview(c *gin.Context) {
 	}
 	result, err := a.qodo.fetch(c.Request.Context(), apiKey, strings.TrimSpace(body.URL))
 	if err != nil {
+		logger := a.logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		cause := strings.ReplaceAll(err.Error(), apiKey, "[redacted]")
+		logger.Error("Qodo structured review request failed", "pull_request", strings.TrimSpace(body.URL), "cause", cause)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Qodo structured review data could not be loaded. Check the key, workspace access, and pull request, then retry."})
 		return
 	}
@@ -263,10 +271,14 @@ func newRouterWithLimiter(gh *githubClient, limiter *rateLimiter, identity clien
 }
 
 func newRouterWithQodoAndLimiter(gh *githubClient, qodo qodoReviewSource, limiter *rateLimiter, identity clientIdentity) *gin.Engine {
+	return newRouterWithQodoLogger(gh, qodo, limiter, identity, slog.Default())
+}
+
+func newRouterWithQodoLogger(gh *githubClient, qodo qodoReviewSource, limiter *rateLimiter, identity clientIdentity, logger *slog.Logger) *gin.Engine {
 	r := gin.Default()
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	limited := r.Group("/api", rateLimitMiddleware(limiter, identity))
-	client := api{gh: gh, qodo: qodo}
+	client := api{gh: gh, qodo: qodo, logger: logger}
 	limited.POST("/import", client.importPR)
 	limited.POST("/checks", client.loadRevisionChecks)
 	limited.POST("/qodo-review", client.loadQodoReview)

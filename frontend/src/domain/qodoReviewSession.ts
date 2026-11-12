@@ -6,7 +6,9 @@ const QodoCitationSchema = z.object({
   source: z.string().optional(),
   text: z.string().optional(),
   context: z.string().optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+  // Qodo's citation metadata is source-specific and may be null, scalar, or
+  // structured JSON. Preserve it without allowing it to invalidate the review.
+  metadata: z.unknown().optional(),
 })
 
 const QodoFindingEvidenceSchema = z.object({
@@ -57,6 +59,7 @@ export type QodoStructuredReview = z.infer<typeof QodoStructuredReviewSchema>
 export type QodoManagedFinding = z.infer<typeof QodoManagedFindingSchema>
 
 export function reviewSessionFreshness(review: QodoStructuredReview, headSha: string): 'current' | 'stale' | 'unknown' {
+  if (!fullSha.safeParse(headSha).success) return 'unknown'
   const reviewedSha = review.reviewSession?.commitSha
   if (!reviewedSha) return 'unknown'
   return reviewedSha.toLowerCase() === headSha.toLowerCase() ? 'current' : 'stale'
