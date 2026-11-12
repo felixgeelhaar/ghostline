@@ -172,6 +172,11 @@ func deduplicateQodoReviewRuns(values []qodoManagedReviewRun) ([]qodoManagedRevi
 
 func mergeQodoFindings(left, right qodoManagedFinding) (qodoManagedFinding, error) {
 	merged := left
+	gitSHA, err := mergeFindingRevisionAliases("finding revisions", merged.GitSHA, right.GitSHA)
+	if err != nil {
+		return qodoManagedFinding{}, err
+	}
+	merged.GitSHA = gitSHA
 	mergeString := func(field string, a, b *string) error {
 		value, err := mergeFindingStringAliases(field, *a, *b)
 		if err == nil {
@@ -183,13 +188,12 @@ func mergeQodoFindings(left, right qodoManagedFinding) (qodoManagedFinding, erro
 		field string
 		a, b  *string
 	}{
-		{"titles", &merged.Title, &right.Title}, {"descriptions", &merged.Description, &right.Description}, {"categories", &merged.Category, &right.Category}, {"action levels", &merged.ActionLevel, &right.ActionLevel}, {"attribution statuses", &merged.AttributionStatus, &right.AttributionStatus}, {"finding revisions", &merged.GitSHA, &right.GitSHA}, {"statuses", &merged.Status, &right.Status}, {"resolution reasons", &merged.ResolutionReason, &right.ResolutionReason}, {"review-run IDs", &merged.ReviewRunID, &right.ReviewRunID}, {"file paths", &merged.FilePath, &right.FilePath}, {"diff sides", &merged.Side, &right.Side}, {"code snippets", &merged.CodeSnippet, &right.CodeSnippet},
+		{"titles", &merged.Title, &right.Title}, {"descriptions", &merged.Description, &right.Description}, {"categories", &merged.Category, &right.Category}, {"action levels", &merged.ActionLevel, &right.ActionLevel}, {"attribution statuses", &merged.AttributionStatus, &right.AttributionStatus}, {"statuses", &merged.Status, &right.Status}, {"resolution reasons", &merged.ResolutionReason, &right.ResolutionReason}, {"review-run IDs", &merged.ReviewRunID, &right.ReviewRunID}, {"file paths", &merged.FilePath, &right.FilePath}, {"diff sides", &merged.Side, &right.Side}, {"code snippets", &merged.CodeSnippet, &right.CodeSnippet},
 	} {
 		if err := mergeString(item.field, item.a, item.b); err != nil {
 			return qodoManagedFinding{}, err
 		}
 	}
-	var err error
 	merged.StartLine, err = mergeFindingIntAliases("start lines", merged.StartLine, right.StartLine)
 	if err != nil {
 		return qodoManagedFinding{}, err
@@ -333,6 +337,18 @@ func mergeAttributionStatusAliases(preferred, fallback string) (string, error) {
 
 func mergeFindingStringAliases(field string, values ...string) (string, error) {
 	return domain.MergeQodoStringAliases("finding "+field, values...)
+}
+
+// mergeFindingRevisionAliases treats hexadecimal SHA casing as equivalent while
+// preserving the first source value for display and provenance.
+func mergeFindingRevisionAliases(field, preferred, fallback string) (string, error) {
+	if preferred != "" && fallback != "" && !strings.EqualFold(preferred, fallback) {
+		return "", fmt.Errorf("Qodo returned conflicting %s", field)
+	}
+	if preferred != "" {
+		return preferred, nil
+	}
+	return fallback, nil
 }
 
 func mergeFindingIntAliases(field string, values ...int) (int, error) {

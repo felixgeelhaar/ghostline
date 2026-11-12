@@ -153,6 +153,26 @@ func TestMergeQodoReviewDataCombinesDuplicateFindingEvidenceAndRejectsConflicts(
 	}
 }
 
+func TestMergeQodoReviewDataAcceptsCaseInsensitiveDuplicateFindingRevisions(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	first := qodoReviewData{
+		Findings:   []qodoManagedFinding{{ID: "f-1", Title: "Guard retries", GitSHA: sha}},
+		ReviewRuns: []qodoManagedReviewRun{},
+	}
+	second := qodoReviewData{
+		Findings:   []qodoManagedFinding{{ID: "f-1", Title: "Guard retries", GitSHA: strings.ToUpper(sha)}},
+		ReviewRuns: []qodoManagedReviewRun{},
+	}
+
+	merged, err := mergeQodoReviewData(first, second)
+	if err != nil {
+		t.Fatalf("equivalent SHA casing was treated as conflicting: %v", err)
+	}
+	if len(merged.Findings) != 1 || merged.Findings[0].GitSHA != sha {
+		t.Fatalf("merged findings = %+v; want one finding preserving the first source revision", merged.Findings)
+	}
+}
+
 func TestQodoReviewEndpointReturnsExplicitNoSessionState(t *testing.T) {
 	router := newRouterWithQodoAndLimiter(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, qodoSourceFunc(func(context.Context, string, string) (qodoReviewData, error) {
 		return qodoReviewData{Availability: "available", Source: "Qodo Agentic Toolbox", ReviewSession: nil, Findings: []qodoManagedFinding{}, ReviewRuns: []qodoManagedReviewRun{}}, nil
