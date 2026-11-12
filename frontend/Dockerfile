@@ -1,4 +1,4 @@
-FROM node:22.23.5-alpine3.24@sha256:f4081a5ddded4f76ddd2ae8cc37b3d817926871c64b11b8f684be2a588a7792d
+FROM node:22.23.5-alpine3.23@sha256:6868d4695b947ee120bffaa463fecd68cde370d7bfec92955e7c8ac576b4f475
 LABEL maintainer="Ghostline maintainers"
 WORKDIR /app
 # zlib: ALPINE-CVE-2026-4738 is fixed in 1.4-r0, which the pinned base image does not ship yet.
