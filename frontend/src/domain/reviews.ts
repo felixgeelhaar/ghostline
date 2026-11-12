@@ -21,7 +21,7 @@ const QodoReviewSchema = z.object({
   findings: z.array(QodoFindingSchema),
   commitSha: fullSha.optional(),
   commitUrl: z.url({ protocol: /^https$/ }).optional(),
-  createdAt: z.string(),
+  createdAt: z.iso.datetime(),
   url: z.url({ protocol: /^https$/ }),
 })
 
@@ -36,6 +36,33 @@ export type QodoFinding = QodoReview['findings'][number]
 export type RevisionRef = { sha: string; shortSha: string; message: string; author: string; committedAt: string; url: string }
 
 export type LaterRevisionToInspect = RevisionRef & { relationBasis: 'github_pr_commit_order' }
+
+export type LatestQodoReviewCoverage =
+  | { status: 'unavailable'; reason: string }
+  | { status: 'no_review' }
+  | { status: 'head_unknown'; review: QodoReview }
+  | { status: 'unmarked'; review: QodoReview }
+  | { status: 'covers_head'; review: QodoReview }
+  | { status: 'different_revision'; review: QodoReview; reviewedRevisionInPullRequest: boolean }
+
+// Compare the latest published Qodo code-review outcome with the imported PR head.
+// Summary comments are deliberately excluded because they do not represent a code review.
+export function latestQodoReviewCoverage(reviews: QodoReviewSet, headSha?: string, commits: RevisionRef[] = []): LatestQodoReviewCoverage {
+  if (reviews.availability === 'unavailable') return { status: 'unavailable', reason: reviews.reason }
+  const candidates = reviews.items
+    .filter((review) => review.kind === 'findings' || review.kind === 'no_open_findings')
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id - a.id)
+  const review = candidates[0]
+  if (!review) return { status: 'no_review' }
+  if (!review.commitSha) return { status: 'unmarked', review }
+  if (!headSha) return { status: 'head_unknown', review }
+  if (review.commitSha.toLowerCase() === headSha.toLowerCase()) return { status: 'covers_head', review }
+  return {
+    status: 'different_revision',
+    review,
+    reviewedRevisionInPullRequest: commits.some((commit) => commit.sha.toLowerCase() === review.commitSha?.toLowerCase()),
+  }
+}
 
 export function laterRevisionsToInspect(review: Pick<QodoReview, 'commitSha'>, commits: RevisionRef[]): LaterRevisionToInspect[] {
   if (!review.commitSha) return []

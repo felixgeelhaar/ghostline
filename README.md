@@ -6,6 +6,8 @@
 
 Ghostline is a change-centric engineering control room. The first slice imports a public GitHub pull request and shows its commit timeline, with commit timestamps clearly distinguished from push or pull-request event chronology. It also shows the checks GitHub reports for the pull request's head commit — check runs and commit statuses, each with its status and GitHub link — and says explicitly when that commit has no checks or when they could not be loaded. Checks from earlier commits are never shown as validation of the head revision. Checks belong in repository CI, where their results can be tied to the revision they actually scanned; Ghostline does not scan a developer's local filesystem.
 
+Ghostline compares the latest **recognized** Qodo code-review comment with the imported PR head when both have explicit revision markers. It distinguishes matching, different, unmarked, missing, and unavailable review evidence. Unparsed Qodo comments are called out because they may contain a newer review. A revision match is evidence of review coverage only; it does not prove correctness or that a finding was fixed. See the [working review-coverage screenshot](docs/evidence/qodo-review-head-coverage.jpg).
+
 See the [project guide](docs/project-guide.md) for the product specification, architecture overview, and complete setup path. The [threat model](docs/threat-model.md) records current trust boundaries and hosting limitations.
 
 ## Run locally

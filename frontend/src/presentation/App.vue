@@ -4,7 +4,7 @@ import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
 import { checkOutcome, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
-import { findRecurringFindings, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
+import { findRecurringFindings, latestQodoReviewCoverage, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import { buildFindingTrace } from '../domain/trace'
 import { validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import ReviewCard from './ReviewCard.vue'
@@ -29,6 +29,7 @@ const recurringFindings = computed(() => findRecurringFindings(pr.value?.qodoRev
 const visibleCommits = computed(() => pr.value?.commits.filter((commit) => !selectedRevision.value || commit.sha === selectedRevision.value) ?? [])
 const selectedReviews = computed(() => reviewsForRevision(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
 const reviewCount = computed(() => reviewCountSummary(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
+const latestReviewCoverage = computed(() => pr.value ? latestQodoReviewCoverage(pr.value.qodoReviews, pr.value.checks.revisionSha || pr.value.commits.at(-1)?.sha, pr.value.commits) : undefined)
 const activeTrace = computed(() => {
   const finding = recurringFindings.value.find((item) => item.id === selectedTraceId.value)
   return finding ? buildFindingTrace(finding, pr.value?.commits ?? []) : undefined
@@ -131,6 +132,16 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
 
       <section class="qodo-reviews" aria-labelledby="qodo-reviews-title">
         <h3 id="qodo-reviews-title" class="section-title"><span>QODO REVIEW EVIDENCE <span v-if="selectedRevision">· MATCHED REVISION</span></span><span v-if="pr.qodoReviews.availability === 'available'">{{ reviewCount }}</span></h3>
+        <section v-if="latestReviewCoverage" class="review-coverage" aria-labelledby="review-coverage-title">
+          <h4 id="review-coverage-title" class="section-title"><span>LATEST RECOGNIZED CODE REVIEW · PR HEAD</span></h4>
+          <p v-if="pr.qodoReviews.unrecognizedCommentCount > 0" class="checks-note warn" role="status"><strong>Review coverage may be incomplete.</strong> {{ pr.qodoReviews.unrecognizedCommentCount }} Qodo comment{{ pr.qodoReviews.unrecognizedCommentCount === 1 ? '' : 's' }} could not be parsed; one may contain a newer review. This comparison uses recognized review comments only.</p>
+          <p v-if="latestReviewCoverage.status === 'unavailable'" class="checks-note warn" role="status"><strong>Coverage unavailable.</strong> {{ latestReviewCoverage.reason }}</p>
+          <p v-else-if="latestReviewCoverage.status === 'no_review'" class="checks-note" role="status"><strong>No recognized Qodo code review found.</strong> No published findings or no-open-findings comment was recognized.</p>
+          <p v-else-if="latestReviewCoverage.status === 'head_unknown'" class="checks-note warn" role="status"><strong>Cannot compare with the PR head.</strong> The latest review names revision {{ latestReviewCoverage.review.commitSha?.slice(0, 7) }}, but no current head revision is available.</p>
+          <p v-else-if="latestReviewCoverage.status === 'unmarked'" class="checks-note warn" role="status"><strong>Review revision not marked.</strong> The latest recognized Qodo code-review comment does not identify which revision it inspected, so current-head coverage is unknown. <a :href="latestReviewCoverage.review.url" target="_blank" rel="noreferrer">Open source comment ↗</a></p>
+          <p v-else-if="latestReviewCoverage.status === 'covers_head'" class="checks-note" role="status"><strong>Latest recognized Qodo review names the current PR head.</strong> Revision <a v-if="latestReviewCoverage.review.commitUrl" :href="latestReviewCoverage.review.commitUrl" target="_blank" rel="noreferrer">{{ latestReviewCoverage.review.commitSha?.slice(0, 7) }} ↗</a><span v-else>{{ latestReviewCoverage.review.commitSha?.slice(0, 7) }}</span> matches the imported head. This indicates revision coverage only, not correctness or repair. <a :href="latestReviewCoverage.review.url" target="_blank" rel="noreferrer">Open source review ↗</a></p>
+          <p v-else class="checks-note warn" role="status"><strong>Latest recognized Qodo review names a different revision.</strong> Reviewed revision <a v-if="latestReviewCoverage.review.commitUrl" :href="latestReviewCoverage.review.commitUrl" target="_blank" rel="noreferrer">{{ latestReviewCoverage.review.commitSha?.slice(0, 7) }} ↗</a><span v-else>{{ latestReviewCoverage.review.commitSha?.slice(0, 7) }}</span> differs from current PR head {{ pr.checks.revisionShortSha || pr.commits.at(-1)?.shortSha }}. {{ latestReviewCoverage.reviewedRevisionInPullRequest ? 'That revision is present in the imported PR history.' : 'That revision is not present in the imported PR history.' }} <a :href="latestReviewCoverage.review.url" target="_blank" rel="noreferrer">Open source review ↗</a></p>
+        </section>
         <p v-if="pr.qodoReviews.availability === 'unavailable'" class="checks-note warn" role="status"><strong>Qodo review unavailable.</strong> {{ pr.qodoReviews.reason }}</p>
         <p v-else-if="pr.qodoReviews.items.length === 0 && pr.qodoReviews.unrecognizedCommentCount > 0" class="checks-note warn" role="status"><strong>{{ pr.qodoReviews.unrecognizedCommentCount }} Qodo comment{{ pr.qodoReviews.unrecognizedCommentCount === 1 ? '' : 's' }} not parsed as review output.</strong> Ghostline recognized only the published summary and code-review formats. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect the pull request on GitHub ↗</a></p>
         <p v-else-if="pr.qodoReviews.items.length === 0" class="checks-note" role="status"><strong>No recognized Qodo review comment found.</strong> Ghostline found no published Qodo summary or code-review comment in the GitHub issue-comment feed.</p>
