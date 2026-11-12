@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -69,6 +70,7 @@ var (
 	qodoFindingOrdinal      = regexp.MustCompile(`^\s*\d+\.\s*`)
 	qodoFindingHeadingText  = regexp.MustCompile(`^\s*\d+\.`)
 	qodoNonzeroFindingGroup = regexp.MustCompile(`(?i)^view\s+.+\(\s*[1-9]\d*\s*\)$`)
+	qodoFindingGroupCount   = regexp.MustCompile(`(?i)^view\s+.+\(\s*(\d+)\s*\)$`)
 )
 
 // parseQodoReviews extracts Qodo reviews from issue comments. A review's commit
@@ -200,15 +202,24 @@ func isQodoDivider(node *html.Node) bool {
 func qodoFindings(root *html.Node, commentID int64, sourceURL string) ([]qodoFinding, int) {
 	findings := make([]qodoFinding, 0)
 	unparsed := 0
+	expected := 0
 	ordinal := 0
 	var walk func(*html.Node)
 	walk = func(node *html.Node) {
-		if node.Type == html.ElementNode && node.Data == "summary" && qodoFindingHeadingText.MatchString(nodeText(node)) {
-			ordinal++
-			if finding := qodoFindingFromSummary(node, commentID, ordinal, sourceURL); finding.Title != "" {
-				findings = append(findings, finding)
-			} else {
-				unparsed++
+		if node.Type == html.ElementNode && node.Data == "summary" {
+			text := nodeText(node)
+			if group := qodoFindingGroupCount.FindStringSubmatch(text); group != nil {
+				if count, err := strconv.Atoi(group[1]); err == nil {
+					expected += count
+				}
+			}
+			if qodoFindingHeadingText.MatchString(text) {
+				ordinal++
+				if finding := qodoFindingFromSummary(node, commentID, ordinal, sourceURL); finding.Title != "" {
+					findings = append(findings, finding)
+				} else {
+					unparsed++
+				}
 			}
 		}
 		for child := node.FirstChild; child != nil; child = child.NextSibling {
@@ -216,6 +227,9 @@ func qodoFindings(root *html.Node, commentID int64, sourceURL string) ([]qodoFin
 		}
 	}
 	walk(root)
+	if missing := expected - len(findings); missing > unparsed {
+		unparsed = missing
+	}
 	return findings, unparsed
 }
 
