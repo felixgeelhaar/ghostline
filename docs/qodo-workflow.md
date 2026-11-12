@@ -51,6 +51,11 @@ titles, categories, lifecycle labels, severity/action labels, and descriptions
 are extracted from the published review. A comment without a commit marker is
 shown as unmarked context, not assigned to the current PR head.
 
+Structured Qodo findings also retain their own revision marker. Ghostline
+compares that SHA with the imported PR head and labels a mismatch even when
+Qodo omits review-session metadata. Missing session or finding revision data
+remains explicitly unknown.
+
 When a comment marks a revision present in the imported PR, its card can also
 list later commits from GitHub's PR commit list for inspection. They are later
 revisions only; their position does not show that they are repair attempts or

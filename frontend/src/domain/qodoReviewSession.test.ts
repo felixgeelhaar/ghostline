@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isReviewSessionCurrent, QodoStructuredReviewSchema, reviewRunForFinding, reviewSessionFreshness, reviewAttentionSummary } from './qodoReviewSession'
+import { findingRevisionFreshness, isReviewSessionCurrent, QodoStructuredReviewSchema, reviewRunForFinding, reviewSessionFreshness, reviewAttentionSummary } from './qodoReviewSession'
 
 const shaA = 'a'.repeat(40)
 const shaB = 'b'.repeat(40)
@@ -62,6 +62,18 @@ describe('structured Qodo review evidence', () => {
 
     expect(reviewSessionFreshness(review, shaA)).toBe('unknown')
     expect(isReviewSessionCurrent(review, shaA)).toBe(false)
+  })
+
+  it('compares each finding revision to the imported head without requiring session metadata', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo', reviewSession: null,
+      findings: [{ id: 'finding-1', title: 'Guard retries', gitSha: shaA }], reviewRuns: [],
+    })
+
+    expect(findingRevisionFreshness(review.findings[0]!, shaB)).toBe('stale')
+    expect(findingRevisionFreshness(review.findings[0]!, shaA)).toBe('current')
+    expect(findingRevisionFreshness(review.findings[0]!, '')).toBe('unknown')
+    expect(findingRevisionFreshness({ id: 'finding-2', title: 'Unknown revision' }, shaB)).toBe('unknown')
   })
 
   it('reports unknown freshness when the imported head revision is missing', () => {

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ghostline · Qodo stale review attention</title>
+    <title>Ghostline · Qodo finding revision attention</title>
     <link rel="stylesheet" href="/src/presentation/style.css" />
     <style>
       body { min-height: 100vh; padding: 28px; background: #090b16; }
@@ -26,7 +26,7 @@
         review: {
           availability: 'available',
           source: 'Qodo Agentic Toolbox · get-pr-review-findings',
-          reviewSession: { status: 'running', commitSha: currentSha },
+          reviewSession: null,
           findings: [
             { id: 'finding-demo-1', title: 'Validate the idempotency key before replay', status: 'open', gitSha: reviewedSha, category: 'Correctness', actionLevel: 'action_required', filePath: 'backend/payments.go', startLine: 84 },
             { id: 'finding-demo-2', title: 'Bound the retry window for duplicate requests', status: 'open', gitSha: reviewedSha, category: 'Reliability', actionLevel: 'action_required', filePath: 'backend/payments.go', startLine: 121 },

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { reviewAttentionSummary, reviewSessionFreshness, reviewRunForFinding, type QodoStructuredReview } from '../domain/qodoReviewSession'
+import { findingRevisionFreshness, reviewAttentionSummary, reviewSessionFreshness, reviewRunForFinding, type QodoStructuredReview } from '../domain/qodoReviewSession'
 
 const props = defineProps<{ review: QodoStructuredReview; pullRequestUrl: string; headSha: string }>()
 const freshness = computed(() => reviewSessionFreshness(props.review, props.headSha))
@@ -53,6 +53,7 @@ function citationURL(source?: string) {
           <p class="finding-labels">QODO FINDING {{ finding.id }} · REPORTED {{ finding.status || 'NO STATUS' }}<span v-if="finding.category"> · {{ finding.category }}</span><span v-if="finding.attributionStatus"> · {{ finding.attributionStatus }}</span></p>
           <p v-if="finding.description" class="finding-description">{{ finding.description }}</p>
           <p v-if="finding.gitSha" class="review-revision">RAISED ON <a :href="revisionURL(finding.gitSha)" target="_blank" rel="noreferrer">{{ finding.gitSha.slice(0, 7) }} ↗</a></p>
+          <p v-if="finding.gitSha && findingRevisionFreshness(finding, headSha) === 'stale'" class="checks-note warn" role="status"><strong>Finding revision does not match the imported PR head.</strong> Qodo attached this finding to {{ finding.gitSha.slice(0, 7) }}, while Ghostline imported {{ headSha.slice(0, 7) }}.</p>
           <p v-if="finding.filePath" class="finding-location">{{ finding.filePath }}<span v-if="finding.startLine">:{{ finding.startLine }}<span v-if="finding.endLine && finding.endLine !== finding.startLine">–{{ finding.endLine }}</span></span><span v-if="finding.side"> · {{ finding.side }}</span></p>
           <section v-if="finding.evidence" class="qodo-finding-evidence" aria-label="Qodo citation evidence">
             <p v-if="finding.evidence.explanation">QODO EVIDENCE · {{ finding.evidence.explanation }}</p>

@@ -150,6 +150,23 @@ func TestQodoReviewDataRejectsNullFindingOrRunArrays(t *testing.T) {
 	}
 }
 
+func TestQodoReviewDataRejectsInvalidFindingLineNumbers(t *testing.T) {
+	for _, location := range []string{
+		`"start_line":-1`,
+		`"end_line":-2`,
+		`"start_line":12,"end_line":11`,
+	} {
+		payload := `{"review_session":null,"findings":[{"id":"f-1","title":"Bad location","location":{"file_path":"backend/main.go",` + location + `}}],"review_runs":[]}`
+		var data qodoReviewData
+		if err := json.Unmarshal([]byte(payload), &data); err != nil {
+			t.Fatalf("unmarshal unexpectedly failed for %s: %v", location, err)
+		}
+		if err := validateQodoReviewData(data); err == nil {
+			t.Errorf("invalid Qodo finding location was accepted: %s", location)
+		}
+	}
+}
+
 func TestQodoReviewEndpointLogsFailureWithoutLeakingCredential(t *testing.T) {
 	var logs strings.Builder
 	logger := slog.New(slog.NewTextHandler(&logs, nil))

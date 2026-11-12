@@ -475,6 +475,12 @@ func validateQodoReviewData(data qodoReviewData) error {
 		if finding.GitSHA != "" && !fullSHA.MatchString(strings.ToLower(finding.GitSHA)) {
 			return errors.New("Qodo finding contained an invalid commit SHA")
 		}
+		if finding.StartLine < 0 || finding.EndLine < 0 {
+			return errors.New("Qodo finding contained a negative source line")
+		}
+		if finding.StartLine > 0 && finding.EndLine > 0 && finding.EndLine < finding.StartLine {
+			return errors.New("Qodo finding contained an end line before its start line")
+		}
 	}
 	for _, run := range data.ReviewRuns {
 		if run.ID == "" || strings.TrimSpace(run.Status) == "" {

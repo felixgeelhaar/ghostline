@@ -58,6 +58,11 @@ export const QodoStructuredReviewSchema = z.object({
 export type QodoStructuredReview = z.infer<typeof QodoStructuredReviewSchema>
 export type QodoManagedFinding = z.infer<typeof QodoManagedFindingSchema>
 
+export function findingRevisionFreshness(finding: QodoManagedFinding, headSha: string): 'current' | 'stale' | 'unknown' {
+  if (!fullSha.safeParse(headSha).success || !finding.gitSha) return 'unknown'
+  return finding.gitSha.toLowerCase() === headSha.toLowerCase() ? 'current' : 'stale'
+}
+
 export type ReviewAttentionSummary = {
   kind: 'unknown' | 'stale' | 'in-progress' | 'incomplete' | 'attention' | 'clear'
   title: string
