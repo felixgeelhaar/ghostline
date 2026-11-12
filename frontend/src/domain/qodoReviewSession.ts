@@ -82,6 +82,33 @@ export function isReviewSessionCurrent(review: QodoStructuredReview, headSha: st
   return reviewSessionFreshness(review, headSha) === 'current'
 }
 
+function freshnessFindingDetail(openFindingCount: number, unclassifiedFindingCount: number): string {
+  const details: string[] = []
+  if (openFindingCount > 0) {
+    details.push(`Qodo reports ${openFindingCount} finding${openFindingCount === 1 ? '' : 's'} as open`)
+  }
+  if (unclassifiedFindingCount > 0) {
+    details.push(`${unclassifiedFindingCount} finding${unclassifiedFindingCount === 1 ? ' has' : 's have'} no recognized status`)
+  }
+  return details.length > 0 ? ` ${details.join('; ')}.` : ''
+}
+
+function freshnessNextAction(
+  openFindingCount: number,
+  unclassifiedFindingCount: number,
+  nextStep: string,
+): string {
+  const findings: string[] = []
+  if (openFindingCount > 0) {
+    findings.push(`${openFindingCount} Qodo-reported open finding${openFindingCount === 1 ? '' : 's'}`)
+  }
+  if (unclassifiedFindingCount > 0) {
+    findings.push(`${unclassifiedFindingCount} finding${unclassifiedFindingCount === 1 ? '' : 's'} with no recognized status`)
+  }
+  if (findings.length === 0) return nextStep
+  return `Inspect the ${findings.join(' and ')} below, then ${nextStep[0]!.toLowerCase()}${nextStep.slice(1)}`
+}
+
 export function reviewAttentionSummary(review: QodoStructuredReview, headSha: string): ReviewAttentionSummary {
   const statuses = review.findings.map((finding) => finding.status?.trim().toLowerCase() ?? '')
   const openFindingCount = statuses.filter((status) => status === 'open').length
@@ -89,6 +116,7 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
   const implementedFindingCount = statuses.filter((status) => status === 'implemented').length
   const dismissedFindingCount = statuses.filter((status) => status === 'dismissed').length
   const unrecognizedFindingCount = statuses.filter((status) => !['', 'open', 'implemented', 'dismissed'].includes(status)).length
+  const unclassifiedFindingCount = unspecifiedFindingCount + unrecognizedFindingCount
   const counts = {
     findingCount: review.findings.length,
     openFindingCount,
@@ -103,8 +131,8 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
       ...counts,
       kind: 'unknown',
       title: 'Review revision unconfirmed',
-      detail: `Qodo returned no review session metadata. ${review.findings.length ? 'Findings remain available below, but their session freshness cannot be confirmed.' : 'No session freshness or finding status can be confirmed.'}`,
-      nextAction: 'Inspect the original Qodo source and confirm which revision it reviewed.',
+      detail: `Qodo returned no review session metadata. ${review.findings.length ? 'Findings remain available below, but their session freshness cannot be confirmed.' : 'No session freshness or finding status can be confirmed.'}${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
+      nextAction: freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'inspect the original Qodo source and confirm which revision it reviewed.'),
     }
   }
 
@@ -116,8 +144,8 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
       ...counts,
       kind: 'stale',
       title: 'Review needs a refresh',
-      detail: `Qodo reviewed ${reviewedShortSha}, while the imported PR head is ${headShortSha}. The findings do not describe the current head.`,
-      nextAction: 'Load a Qodo review for the current PR head before relying on these findings.',
+      detail: `Qodo reviewed ${reviewedShortSha}, while the imported PR head is ${headShortSha}. The findings do not describe the current head.${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
+      nextAction: freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'load a Qodo review for the current PR head before relying on these findings.'),
     }
   }
   if (freshness === 'unknown') {
@@ -125,8 +153,8 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
       ...counts,
       kind: 'unknown',
       title: 'Review revision unconfirmed',
-      detail: 'Ghostline cannot compare Qodo’s reviewed revision with a known pull-request head. Findings remain source data, but their freshness is unknown.',
-      nextAction: 'Inspect the original Qodo source and confirm which revision it reviewed.',
+      detail: `Ghostline cannot compare Qodo’s reviewed revision with a known pull-request head. Findings remain source data, but their freshness is unknown.${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
+      nextAction: freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'inspect the original Qodo source and confirm which revision it reviewed.'),
     }
   }
 

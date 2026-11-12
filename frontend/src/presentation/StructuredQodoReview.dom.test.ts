@@ -73,6 +73,31 @@ describe('structured Qodo review presentation', () => {
     expect(host.textContent).toContain('QODO FINDING finding-open · REPORTED open')
   })
 
+  it('keeps open finding urgency visible when the review is stale', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: { status: 'completed', commitSha: reviewedSha },
+        findings: [
+          { id: 'finding-open-1', title: 'Validate replay key', status: 'open', gitSha: reviewedSha },
+          { id: 'finding-open-2', title: 'Bound retry count', status: 'open', gitSha: reviewedSha },
+        ],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    const summary = host.querySelector('.qodo-attention')
+    expect(summary?.textContent).toContain('Qodo reports 2 findings as open')
+    expect(summary?.textContent).toContain('Inspect the 2 Qodo-reported open findings below')
+    expect(summary?.textContent).toContain('current PR head')
+    expect(host.textContent).toContain('Review evidence is stale.')
+  })
+
   it('does not call a session stale when Qodo omitted its reviewed revision', async () => {
     host = document.createElement('div')
     document.body.append(host)

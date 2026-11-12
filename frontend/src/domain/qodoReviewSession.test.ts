@@ -89,6 +89,23 @@ describe('structured Qodo review evidence', () => {
     expect(reviewAttentionSummary(review, shaB).detail).toContain(shaB.slice(0, 7))
   })
 
+  it('keeps Qodo-reported open findings visible when the review revision is stale', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: [
+        { id: 'finding-1', title: 'Validate idempotency', status: 'open' },
+        { id: 'finding-2', title: 'Bound replay window', status: 'open' },
+      ], reviewRuns: [],
+    })
+
+    const summary = reviewAttentionSummary(review, shaB)
+    expect(summary.kind).toBe('stale')
+    expect(summary.detail).toContain('Qodo reports 2 findings as open')
+    expect(summary.nextAction).toContain('Inspect the 2 Qodo-reported open findings')
+    expect(summary.nextAction).toContain('current PR head')
+  })
+
   it('asks to confirm freshness when either revision is unavailable', () => {
     const review = QodoStructuredReviewSchema.parse({
       availability: 'available', source: 'Qodo',
@@ -97,6 +114,21 @@ describe('structured Qodo review evidence', () => {
 
     expect(reviewAttentionSummary(review, '').kind).toBe('unknown')
     expect(reviewAttentionSummary(review, '').nextAction).toContain('confirm')
+  })
+
+  it('keeps open findings actionable when the Qodo reviewed revision is unknown', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed' },
+      findings: [{ id: 'finding-1', title: 'Validate idempotency', status: 'open' }],
+      reviewRuns: [],
+    })
+
+    const summary = reviewAttentionSummary(review, shaA)
+    expect(summary.kind).toBe('unknown')
+    expect(summary.detail).toContain('Qodo reports 1 finding as open')
+    expect(summary.nextAction).toContain('Inspect the 1 Qodo-reported open finding')
+    expect(summary.nextAction).toContain('confirm')
   })
 
   it('reports the active Qodo session before recommending action on findings', () => {
