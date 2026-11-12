@@ -65,6 +65,28 @@ afterEach(() => {
 })
 
 describe('structured Qodo review request binding', () => {
+  it('refuses to send a personal Qodo key from an insecure context', async () => {
+    vi.stubGlobal('isSecureContext', false)
+    vi.mocked(importPullRequest).mockResolvedValue(makePR(7))
+    await mount()
+
+    await setValue('#pr-url', 'https://github.com/acme/app/pull/7')
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await settle()
+
+    const keyInput = host!.querySelector<HTMLInputElement>('#qodo-api-key')!
+    expect(keyInput.disabled).toBe(true)
+    expect(host?.textContent).toContain('Secure connection required.')
+
+    // Simulate a forged form submission to exercise the handler's second guard.
+    keyInput.disabled = false
+    await setValue('#qodo-api-key', 'sensitive-test-key')
+    host!.querySelector<HTMLFormElement>('.qodo-connect')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await settle()
+
+    expect(fetchQodoReviewSession).not.toHaveBeenCalled()
+  })
+
   it('keeps the latest clicked finding result and binds requests to the imported PR, not the edited URL field', async () => {
     vi.stubGlobal('isSecureContext', true)
     vi.mocked(importPullRequest).mockResolvedValue(makePR(7))

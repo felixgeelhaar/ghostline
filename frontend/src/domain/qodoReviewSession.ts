@@ -39,6 +39,7 @@ export const QodoManagedFindingSchema = z.object({
   startLine: z.number().int().positive().optional(),
   endLine: z.number().int().positive().optional(),
   side: z.string().optional(),
+  codeSnippet: z.string().optional(),
 })
 
 export const QodoReviewSessionSchema = z.object({
@@ -53,10 +54,50 @@ export const QodoStructuredReviewSchema = z.object({
   reviewSession: QodoReviewSessionSchema.nullable(),
   findings: z.array(QodoManagedFindingSchema),
   reviewRuns: z.array(QodoReviewRunSchema),
+  warnings: z.array(z.string().min(1)).optional(),
 })
 
 export type QodoStructuredReview = z.infer<typeof QodoStructuredReviewSchema>
 export type QodoManagedFinding = z.infer<typeof QodoManagedFindingSchema>
+
+function githubPullRequestRepository(pullRequestUrl: string): { owner: string; repo: string } | undefined {
+  try {
+    const pullRequest = new URL(pullRequestUrl)
+    if (pullRequest.protocol !== 'https:' || pullRequest.hostname !== 'github.com' || pullRequest.port || pullRequest.username || pullRequest.password || pullRequest.search || pullRequest.hash) return undefined
+    const encodedSegments = pullRequest.pathname.replace(/\/+$/, '').slice(1).split('/')
+    if (encodedSegments.length !== 4 || /%(?:2f|5c)/i.test(pullRequest.pathname)) return undefined
+    const [encodedOwner, encodedRepo, pullSegment, number] = encodedSegments
+    const owner = decodeURIComponent(encodedOwner ?? '')
+    const repo = decodeURIComponent(encodedRepo ?? '')
+    if (!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo) || pullSegment?.toLowerCase() !== 'pull' || !/^[1-9]\d*$/.test(number ?? '')) return undefined
+    return { owner, repo }
+  } catch {
+    return undefined
+  }
+}
+
+export function qodoRevisionURL(pullRequestUrl: string, sha?: string): string | undefined {
+  if (!sha || !fullSha.safeParse(sha).success) return undefined
+  const repository = githubPullRequestRepository(pullRequestUrl)
+  if (!repository) return undefined
+  return `https://github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/commit/${sha}`
+}
+
+export function qodoCitationURL(pullRequestUrl: string, source?: string): string | undefined {
+  if (!source) return undefined
+  const repository = githubPullRequestRepository(pullRequestUrl)
+  if (!repository) return undefined
+  try {
+    const candidate = new URL(source)
+    if (candidate.protocol !== 'https:' || candidate.hostname !== 'github.com' || candidate.port || candidate.username || candidate.password || candidate.search) return undefined
+    const segments = candidate.pathname.replace(/\/+$/, '').slice(1).split('/').map((segment) => decodeURIComponent(segment))
+    if (segments.length < 3 || /%(?:2f|5c)/i.test(candidate.pathname)) return undefined
+    if (segments[0]?.toLowerCase() !== repository.owner.toLowerCase() || segments[1]?.toLowerCase() !== repository.repo.toLowerCase()) return undefined
+    return candidate.href
+  } catch {
+    return undefined
+  }
+}
 
 export function findingRevisionFreshness(finding: QodoManagedFinding, headSha: string): 'current' | 'stale' | 'unknown' {
   if (!fullSha.safeParse(headSha).success || !finding.gitSha) return 'unknown'
@@ -72,6 +113,7 @@ export type ReviewAttentionSummary = {
   openFindingCount: number
   unspecifiedFindingCount: number
   unrecognizedFindingCount: number
+  currentFindingCount: number
   staleFindingCount: number
   unknownFindingRevisionCount: number
   implementedFindingCount: number
@@ -105,6 +147,11 @@ function staleFindingDetail(staleFindingCount: number, review: QodoStructuredRev
   if (staleFindingCount === 0) return ''
   const staleFinding = review.findings.find((finding) => findingRevisionFreshness(finding, headSha) === 'stale')!
   return ` For example, ${staleFinding.id} references ${staleFinding.gitSha!.slice(0, 7)}, while the imported PR head is ${headSha.slice(0, 7)}.`
+}
+
+function currentFindingDetail(currentFindingCount: number): string {
+  if (currentFindingCount === 0) return ''
+  return ` ${currentFindingCount} finding${currentFindingCount === 1 ? ' has' : 's have'} a revision marker matching the imported PR head.`
 }
 
 function freshnessFindingDetail(openFindingCount: number, unclassifiedFindingCount: number): string {
@@ -146,16 +193,28 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
   const unrecognizedFindingCount = statuses.filter((status) => status !== '' && !knownStatuses.has(status)).length
   const unclassifiedFindingCount = unspecifiedFindingCount + unrecognizedFindingCount
   const staleFindingCount = review.findings.filter((finding) => findingRevisionFreshness(finding, headSha) === 'stale').length
+  const currentFindingCount = review.findings.filter((finding) => findingRevisionFreshness(finding, headSha) === 'current').length
   const unknownFindingRevisionCount = review.findings.filter((finding) => !finding.gitSha).length
   const counts = {
     findingCount: review.findings.length,
     openFindingCount,
     unspecifiedFindingCount,
     unrecognizedFindingCount,
+    currentFindingCount,
     implementedFindingCount,
     dismissedFindingCount,
     staleFindingCount,
     unknownFindingRevisionCount,
+  }
+
+  if (review.warnings?.length) {
+    return {
+      kind: 'incomplete',
+      title: 'Qodo response may be incomplete',
+      detail: review.warnings.join(' '),
+      nextAction: 'Refresh the Qodo review before relying on this result.',
+      ...counts,
+    }
   }
 
   if (!review.reviewSession) {
@@ -163,12 +222,14 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
       ...counts,
       kind: 'unknown',
       title: 'Review revision unconfirmed',
-      detail: `Qodo returned no review session metadata. ${review.findings.length ? 'Findings remain available below, but their session freshness cannot be confirmed.' : 'No session freshness or finding status can be confirmed.'}${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
+      detail: `Qodo returned no review session metadata. ${review.findings.length ? 'Findings remain available below, but their session freshness cannot be confirmed.' : 'No session freshness or finding status can be confirmed.'}${staleFindingDetail(staleFindingCount, review, headSha)}${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
       nextAction: freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'inspect the original Qodo source and confirm which revision it reviewed.'),
     }
   }
 
   const freshness = reviewSessionFreshness(review, headSha)
+  const sessionStatus = review.reviewSession.status.trim().toLowerCase()
+  const sessionStillRunning = sessionStatus === 'started' || sessionStatus === 'running'
   if (freshness === 'stale') {
     const reviewedShortSha = review.reviewSession.commitSha?.slice(0, 7) ?? 'unknown'
     const headShortSha = fullSha.safeParse(headSha).success ? headSha.slice(0, 7) : 'unknown'
@@ -176,16 +237,29 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
       ...counts,
       kind: 'stale',
       title: 'Review needs a refresh',
-      detail: `Qodo reviewed ${reviewedShortSha}, while the imported PR head is ${headShortSha}. The findings do not describe the current head.${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
-      nextAction: freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'load a Qodo review for the current PR head before relying on these findings.'),
+      detail: `Qodo’s review session inspected ${reviewedShortSha}, while the imported PR head is ${headShortSha}. Session-level freshness is stale; inspect each finding’s own revision marker to determine whether it matches the current head.${currentFindingDetail(currentFindingCount)}${staleFindingDetail(staleFindingCount, review, headSha)}${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}${sessionStillRunning ? ' The active Qodo review is still running; wait for it to finish before relying on its findings or starting another review.' : ''}`,
+      nextAction: sessionStillRunning
+        ? 'Wait for the current Qodo review to finish, then load a fresh review for the imported PR head before relying on its findings.'
+        : currentFindingCount > 0
+          ? `Inspect the ${currentFindingCount} finding${currentFindingCount === 1 ? '' : 's'} whose revision matches the imported head and follow the Qodo source links. Load a fresh Qodo review before relying on session completion.`
+          : freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'load a Qodo review for the current PR head before relying on session completion.'),
     }
   }
   if (freshness === 'unknown') {
+    if (sessionStatus === 'started' || sessionStatus === 'running') {
+      return {
+        ...counts,
+        kind: 'in-progress',
+        title: 'Qodo review is still running',
+        detail: `Qodo reports session status “${review.reviewSession.status}” but did not provide a revision to compare with the imported PR head. Current findings are preliminary.${staleFindingDetail(staleFindingCount, review, headSha)}${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
+        nextAction: 'Wait for Qodo to finish, then confirm its revision and inspect the findings before acting.',
+      }
+    }
     return {
       ...counts,
       kind: 'unknown',
       title: 'Review revision unconfirmed',
-      detail: `Ghostline cannot compare Qodo’s reviewed revision with a known pull-request head. Findings remain source data, but their freshness is unknown.${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
+      detail: `Ghostline cannot compare Qodo’s reviewed revision with a known pull-request head. Findings remain source data, but their freshness is unknown.${staleFindingDetail(staleFindingCount, review, headSha)}${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
       nextAction: freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'inspect the original Qodo source and confirm which revision it reviewed.'),
     }
   }
@@ -195,12 +269,13 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
       ...counts,
       kind: 'attention',
       title: 'Finding revision needs review',
-      detail: `${staleFindingCount} Qodo finding${staleFindingCount === 1 ? ' references' : 's reference'} a revision different from the imported PR head.${staleFindingDetail(staleFindingCount, review, headSha)}${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)} Its Qodo status may reflect later attribution; inspect the linked review run before relying on that status for the current head.`,
-      nextAction: freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'confirm its Qodo status against the current PR head using the finding source and linked run evidence.'),
+      detail: `${staleFindingCount} Qodo finding${staleFindingCount === 1 ? ' references' : 's reference'} a revision different from the imported PR head.${staleFindingDetail(staleFindingCount, review, headSha)}${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)} Its Qodo status may reflect later attribution; inspect the linked review run before relying on that status for the current head.${sessionStillRunning ? ' The Qodo review session is still running, so its findings may change.' : ''}`,
+      nextAction: sessionStillRunning
+        ? 'Wait for the Qodo session to complete, then confirm the finding status against the current PR head using its source and linked run evidence.'
+        : freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'confirm its Qodo status against the current PR head using the finding source and linked run evidence.'),
     }
   }
 
-  const sessionStatus = review.reviewSession.status.trim().toLowerCase()
   if (sessionStatus === 'started' || sessionStatus === 'running') {
     return {
       ...counts,
@@ -222,12 +297,17 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
 
   if (openFindingCount > 0) {
     const uncertainty = unclassifiedFindingCount > 0 ? ` ${unclassifiedFindingCount} finding${unclassifiedFindingCount === 1 ? ' has' : 's have'} no recognized status.` : ''
+    const revisionUncertainty = unknownFindingRevisionCount > 0
+      ? ` ${unknownFindingRevisionCount} finding${unknownFindingRevisionCount === 1 ? ' has' : 's have'} no finding-specific revision, so ${unknownFindingRevisionCount === 1 ? 'its Qodo status cannot' : 'their Qodo statuses cannot'} be tied to the imported PR head.`
+      : ''
     return {
       ...counts,
       kind: 'attention',
       title: `${openFindingCount} finding${openFindingCount === 1 ? '' : 's'} reported open`,
-      detail: `Qodo reports ${openFindingCount} finding${openFindingCount === 1 ? '' : 's'} as open.${uncertainty} Qodo’s implemented or dismissed statuses do not independently verify correctness.`,
-      nextAction: 'Inspect the open findings below and follow their source and revision links.',
+      detail: `Qodo reports ${openFindingCount} finding${openFindingCount === 1 ? '' : 's'} as open.${uncertainty}${revisionUncertainty} Qodo’s implemented or dismissed statuses do not independently verify correctness.`,
+      nextAction: unknownFindingRevisionCount > 0
+        ? 'Inspect the open findings below, then confirm missing finding-specific revisions against their Qodo sources and linked runs before relying on reported status.'
+        : 'Inspect the open findings below and follow their source and revision links.',
     }
   }
 

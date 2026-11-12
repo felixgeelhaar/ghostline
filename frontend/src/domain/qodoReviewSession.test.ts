@@ -1,10 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { findingRevisionFreshness, isReviewSessionCurrent, QodoStructuredReviewSchema, reviewRunForFinding, reviewSessionFreshness, reviewAttentionSummary } from './qodoReviewSession'
+import { findingRevisionFreshness, isReviewSessionCurrent, qodoCitationURL, qodoRevisionURL, QodoStructuredReviewSchema, reviewRunForFinding, reviewSessionFreshness, reviewAttentionSummary } from './qodoReviewSession'
 
 const shaA = 'a'.repeat(40)
 const shaB = 'b'.repeat(40)
 
 describe('structured Qodo review evidence', () => {
+  it('only links secure Qodo citations and revisions from validated public GitHub PR URLs', () => {
+    const pullRequest = 'https://github.com/acme/payments/pull/42'
+    expect(qodoCitationURL(pullRequest, 'https://github.com/acme/payments/blob/main/review.md#finding')).toBe('https://github.com/acme/payments/blob/main/review.md#finding')
+    expect(qodoCitationURL(pullRequest, 'https://github.com/other/repo/blob/main/review.md')).toBeUndefined()
+    expect(qodoCitationURL(pullRequest, 'https://docs.example.test/review#finding')).toBeUndefined()
+    expect(qodoCitationURL(pullRequest, 'http://github.com/acme/payments/review')).toBeUndefined()
+    expect(qodoCitationURL(pullRequest, 'https://user:secret@github.com/acme/payments/review')).toBeUndefined()
+    expect(qodoRevisionURL('https://github.com/acme/payments/pull/42', shaA)).toBe(`https://github.com/acme/payments/commit/${shaA}`)
+    expect(qodoRevisionURL('https://github.com.evil.test/acme/payments/pull/42', shaA)).toBeUndefined()
+    expect(qodoRevisionURL('https://github.com/acme/payments/pull/42?redirect=https://evil.test', shaA)).toBeUndefined()
+    expect(qodoRevisionURL('https://github.com/acme/payments/pull/42', 'not-a-sha')).toBeUndefined()
+  })
+
   it('validates source data and keeps the session revision distinct from the current head', () => {
     const review = QodoStructuredReviewSchema.parse({
       availability: 'available',
@@ -156,6 +169,21 @@ describe('structured Qodo review evidence', () => {
     expect(reviewAttentionSummary(review, shaA).nextAction.toLowerCase()).toContain('wait')
   })
 
+  it('waits for an active review before acting when its revision is unknown', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'running' },
+      findings: [{ id: 'finding-1', title: 'Check idempotency', status: 'open' }],
+      reviewRuns: [],
+    })
+
+    const summary = reviewAttentionSummary(review, shaA)
+    expect(summary).toMatchObject({ kind: 'in-progress', title: 'Qodo review is still running', openFindingCount: 1 })
+    expect(summary.detail).toContain('did not provide a revision')
+    expect(summary.nextAction.toLowerCase()).toContain('wait')
+    expect(summary.nextAction).not.toContain('inspect the original Qodo source')
+  })
+
   it('keeps open and unclassified findings visible during running and incomplete sessions', () => {
     for (const status of ['running', 'failed']) {
       const review = QodoStructuredReviewSchema.parse({
@@ -208,6 +236,21 @@ describe('structured Qodo review evidence', () => {
       title: '1 finding reported open',
     })
     expect(reviewAttentionSummary(review, shaA).detail).toContain('Qodo reports 1 finding as open')
+  })
+
+  it('surfaces missing finding revision evidence alongside open status', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: [{ id: 'finding-open-unanchored', title: 'Validate retry key', status: 'open', reviewRunId: 'run-1' }],
+      reviewRuns: [{ id: 'run-1', status: 'completed', commitSha: shaA }],
+    })
+
+    const summary = reviewAttentionSummary(review, shaA)
+    expect(summary).toMatchObject({ kind: 'attention', openFindingCount: 1, unknownFindingRevisionCount: 1 })
+    expect(summary.detail).toContain('no finding-specific revision')
+    expect(summary.detail).toContain('cannot be tied to the imported PR head')
+    expect(summary.nextAction).toContain('confirm missing finding-specific revisions against their Qodo sources and linked runs')
   })
 
   it('maps Qodo open and closed attribution states without treating them as unknown', () => {
@@ -300,7 +343,64 @@ describe('structured Qodo review evidence', () => {
       reviewRuns: [],
     })
 
-    expect(reviewAttentionSummary(review, shaB)).toMatchObject({ kind: 'attention', staleFindingCount: 1 })
+    const summary = reviewAttentionSummary(review, shaB)
+    expect(summary).toMatchObject({ kind: 'attention', staleFindingCount: 1 })
+    expect(summary.nextAction.toLowerCase()).toContain('wait for the qodo session to complete')
+  })
+
+  it('waits for a running stale-revision Qodo session before suggesting a refresh', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'running', commitSha: shaA },
+      findings: [{ id: 'finding-1', title: 'Guard retries', status: 'open', gitSha: shaA }],
+      reviewRuns: [],
+    })
+
+    const summary = reviewAttentionSummary(review, shaB)
+    expect(summary.kind).toBe('stale')
+    expect(summary.nextAction.toLowerCase()).toContain('wait for the current qodo review to finish')
+  })
+
+  it('does not call a finding stale when its own revision matches a stale session head', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: [{ id: 'finding-current', title: 'Guard retries', status: 'open', gitSha: shaB }],
+      reviewRuns: [],
+    })
+
+    const summary = reviewAttentionSummary(review, shaB)
+    expect(summary.kind).toBe('stale')
+    expect(summary.staleFindingCount).toBe(0)
+    expect(summary.currentFindingCount).toBe(1)
+    expect(summary.detail).toContain('Session-level freshness is stale')
+    expect(summary.detail).toContain('1 finding has a revision marker matching the imported PR head')
+    expect(summary.nextAction).toContain('revision matches the imported head')
+    expect(summary.detail).not.toContain('findings do not describe the current head')
+  })
+
+  it('keeps stale finding revisions visible while an unknown-revision session is running', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'running' },
+      findings: [{ id: 'finding-stale', title: 'Guard retries', status: 'open', gitSha: shaB }],
+      reviewRuns: [],
+    })
+
+    const summary = reviewAttentionSummary(review, shaA)
+    expect(summary.kind).toBe('in-progress')
+    expect(summary.staleFindingCount).toBe(1)
+    expect(summary.detail).toContain('finding-stale references')
+    expect(summary.detail).toContain(shaB.slice(0, 7))
+  })
+
+  it('preserves Qodo code snippets as finding source context', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo', reviewSession: null,
+      findings: [{ id: 'finding-code', title: 'Guard replay', codeSnippet: 'if replayed {\n  return nil\n}' }], reviewRuns: [],
+    })
+
+    expect(review.findings[0]?.codeSnippet).toBe('if replayed {\n  return nil\n}')
   })
 
   it('does not describe a Qodo implemented status as independently verified correctness', () => {
@@ -326,5 +426,30 @@ describe('structured Qodo review evidence', () => {
       kind: 'unknown', openFindingCount: 1, title: 'Review revision unconfirmed',
     })
     expect(reviewAttentionSummary(review, shaA).detail.toLowerCase()).toContain('findings remain available below')
+  })
+
+  it('surfaces a finding revision mismatch when Qodo omits session metadata', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo', reviewSession: null,
+      findings: [{ id: 'finding-old', title: 'Inspect retry handling', status: 'open', gitSha: shaB }], reviewRuns: [],
+    })
+
+    const summary = reviewAttentionSummary(review, shaA)
+    expect(summary.staleFindingCount).toBe(1)
+    expect(summary.detail).toContain(`finding-old references ${shaB.slice(0, 7)}`)
+    expect(summary.detail).toContain(shaA.slice(0, 7))
+  })
+
+  it('surfaces a finding revision mismatch when Qodo omits the session revision', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed' },
+      findings: [{ id: 'finding-old', title: 'Inspect retry handling', status: 'open', gitSha: shaB }], reviewRuns: [],
+    })
+
+    const summary = reviewAttentionSummary(review, shaA)
+    expect(summary.staleFindingCount).toBe(1)
+    expect(summary.detail).toContain(`finding-old references ${shaB.slice(0, 7)}`)
+    expect(summary.detail).toContain(shaA.slice(0, 7))
   })
 })

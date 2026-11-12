@@ -34,4 +34,23 @@ describe('fetchQodoReviewSession', () => {
     expect((error as Error).message).toBe('Qodo workspace access is unavailable.')
     expect((error as Error).message).not.toContain(key)
   })
+
+  it.each([
+    ['empty proxy response', new Response('', { status: 502 })],
+    ['non-JSON proxy response', new Response('<html>gateway error</html>', { status: 502, headers: { 'Content-Type': 'text/html' } })],
+  ])('uses the fallback for an %s', async (_label, response) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
+
+    const error = await fetchQodoReviewSession(url, key).catch((reason: unknown) => reason)
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe('Unable to load structured Qodo review data.')
+  })
+
+  it('preserves rate-limit guidance when the proxy error body is empty', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 429, headers: { 'Retry-After': '12' } })))
+
+    const error = await fetchQodoReviewSession(url, key).catch((reason: unknown) => reason)
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toBe('Too many requests. Try again in 12 seconds.')
+  })
 })

@@ -118,7 +118,15 @@ A completed review is not shown as clear when a finding lacks its own revision,
 even if the linked review run has a SHA. The run SHA identifies that run; it
 does not establish which revision Qodo attached to the finding. The summary
 keeps the finding's open/status state visible and asks the engineer to inspect
-its source and linked run.
+its source and linked run. Citation metadata is rendered as source-provided JSON
+so location details are not silently dropped. A stale session summary does not
+override an individual finding revision marker that matches the imported head.
+Finding citations are clickable only when they point to the same GitHub
+repository as the imported PR. If a response includes a malformed companion
+block, Ghostline keeps valid structured data but warns that the result may be
+incomplete and directs the engineer to refresh it. Conflicting aliases or
+duplicate native IDs with different values are rejected rather than silently
+choosing one.
 
 The running UI's structured-review entry point is shown in the
 [feature screenshot](feature-evidence/qodo-structured-review.jpg). It shows
@@ -131,6 +139,13 @@ The status fallback and revision-evidence states are shown in the
 [finding revision screenshot](feature-evidence/qodo-finding-revision-evidence.jpg):
 it distinguishes the finding's old source revision from a linked run revision,
 preserves both status fields, and marks a missing finding-specific revision.
+Qodo's extended `location.code_snippet` is preserved and shown as a cited code
+excerpt in the [finding code-context screenshot](feature-evidence/qodo-code-snippet.jpg).
+When Qodo omits the session revision while the imported PR head is known, the
+[unknown-session-revision screenshot](feature-evidence/qodo-session-revision-unknown.jpg)
+shows that Ghostline names the missing Qodo revision and still surfaces an
+individual finding's different recorded revision, without treating either as
+proof of repair. It is a prepared replay, not live Qodo output.
 
 ## Features to evaluate in the Qodo workspace
 

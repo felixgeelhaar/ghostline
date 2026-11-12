@@ -222,6 +222,7 @@ func (a api) loadQodoReview(c *gin.Context) {
 	var body struct {
 		URL string `json:"url"`
 	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxQodoRequestBytes)
 	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.URL) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Provide a GitHub pull request URL."})
 		return

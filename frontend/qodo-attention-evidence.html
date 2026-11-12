@@ -26,9 +26,10 @@
         review: {
           availability: 'available',
           source: 'Qodo Agentic Toolbox · get-pr-review-findings',
-          reviewSession: { status: 'completed', commitSha: currentSha },
+          reviewSession: { status: 'running', commitSha: reviewedSha },
+          warnings: ['Qodo returned an additional text block that could not be interpreted as structured review data; the displayed review may be incomplete.'],
           findings: [
-            { id: 'finding-demo-1', title: 'Validate the idempotency key before replay', attributionStatus: 'attributed', status: 'implemented', gitSha: reviewedSha, reviewRunId: 'run-demo-2', category: 'Correctness', actionLevel: 'action_required', filePath: 'backend/payments.go', startLine: 84 },
+            { id: 'finding-demo-1', title: 'Validate the idempotency key before replay', attributionStatus: 'attributed', status: 'implemented', gitSha: reviewedSha, reviewRunId: 'run-demo-2', category: 'Correctness', actionLevel: 'action_required', filePath: 'backend/payments.go', startLine: 84, codeSnippet: 'if replayed {\n  return nil\n}\napplyPayment(request)', evidence: { explanation: 'Validate the key before applying replayed payment effects.', citations: [{ sourceType: 'code', source: 'https://github.com/acme/payments/blob/main/backend/payments.go#L84', context: 'before the payment mutation', metadata: { line: 84, symbol: 'validateIdempotencyKey' } }] } },
             { id: 'finding-demo-2', title: 'Bound the retry window for duplicate requests', attributionStatus: 'pending', reviewRunId: 'run-demo-2', category: 'Reliability', actionLevel: 'action_required', filePath: 'backend/payments.go', startLine: 121 },
           ],
           reviewRuns: [{ id: 'run-demo-2', status: 'completed', commitSha: currentSha }],

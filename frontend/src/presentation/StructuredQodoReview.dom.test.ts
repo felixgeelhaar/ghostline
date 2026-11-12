@@ -25,6 +25,21 @@ afterEach(() => {
 })
 
 describe('structured Qodo review presentation', () => {
+  it('does not create revision links from an invalid pull request URL', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review,
+      pullRequestUrl: 'https://github.com.evil.test/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.querySelectorAll('a[href*="/commit/"]')).toHaveLength(0)
+    expect(host.textContent).toContain('source link unavailable')
+  })
+
   it('keeps Qodo statuses source-attributed and warns when reviewed revision is stale', async () => {
     host = document.createElement('div')
     document.body.append(host)
@@ -38,7 +53,7 @@ describe('structured Qodo review presentation', () => {
 
     expect(host.textContent).toContain('OBSERVED · Qodo Agentic Toolbox · get-pr-review-findings')
     expect(host.textContent).toContain('DOES NOT MATCH PR HEAD')
-    expect(host.textContent).toContain('Review evidence is stale.')
+    expect(host.textContent).toContain('Review session is stale.')
     expect(host.textContent).toContain('QODO FINDING finding-17 · QODO STATUS implemented')
     expect(host.textContent).toContain('QODO-LINKED REVIEW RUN run-2 · completed')
     expect(host.textContent).toContain('QODO EVIDENCE · The reviewer cited this branch.')
@@ -49,6 +64,60 @@ describe('structured Qodo review presentation', () => {
     expect(host.querySelector('.qodo-attention')?.textContent).toContain('Review needs a refresh')
     expect(host.querySelector('.qodo-attention')?.textContent).toContain(reviewedSha.slice(0, 7))
     expect(host.querySelector('.qodo-attention')?.textContent).toContain(currentSha.slice(0, 7))
+  })
+
+  it('links only HTTPS citations from the imported GitHub repository', async () => {
+    const javascriptSource = 'javascript:alert(1)'
+    const httpSource = 'http://example.com/review'
+    const httpsSource = 'https://github.com/acme/payments/blob/main/review.md'
+    const otherRepoSource = 'https://github.com/other/repo/blob/main/review.md'
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        findings: [{
+          ...review.findings[0]!,
+          evidence: {
+            citations: [
+              { sourceType: 'code', source: javascriptSource },
+              { sourceType: 'code', source: httpSource },
+              { sourceType: 'code', source: httpsSource },
+              { sourceType: 'code', source: otherRepoSource },
+            ],
+          },
+        }],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.querySelector(`a[href="${javascriptSource}"]`)).toBeNull()
+    expect(host.querySelector(`a[href="${httpSource}"]`)).toBeNull()
+    expect(host.querySelector(`a[href="${httpsSource}"]`)?.getAttribute('href')).toBe(httpsSource)
+    expect(host.querySelector(`a[href="${otherRepoSource}"]`)).toBeNull()
+    expect(host.textContent).toContain(javascriptSource)
+    expect(host.textContent).toContain(httpSource)
+    expect(host.textContent).toContain(otherRepoSource)
+  })
+
+  it('surfaces malformed companion blocks as incomplete Qodo evidence', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: { ...review, warnings: ['An additional response block could not be interpreted.'] },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('Qodo response may be incomplete')
+    expect(host.textContent).toContain('An additional response block could not be interpreted.')
+    expect(host.textContent).toContain('Refresh the Qodo review before relying on this result.')
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Partial Qodo response.')
   })
 
   it('summarizes Qodo reported open findings as the next inspection step', async () => {
@@ -134,7 +203,7 @@ describe('structured Qodo review presentation', () => {
     expect(summary?.textContent).toContain('Qodo reports 2 findings as open')
     expect(summary?.textContent).toContain('Inspect the 2 Qodo-reported open findings below')
     expect(summary?.textContent).toContain('current PR head')
-    expect(host.textContent).toContain('Review evidence is stale.')
+    expect(host.textContent).toContain('Review session is stale.')
   })
 
   it('shows open finding urgency while Qodo is still reviewing the current head', async () => {
@@ -172,6 +241,8 @@ describe('structured Qodo review presentation', () => {
 
     expect(host.textContent).toContain('REVISION UNKNOWN')
     expect(host.textContent).toContain('Review freshness is unknown.')
+    expect(host.textContent).toContain('Qodo did not return the reviewed commit SHA, so Ghostline cannot compare this session with the imported PR head.')
+    expect(host.textContent).not.toContain('Ghostline cannot compare this session with a known pull request head revision.')
     expect(host.textContent).not.toContain('Review evidence is stale.')
   })
 
@@ -266,6 +337,81 @@ describe('structured Qodo review presentation', () => {
     expect(host.querySelector('.qodo-attention')?.textContent).toContain('1 finding reported open')
   })
 
+  it('renders citation metadata that contains source-specific location evidence', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: { status: 'completed', commitSha: currentSha },
+        findings: [{
+          id: 'finding-metadata', title: 'Guard replay', status: 'open', gitSha: currentSha,
+          evidence: { citations: [{ sourceType: 'code', source: 'backend/replay.go', metadata: { line: 19, symbol: 'applyReplay' } }] },
+        }],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('CITATION METADATA · {"line":19,"symbol":"applyReplay"}')
+  })
+
+  it('renders the code excerpt Qodo attached to a finding', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: { status: 'completed', commitSha: currentSha },
+        findings: [{ id: 'finding-code', title: 'Guard replay', gitSha: currentSha, codeSnippet: 'if replayed {\n  return nil\n}' }],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.querySelector('.qodo-code-snippet')?.textContent).toBe('if replayed {\n  return nil\n}')
+  })
+
+  it('describes an empty stale review response without calling it current', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: { ...review, reviewSession: { status: 'completed', commitSha: reviewedSha }, findings: [] },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('Qodo returned no findings in this response.')
+    expect(host.textContent).toContain('This review session does not match the imported PR head.')
+    expect(host.textContent).not.toContain('Qodo returned no current findings')
+  })
+
+  it('keeps an individually current finding distinct from its stale review session', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: { status: 'completed', commitSha: reviewedSha },
+        findings: [{ id: 'finding-current', title: 'Guard replay', status: 'open', gitSha: currentSha }],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('Review session is stale.')
+    expect(host.textContent).toContain('RAISED ON')
+    expect(host.textContent).not.toContain('these findings do not describe the current head')
+  })
+
   it('keeps missing finding revision visible when its linked run matches the PR head', async () => {
     host = document.createElement('div')
     document.body.append(host)
@@ -323,5 +469,25 @@ describe('structured Qodo review presentation', () => {
 
     expect(host.textContent).toContain('QODO DID NOT RETURN A FINDING-SPECIFIC REVISION')
     expect(host.textContent).toContain('LINKED RUN REVISION NOT RETURNED')
+  })
+
+  it('preserves a finding linked run ID when the run details are missing', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: { status: 'completed', commitSha: currentSha },
+        findings: [{ id: 'finding-run-missing', title: 'Guard replay', status: 'open', reviewRunId: 'run-not-returned' }],
+        reviewRuns: [],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('QODO REPORTED LINKED REVIEW RUN run-not-returned · DETAILS NOT RETURNED')
+    expect(host.textContent).not.toContain('NO REVIEW-RUN LINK RETURNED FOR THIS FINDING')
   })
 })
