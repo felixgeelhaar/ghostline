@@ -16,18 +16,29 @@ import (
 )
 
 type pullRequest struct {
-	Repository string         `json:"repository"`
-	Owner      string         `json:"owner"`
-	Repo       string         `json:"repo"`
-	Number     int            `json:"number"`
-	Title      string         `json:"title"`
-	State      string         `json:"state"`
-	URL        string         `json:"url"`
-	CreatedAt  time.Time      `json:"createdAt"`
-	UpdatedAt  time.Time      `json:"updatedAt"`
-	Commits    []commit       `json:"commits"`
-	Checks     revisionChecks `json:"checks"`
-	Reviews    qodoReviewSet  `json:"qodoReviews"`
+	Repository       string            `json:"repository"`
+	Owner            string            `json:"owner"`
+	Repo             string            `json:"repo"`
+	Number           int               `json:"number"`
+	Title            string            `json:"title"`
+	State            string            `json:"state"`
+	Merged           bool              `json:"merged"`
+	URL              string            `json:"url"`
+	CreatedAt        time.Time         `json:"createdAt"`
+	UpdatedAt        time.Time         `json:"updatedAt"`
+	Commits          []commit          `json:"commits"`
+	Checks           revisionChecks    `json:"checks"`
+	Reviews          qodoReviewSet     `json:"qodoReviews"`
+	ReferencedIssues []referencedIssue `json:"referencedIssues"`
+}
+
+type referencedIssue struct {
+	Number       int    `json:"number"`
+	Title        string `json:"title"`
+	Availability string `json:"availability"`
+	State        string `json:"state,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	URL          string `json:"url"`
 }
 
 type commit struct {
@@ -43,6 +54,8 @@ type githubPR struct {
 	Number    int    `json:"number"`
 	Title     string `json:"title"`
 	State     string `json:"state"`
+	Body      string `json:"body"`
+	Merged    bool   `json:"merged"`
 	HTMLURL   string `json:"html_url"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
@@ -53,6 +66,7 @@ type githubPR struct {
 		Repo struct {
 			Name     string `json:"name"`
 			FullName string `json:"full_name"`
+			Private  bool   `json:"private"`
 			Owner    struct {
 				Login string `json:"login"`
 			} `json:"owner"`
@@ -121,6 +135,10 @@ func (a api) importPR(c *gin.Context) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned incomplete repository identity for this pull request."})
 			return
 		}
+		if rawPR.Base.Repo.Private {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Only public GitHub pull requests can be imported."})
+			return
+		}
 		path = fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(identity.Owner), url.PathEscape(identity.Name), rawPR.Number)
 		var rawCommits []githubCommit
 		for page := 1; ; page++ {
@@ -148,6 +166,10 @@ func (a api) importPR(c *gin.Context) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned incomplete repository identity for this pull request."})
 			return
 		}
+		if verifiedPR.Base.Repo.Private {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Only public GitHub pull requests can be imported."})
+			return
+		}
 		if verifiedPR.Head.SHA != rawPR.Head.SHA || !identity.Equal(verifiedIdentity) {
 			if attempt+1 < maxSnapshotAttempts {
 				path = fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(verifiedIdentity.Owner), url.PathEscape(verifiedIdentity.Name), verifiedPR.Number)
@@ -160,7 +182,7 @@ func (a api) importPR(c *gin.Context) {
 		identity = verifiedIdentity
 		created, _ := time.Parse(time.RFC3339, rawPR.CreatedAt)
 		updated, _ := time.Parse(time.RFC3339, rawPR.UpdatedAt)
-		result := pullRequest{Repository: identity.FullName(), Owner: identity.Owner, Repo: identity.Name, Number: rawPR.Number, Title: rawPR.Title, State: rawPR.State, URL: rawPR.HTMLURL, CreatedAt: created, UpdatedAt: updated, Commits: make([]commit, 0, len(rawCommits)), Checks: checks, Reviews: fetchQodoReviews(c.Request.Context(), a.gh, identity, rawPR.Number)}
+		result := pullRequest{Repository: identity.FullName(), Owner: identity.Owner, Repo: identity.Name, Number: rawPR.Number, Title: rawPR.Title, State: rawPR.State, Merged: rawPR.Merged, URL: rawPR.HTMLURL, CreatedAt: created, UpdatedAt: updated, Commits: make([]commit, 0, len(rawCommits)), Checks: checks, Reviews: fetchQodoReviews(c.Request.Context(), a.gh, identity, rawPR.Number), ReferencedIssues: fetchReferencedIssues(c.Request.Context(), a.gh, identity, rawPR.Body)}
 		for _, item := range rawCommits {
 			date, _ := time.Parse(time.RFC3339, item.Commit.Author.Date)
 			author := item.Commit.Author.Name

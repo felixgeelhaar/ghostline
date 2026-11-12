@@ -6,6 +6,7 @@ import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha
 import { checkOutcome, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
 import { findRecurringFindings, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import { buildFindingTrace } from '../domain/trace'
+import { isMergedOpenIssue } from '../domain/referencedIssues'
 import { validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import ReviewCard from './ReviewCard.vue'
 import DeepTrace from './DeepTrace.vue'
@@ -110,6 +111,21 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
     <section v-if="pr" class="change-card">
       <div class="change-heading"><div><span class="eyebrow">{{ pr.repository }} / PULL REQUEST #{{ pr.number }}</span><h2>{{ pr.title }}</h2></div><span class="state" :class="pr.state">{{ pr.state }}</span></div>
       <div class="meta"><span>{{ pr.commits.length }} COMMITS</span><span>OPENED {{ date(pr.createdAt) }}</span><a :href="pr.url" target="_blank" rel="noreferrer">VIEW ON GITHUB ↗</a></div>
+
+      <section v-if="pr.referencedIssues.length" class="referenced-issues" aria-labelledby="referenced-issues-title">
+        <h3 id="referenced-issues-title" class="section-title">REFERENCED ISSUES</h3>
+        <ul>
+          <li v-for="issue in pr.referencedIssues" :key="issue.number" :class="{ warn: isMergedOpenIssue(pr.merged, issue), unavailable: issue.availability === 'unavailable' }">
+            <strong v-if="isMergedOpenIssue(pr.merged, issue)">Referenced issue #{{ issue.number }} is still open.</strong>
+            <strong v-else-if="issue.availability === 'unavailable'">Referenced issue #{{ issue.number }} is unavailable.</strong>
+            <strong v-else-if="pr.merged && issue.availability === 'available'">Referenced issue #{{ issue.number }} is closed.</strong>
+            <strong v-else>Referenced issue #{{ issue.number }} is {{ issue.state }}; this pull request is not merged.</strong>
+            <span v-if="issue.availability === 'unavailable' && issue.reason">{{ issue.reason }}</span>
+            <span class="reference-links"><a :href="pr.url" target="_blank" rel="noreferrer">PR #{{ pr.number }} ↗</a><a :href="issue.url" target="_blank" rel="noreferrer">{{ issue.title }} ↗</a></span>
+          </li>
+        </ul>
+        <p class="footnote">References come from the pull request description. Issue state reflects GitHub at import time. An open issue is a signal for human review; Ghostline does not decide whether the work was delivered.</p>
+      </section>
 
       <section class="checks" aria-labelledby="checks-title">
         <h3 id="checks-title" class="section-title"><span>CHECKS · {{ selectedRevision ? 'FOCUSED REVISION' : 'PR HEAD' }}</span><span v-if="activeChecks?.revisionSha"><a :href="activeChecks.revisionUrl" target="_blank" rel="noreferrer" :aria-label="`Revision ${activeChecks.revisionShortSha} on GitHub`">{{ activeChecks.revisionShortSha }} ↗</a></span></h3>
