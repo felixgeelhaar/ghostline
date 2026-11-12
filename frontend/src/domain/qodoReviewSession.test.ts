@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isReviewSessionCurrent, QodoStructuredReviewSchema, reviewRunForFinding, reviewSessionFreshness } from './qodoReviewSession'
+import { isReviewSessionCurrent, QodoStructuredReviewSchema, reviewRunForFinding, reviewSessionFreshness, reviewAttentionSummary } from './qodoReviewSession'
 
 const shaA = 'a'.repeat(40)
 const shaB = 'b'.repeat(40)
@@ -72,5 +72,86 @@ describe('structured Qodo review evidence', () => {
 
     expect(reviewSessionFreshness(review, '')).toBe('unknown')
     expect(isReviewSessionCurrent(review, '')).toBe(false)
+  })
+
+  it('asks for a current review when Qodo inspected a different revision', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA }, findings: [], reviewRuns: [],
+    })
+
+    expect(reviewAttentionSummary(review, shaB)).toMatchObject({
+      kind: 'stale',
+      title: 'Review needs a refresh',
+      openFindingCount: 0,
+    })
+    expect(reviewAttentionSummary(review, shaB).detail).toContain(shaA.slice(0, 7))
+    expect(reviewAttentionSummary(review, shaB).detail).toContain(shaB.slice(0, 7))
+  })
+
+  it('asks to confirm freshness when either revision is unavailable', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA }, findings: [], reviewRuns: [],
+    })
+
+    expect(reviewAttentionSummary(review, '').kind).toBe('unknown')
+    expect(reviewAttentionSummary(review, '').nextAction).toContain('confirm')
+  })
+
+  it('reports the active Qodo session before recommending action on findings', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'started', commitSha: shaA },
+      findings: [{ id: 'finding-1', title: 'Check idempotency', status: 'open' }], reviewRuns: [],
+    })
+
+    expect(reviewAttentionSummary(review, shaA)).toMatchObject({
+      kind: 'in-progress', title: 'Qodo review is still running', openFindingCount: 1,
+    })
+    expect(reviewAttentionSummary(review, shaA).nextAction.toLowerCase()).toContain('wait')
+  })
+
+  it('surfaces Qodo-reported open and unspecified findings without claiming repairs', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: [
+        { id: 'finding-open', title: 'Check idempotency', status: 'open' },
+        { id: 'finding-implemented', title: 'Validate retry key', status: 'implemented' },
+        { id: 'finding-unknown', title: 'Bound retries' },
+      ], reviewRuns: [],
+    })
+
+    const summary = reviewAttentionSummary(review, shaA)
+    expect(summary).toMatchObject({ kind: 'attention', openFindingCount: 1, unspecifiedFindingCount: 1 })
+    expect(summary.title).toContain('1 finding')
+    expect(summary.detail).toContain('1 finding has no recognized status')
+    expect(summary.detail).toContain('not independently verify')
+  })
+
+  it('does not describe a Qodo implemented status as independently verified correctness', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: [{ id: 'finding-1', title: 'Guard duplicates', status: 'implemented' }], reviewRuns: [],
+    })
+
+    const summary = reviewAttentionSummary(review, shaA)
+    expect(summary.kind).toBe('clear')
+    expect(summary.detail).toContain('Qodo marks 1 finding implemented')
+    expect(summary.detail).toContain('not independently verify')
+  })
+
+  it('keeps findings visible as next steps when Qodo returns no session', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo', reviewSession: null,
+      findings: [{ id: 'finding-1', title: 'Inspect retry handling', status: 'open' }], reviewRuns: [],
+    })
+
+    expect(reviewAttentionSummary(review, shaA)).toMatchObject({
+      kind: 'unknown', openFindingCount: 1, title: 'Review revision unconfirmed',
+    })
+    expect(reviewAttentionSummary(review, shaA).detail.toLowerCase()).toContain('findings remain available below')
   })
 })

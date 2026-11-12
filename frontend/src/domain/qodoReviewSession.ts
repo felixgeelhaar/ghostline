@@ -58,6 +58,19 @@ export const QodoStructuredReviewSchema = z.object({
 export type QodoStructuredReview = z.infer<typeof QodoStructuredReviewSchema>
 export type QodoManagedFinding = z.infer<typeof QodoManagedFindingSchema>
 
+export type ReviewAttentionSummary = {
+  kind: 'unknown' | 'stale' | 'in-progress' | 'incomplete' | 'attention' | 'clear'
+  title: string
+  detail: string
+  nextAction: string
+  findingCount: number
+  openFindingCount: number
+  unspecifiedFindingCount: number
+  unrecognizedFindingCount: number
+  implementedFindingCount: number
+  dismissedFindingCount: number
+}
+
 export function reviewSessionFreshness(review: QodoStructuredReview, headSha: string): 'current' | 'stale' | 'unknown' {
   if (!fullSha.safeParse(headSha).success) return 'unknown'
   const reviewedSha = review.reviewSession?.commitSha
@@ -67,6 +80,120 @@ export function reviewSessionFreshness(review: QodoStructuredReview, headSha: st
 
 export function isReviewSessionCurrent(review: QodoStructuredReview, headSha: string): boolean {
   return reviewSessionFreshness(review, headSha) === 'current'
+}
+
+export function reviewAttentionSummary(review: QodoStructuredReview, headSha: string): ReviewAttentionSummary {
+  const statuses = review.findings.map((finding) => finding.status?.trim().toLowerCase() ?? '')
+  const openFindingCount = statuses.filter((status) => status === 'open').length
+  const unspecifiedFindingCount = statuses.filter((status) => status === '').length
+  const implementedFindingCount = statuses.filter((status) => status === 'implemented').length
+  const dismissedFindingCount = statuses.filter((status) => status === 'dismissed').length
+  const unrecognizedFindingCount = statuses.filter((status) => !['', 'open', 'implemented', 'dismissed'].includes(status)).length
+  const counts = {
+    findingCount: review.findings.length,
+    openFindingCount,
+    unspecifiedFindingCount,
+    unrecognizedFindingCount,
+    implementedFindingCount,
+    dismissedFindingCount,
+  }
+
+  if (!review.reviewSession) {
+    return {
+      ...counts,
+      kind: 'unknown',
+      title: 'Review revision unconfirmed',
+      detail: `Qodo returned no review session metadata. ${review.findings.length ? 'Findings remain available below, but their session freshness cannot be confirmed.' : 'No session freshness or finding status can be confirmed.'}`,
+      nextAction: 'Inspect the original Qodo source and confirm which revision it reviewed.',
+    }
+  }
+
+  const freshness = reviewSessionFreshness(review, headSha)
+  if (freshness === 'stale') {
+    const reviewedShortSha = review.reviewSession.commitSha?.slice(0, 7) ?? 'unknown'
+    const headShortSha = fullSha.safeParse(headSha).success ? headSha.slice(0, 7) : 'unknown'
+    return {
+      ...counts,
+      kind: 'stale',
+      title: 'Review needs a refresh',
+      detail: `Qodo reviewed ${reviewedShortSha}, while the imported PR head is ${headShortSha}. The findings do not describe the current head.`,
+      nextAction: 'Load a Qodo review for the current PR head before relying on these findings.',
+    }
+  }
+  if (freshness === 'unknown') {
+    return {
+      ...counts,
+      kind: 'unknown',
+      title: 'Review revision unconfirmed',
+      detail: 'Ghostline cannot compare Qodo’s reviewed revision with a known pull-request head. Findings remain source data, but their freshness is unknown.',
+      nextAction: 'Inspect the original Qodo source and confirm which revision it reviewed.',
+    }
+  }
+
+  const sessionStatus = review.reviewSession.status.trim().toLowerCase()
+  if (sessionStatus === 'started' || sessionStatus === 'running') {
+    return {
+      ...counts,
+      kind: 'in-progress',
+      title: 'Qodo review is still running',
+      detail: `Qodo reports session status “${review.reviewSession.status}” for the current PR head.`,
+      nextAction: 'Wait for the Qodo session to complete, then refresh its findings.',
+    }
+  }
+  if (sessionStatus !== 'completed') {
+    return {
+      ...counts,
+      kind: 'incomplete',
+      title: 'Qodo review is not complete',
+      detail: `Qodo reports session status “${review.reviewSession.status}” for the current PR head.`,
+      nextAction: 'Inspect the Qodo session and decide whether to retry before acting on its findings.',
+    }
+  }
+
+  if (openFindingCount > 0) {
+    const unknownCount = unspecifiedFindingCount + unrecognizedFindingCount
+    const uncertainty = unknownCount > 0 ? ` ${unknownCount} finding${unknownCount === 1 ? ' has' : 's have'} no recognized status.` : ''
+    return {
+      ...counts,
+      kind: 'attention',
+      title: `${openFindingCount} finding${openFindingCount === 1 ? '' : 's'} reported open`,
+      detail: `Qodo reports ${openFindingCount} finding${openFindingCount === 1 ? '' : 's'} as open.${uncertainty} Qodo’s implemented or dismissed statuses do not independently verify correctness.`,
+      nextAction: 'Inspect the open findings below and follow their source and revision links.',
+    }
+  }
+
+  if (unspecifiedFindingCount + unrecognizedFindingCount > 0) {
+    const unknownCount = unspecifiedFindingCount + unrecognizedFindingCount
+    return {
+      ...counts,
+      kind: 'attention',
+      title: `${unknownCount} finding${unknownCount === 1 ? '' : 's'} need status review`,
+      detail: `${unknownCount} finding${unknownCount === 1 ? ' has' : 's have'} no recognized Qodo status. Ghostline does not infer whether they are resolved.`,
+      nextAction: 'Inspect those findings and their revision-linked source evidence.',
+    }
+  }
+
+  if (review.findings.length === 0) {
+    return {
+      ...counts,
+      kind: 'clear',
+      title: 'Qodo reported no findings',
+      detail: 'The completed Qodo session matches the imported PR head. This review result is not an independent correctness guarantee.',
+      nextAction: 'Use the linked revision checks and your own review when deciding whether to ship.',
+    }
+  }
+
+  const reportedStatuses = [
+    implementedFindingCount ? `Qodo marks ${implementedFindingCount} finding${implementedFindingCount === 1 ? '' : 's'} implemented` : '',
+    dismissedFindingCount ? `Qodo marks ${dismissedFindingCount} dismissed` : '',
+  ].filter(Boolean).join(' and ')
+  return {
+    ...counts,
+    kind: 'clear',
+    title: 'Qodo reports no findings marked open',
+    detail: `${reportedStatuses}. These Qodo statuses do not independently verify correctness.`,
+    nextAction: 'Inspect the source findings and revision links before deciding whether to ship.',
+  }
 }
 
 export function reviewRunForFinding(finding: QodoManagedFinding, review: QodoStructuredReview): QodoStructuredReview['reviewRuns'][number] | undefined {

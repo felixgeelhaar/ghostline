@@ -46,6 +46,31 @@ describe('structured Qodo review presentation', () => {
     expect(host.textContent).toContain('does not independently verify that a finding was fixed')
     expect(host.querySelector<HTMLAnchorElement>('a[href*="/commit/"]')?.href).toBe(`https://github.com/acme/payments/commit/${reviewedSha}`)
     expect(host.querySelector<HTMLAnchorElement>('a[href*="/blob/main/"]')?.href).toBe('https://github.com/acme/payments/blob/main/backend/replay.go#L19')
+    expect(host.querySelector('.qodo-attention')?.textContent).toContain('Review needs a refresh')
+    expect(host.querySelector('.qodo-attention')?.textContent).toContain(reviewedSha.slice(0, 7))
+    expect(host.querySelector('.qodo-attention')?.textContent).toContain(currentSha.slice(0, 7))
+  })
+
+  it('summarizes Qodo reported open findings as the next inspection step', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: { status: 'completed', commitSha: currentSha },
+        findings: [{ id: 'finding-open', title: 'Validate idempotency', status: 'open', gitSha: currentSha }],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    const summary = host.querySelector('.qodo-attention')
+    expect(summary?.textContent).toContain('1 finding reported open')
+    expect(summary?.textContent).toContain('Inspect the open findings below')
+    expect(summary?.getAttribute('role')).toBe('status')
+    expect(host.textContent).toContain('QODO FINDING finding-open · REPORTED open')
   })
 
   it('does not call a session stale when Qodo omitted its reviewed revision', async () => {

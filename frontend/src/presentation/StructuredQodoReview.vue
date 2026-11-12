@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { reviewSessionFreshness, reviewRunForFinding, type QodoStructuredReview } from '../domain/qodoReviewSession'
+import { reviewAttentionSummary, reviewSessionFreshness, reviewRunForFinding, type QodoStructuredReview } from '../domain/qodoReviewSession'
 
 const props = defineProps<{ review: QodoStructuredReview; pullRequestUrl: string; headSha: string }>()
 const freshness = computed(() => reviewSessionFreshness(props.review, props.headSha))
+const attention = computed(() => reviewAttentionSummary(props.review, props.headSha))
 
 function revisionURL(sha?: string) {
   if (!sha) return undefined
@@ -27,6 +28,12 @@ function citationURL(source?: string) {
   <section class="qodo-structured" aria-labelledby="qodo-structured-title">
     <h4 id="qodo-structured-title" class="section-title"><span>STRUCTURED QODO REVIEW · DIRECT SOURCE</span><span>{{ review.findings.length }} FINDINGS</span></h4>
     <p class="review-provenance">OBSERVED · {{ review.source }}</p>
+    <aside class="qodo-attention" :class="attention.kind" role="status" aria-live="polite" aria-label="Qodo review next action">
+      <p class="qodo-attention-label">ENGINEER NEXT ACTION · BASED ON QODO’S REPORTED STATE</p>
+      <h5>{{ attention.title }}</h5>
+      <p>{{ attention.detail }}</p>
+      <p class="qodo-attention-next"><strong>NEXT</strong> {{ attention.nextAction }}</p>
+    </aside>
     <p v-if="!review.reviewSession" class="checks-note" role="status"><strong>No review session returned.</strong> Qodo did not provide structured review-session data for this pull request.</p>
     <template v-if="review.reviewSession">
       <div class="qodo-session-status" :class="freshness">

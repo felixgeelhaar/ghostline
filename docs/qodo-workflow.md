@@ -91,10 +91,20 @@ whose reviewed SHA differs from the imported PR head is explicitly labeled
 stale. If Qodo omits evidence, Ghostline shows that gap rather than filling it
 with an inferred relationship.
 
+The structured review also includes an engineer next-action summary derived
+only from Qodo's reported session and finding statuses. It distinguishes stale
+or unknown revisions, unfinished sessions, open or unclassified findings, and
+Qodo-reported outcomes. The summary directs engineers to the underlying source
+evidence; `implemented` or `dismissed` statuses are not presented as
+independent verification.
+
 The running UI's structured-review entry point is shown in the
 [feature screenshot](feature-evidence/qodo-structured-review.jpg). It shows
 the optional per-request credential control alongside the imported PR's
 source-backed review context; it does not depict a fetched structured session.
+The next-action presentation is shown in
+[its focused screenshot](feature-evidence/qodo-attention-summary.jpg), captured
+from a prepared replay labeled as sample data rather than a live Qodo response.
 
 ## Features to evaluate in the Qodo workspace
 
