@@ -3,6 +3,7 @@ import { computed, nextTick, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
+import { buildChangeActivity } from '../domain/changeActivity'
 import { checkOutcome, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
 import { findRecurringFindings, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import { buildFindingTrace } from '../domain/trace'
@@ -27,6 +28,7 @@ const activeChecks = computed(() => selectedRevision.value ? focusedChecks.value
 const orderedChecks = computed(() => orderChecks(activeChecks.value?.availability === 'available' ? activeChecks.value.items : []))
 const checksSummary = computed(() => summarizeChecks(orderedChecks.value))
 const recurringFindings = computed(() => findRecurringFindings(pr.value?.qodoReviews.items ?? []))
+const changeActivity = computed(() => buildChangeActivity(pr.value?.commits ?? [], pr.value?.qodoReviews.items ?? []))
 const visibleCommits = computed(() => pr.value?.commits.filter((commit) => !selectedRevision.value || commit.sha === selectedRevision.value) ?? [])
 const selectedReviews = computed(() => reviewsForRevision(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
 const reviewCount = computed(() => reviewCountSummary(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
@@ -132,6 +134,25 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
           <template v-else><p class="checks-summary" :class="checksSummary.tone" role="status"><span aria-hidden="true">{{ glyph[checksSummary.tone] }}</span>{{ checksSummary.label }}</p><ul class="check-list"><li v-for="(check, i) in orderedChecks" :key="`${check.kind}:${check.name}:${i}`"><span class="check-state" :class="checkOutcome(check).tone"><span aria-hidden="true">{{ glyph[checkOutcome(check).tone] }}</span>{{ checkOutcome(check).label }}</span><span class="check-name"><a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">{{ check.name }} <span aria-hidden="true">↗</span><span class="sr-only">(opens on GitHub)</span></a><span v-else>{{ check.name }}</span><small>{{ [check.source, check.url ? '' : 'no GitHub link reported'].filter(Boolean).join(' · ') }}</small></span></li></ul></template>
         </template>
         <p class="footnote">GitHub reported these checks for revision {{ activeChecks?.revisionShortSha || selectedRevision.slice(0, 7) }} at fetch time. Results apply only to that revision. Re-import to refresh PR head checks.</p>
+      </section>
+
+      <section class="activity-index" aria-labelledby="activity-index-title">
+        <h3 id="activity-index-title" class="section-title"><span>CHANGE ACTIVITY · OBSERVED SOURCES</span><span>{{ changeActivity.length }} EVENTS</span></h3>
+        <p class="footnote">Events are ordered by their source timestamps. Commit metadata time and Qodo comment time describe different things; sequence alone does not establish causation. GitHub checks remain listed above for the exact revision they report.</p>
+        <ol class="activity-list">
+          <li v-for="event in changeActivity" :key="event.id" :class="`activity-${event.kind}`">
+            <span class="activity-node" aria-hidden="true"></span>
+            <div class="activity-content">
+              <div class="activity-meta"><span>{{ event.timestampLabel }}</span><time :datetime="event.timestamp">{{ date(event.timestamp) }}</time></div>
+              <strong>{{ event.title }}</strong>
+              <p>{{ event.detail }} · {{ event.revisionLabel }}</p>
+              <div class="activity-links">
+                <a :href="event.sourceUrl" target="_blank" rel="noreferrer">{{ event.sourceLabel }} ↗</a>
+                <button v-if="event.revision" type="button" :aria-label="`Focus activity revision ${event.revision.shortSha}`" @click="focusRevision(event.revision.sha)">FOCUS REVISION</button>
+              </div>
+            </div>
+          </li>
+        </ol>
       </section>
 
       <h3 class="section-title"><span>REVISION TIMELINE <span v-if="selectedRevision">· FOCUSED</span></span><span>COMMIT TIME · OLDEST FIRST</span></h3>
