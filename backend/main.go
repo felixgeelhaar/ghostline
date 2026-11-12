@@ -219,12 +219,7 @@ func newRouter(gh *githubClient) *gin.Engine {
 }
 
 func newRouterWithLimiter(gh *githubClient, limiter *rateLimiter, identity clientIdentity) *gin.Engine {
-	r := gin.Default()
-	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
-	limited := r.Group("/api", rateLimitMiddleware(limiter, identity))
-	limited.POST("/import", api{gh: gh}.importPR)
-	limited.POST("/checks", api{gh: gh}.loadRevisionChecks)
-	return r
+	return newRouterWithAuth(gh, limiter, identity, authSettings{Now: time.Now})
 }
 
 func main() {
@@ -233,7 +228,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	r := newRouterWithLimiter(newGitHubClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity)
+	auth, err := loadAuthConfig(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	r := newRouterWithAuth(newGitHubClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity, auth)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

@@ -13,6 +13,10 @@ export default defineConfig(({ mode }) => {
           target: env.GHOSTLINE_API_URL || 'http://localhost:8080',
           configure: (proxy) => { proxy.on('proxyReq', setClientIpHeader) },
         },
+        '/auth': {
+          target: env.GHOSTLINE_API_URL || 'http://localhost:8080',
+          configure: (proxy) => { proxy.on('proxyReq', setClientIpHeader) },
+        },
       },
     },
   }

@@ -59,6 +59,25 @@ docker compose up --build
 
 Open http://localhost:5173 (or set `GHOSTLINE_PORT` if that port is occupied). Compose binds the frontend to all network interfaces by default, so other devices on the LAN can use `http://<host-lan-ip>:5173`; set `GHOSTLINE_BIND_ADDRESS` to a specific interface address to restrict access. The development frontend proxies API requests to the backend container.
 
+### GitHub sign-in for a hosted instance
+
+Ghostline supports an identity-only GitHub OAuth gate for hosted instances. The operator must register a GitHub OAuth App with callback URL `https://<host>/auth/github/callback`, provide OAuth credentials and a random session signing key, and explicitly list allowed GitHub logins. The app requests only `read:user`; it does not ask GitHub for repository access, and the short-lived access token is used only to verify the account and is not stored. The backend protects `/api/import` and `/api/checks`; health and authentication status remain public.
+
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| `GHOSTLINE_ENV` | Hosted | Set to `production`; startup then requires GitHub authentication. |
+| `GHOSTLINE_AUTH_MODE` | Hosted | Set to `github`. `off` is for a trusted local development run only. |
+| `GITHUB_OAUTH_CLIENT_ID` | Yes | OAuth App client ID. |
+| `GITHUB_OAUTH_CLIENT_SECRET` | Yes | OAuth App client secret. |
+| `GITHUB_OAUTH_CALLBACK_URL` | Yes | Exact HTTPS callback URL ending `/auth/github/callback`. |
+| `GHOSTLINE_SESSION_SIGNING_KEY` | Yes | Random secret of at least 32 bytes; rotate it to revoke all sessions. |
+| `GHOSTLINE_ALLOWED_GITHUB_USERS` | Yes | Comma-separated GitHub logins allowed to sign in. |
+| `GHOSTLINE_SESSION_COOKIE_SECURE` | No | Defaults to `true`; `false` is accepted only for an HTTP localhost development callback. |
+
+The browser receives an eight-hour, HttpOnly, SameSite=Lax signed session cookie. Removing an account from the allowlist blocks its existing session; signing-key rotation invalidates every session. OAuth callback codes and state values are excluded from request logs. Configure secrets through the hosting provider's secret manager, never in a committed `.env` file.
+
+This authentication gate does not make the current Compose setup an internet-ready deployment: Compose still serves Vite's development server, and the rate limiter is in-memory and per backend process. Use a production frontend server, TLS termination, and shared or edge-level rate limiting before public hosting. See the [threat model](docs/threat-model.md) for remaining boundaries.
+
 ## Verify
 
 ```sh

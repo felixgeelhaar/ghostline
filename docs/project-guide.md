@@ -15,16 +15,17 @@ Ghostline is a small Go API and Vue single-page application. It has no database 
 ```text
 Browser (Vue 3 + TypeScript)
   presentation: App.vue, ReviewCard.vue, DeepTrace.vue
-  application: importPullRequest, fetchRevisionChecks
+  application: auth status, importPullRequest, fetchRevisionChecks
   domain: pullRequest, checks, reviews, trace
           │ /api/import, /api/checks
           ▼
 Go + Gin API
+  optional GitHub identity gate and signed session cookie
   HTTP handlers and GitHub response normalization
   GitHub client, check aggregation, Qodo comment parsing
           │ HTTPS GitHub REST API
           ▼
-GitHub: pull request, commits, checks, published issue comments
+GitHub: OAuth identity, pull request, commits, checks, published issue comments
 ```
 
 The frontend validates API payloads with Zod at the boundary in `frontend/src/domain`. Keep business rules in domain modules, request orchestration in application modules, and HTTP or rendering details at the edges. In the backend, domain concepts such as the canonical repository identity live in `backend/internal/domain`; HTTP handling, GitHub calls, and orchestration stay in the small files under `backend`. Put new business rules in the domain package, and avoid adding infrastructure layers without a concrete need.
@@ -32,6 +33,8 @@ The frontend validates API payloads with Zod at the boundary in `frontend/src/do
 For code changes, preserve these domain boundaries and use test-driven development: write or update a focused failing test for the behavior first, then implement the smallest change that makes it pass.
 
 The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, normalize the response, and render the activity index and review evidence. The activity index orders commit metadata times, check-run start/completion/update times, commit-status creation/update times, and Qodo comment times while preserving each source's timestamp label and native check/status ID. Check entries are GitHub's latest records for the focused revision at fetch time, not a complete check-run history. The timeline does not treat sequence as causation. `POST /api/checks` fetches checks for a focused full commit SHA. Checks are always labeled with the revision GitHub returned and shown in a revision-scoped section.
+
+When `GHOSTLINE_AUTH_MODE=github`, `/auth/github/login` starts an OAuth identity check and `/auth/github/callback` verifies the GitHub login against `GHOSTLINE_ALLOWED_GITHUB_USERS`, then issues a stateless signed eight-hour cookie. The token used to call GitHub's `/user` endpoint is not persisted. The auth status endpoint is public so the Vue app can render the right gate; imports and check lookups require a valid session. In production, set `GHOSTLINE_ENV=production`, which makes startup reject auth-off configuration. The local default remains unauthenticated for development.
 
 ## Setup and verification
 
@@ -61,7 +64,7 @@ To run both services in containers:
 docker compose up --build
 ```
 
-Open `http://localhost:5173`, or the configured `GHOSTLINE_PORT`. Compose exposes the frontend on network interfaces by default; use `GHOSTLINE_BIND_ADDRESS` to select a bind address. The Compose backend does not currently receive `GITHUB_TOKEN`, so use the local API run above when authenticated GitHub API access is needed.
+Open `http://localhost:5173`, or the configured `GHOSTLINE_PORT`. Compose exposes the frontend on network interfaces by default; use `GHOSTLINE_BIND_ADDRESS` to select a bind address. This is a Vite development server intended for local/LAN demos, not public hosting. For a local OAuth demo, create a GitHub OAuth App with a localhost callback and set the environment variables in the README; `GHOSTLINE_SESSION_COOKIE_SECURE=false` is allowed only for localhost HTTP. The Compose backend does not currently receive `GITHUB_TOKEN`, so use the local API run above when authenticated GitHub API access is needed.
 
 Run the project checks:
 
@@ -78,6 +81,8 @@ For detailed Qodo setup and review-evidence semantics, see [Qodo workflow](qodo-
 For current trust boundaries, abuse cases, and hosting limitations, see the [threat model](threat-model.md).
 
 ## Feature evidence
+
+The hosted GitHub sign-in gate is shown in [this screenshot](feature-evidence/hosted-github-sign-in.jpg), captured from the running app with a signed-out session. The OAuth provider exchange itself was not exercised with a real GitHub OAuth App in this local capture.
 
 The running change activity index, imported from Ghostline PR #49, is shown in [this screenshot](feature-evidence/change-activity-index.jpg). The revision-linked GitHub check events are shown in [this screenshot](feature-evidence/revision-linked-check-activity.jpg), imported from Ghostline PR #50 at revision `286dcc7`. The empty-check state is shown in [this screenshot](feature-evidence/activity-index-check-coverage.jpg), captured from public PR `octocat/Hello-World#1` when GitHub reported no check runs or commit statuses for the displayed revision. Qodo activity was unavailable at capture time and the UI says so. These views show current records or fetch-time availability; they do not represent complete event history.
 

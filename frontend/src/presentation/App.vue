@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
+import { fetchAuthStatus } from '../application/fetchAuthStatus'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
+import type { AuthStatus } from '../domain/auth'
 import { buildChangeActivity, countReviewsWithUnavailableDetails, describeCheckActivity } from '../domain/changeActivity'
 import { checkOutcome, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
 import { findRecurringFindings, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
@@ -21,6 +23,9 @@ const checksLoading = ref(false)
 const checksError = ref('')
 const selectedTraceId = ref('')
 const copyResult = ref<CopyResult>()
+const authStatus = ref<AuthStatus>()
+const authError = ref('')
+const authLoading = ref(true)
 let traceTrigger: HTMLButtonElement | undefined
 let revisionRequest = 0
 let importRequest = 0
@@ -45,6 +50,16 @@ const activeTrace = computed(() => {
   return finding ? buildFindingTrace(finding, pr.value?.commits ?? []) : undefined
 })
 const glyph: Record<CheckTone, string> = { pass: '✓', fail: '✕', running: '●', neutral: '–' }
+
+onMounted(async () => {
+  try {
+    authStatus.value = await fetchAuthStatus()
+  } catch (e) {
+    authError.value = e instanceof Error ? e.message : 'Could not check Ghostline sign-in status.'
+  } finally {
+    authLoading.value = false
+  }
+})
 
 async function loadPR() {
   const request = ++importRequest
@@ -118,14 +133,19 @@ async function clearTrace() {
   traceTrigger?.focus()
   traceTrigger = undefined
 }
+function reloadPage() { window.location.reload() }
 function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
 </script>
 
 <template>
   <div class="shell">
     <a class="skip-link" href="#main-content">Skip to main content</a>
-    <header class="topbar"><a class="brand" href="#"><span class="brand-mark">G</span><span>GHOSTLINE<small>ENGINEERING CONTROL ROOM</small></span></a><span class="live"><i></i> SYSTEM READY</span></header>
+    <header class="topbar"><a class="brand" href="#"><span class="brand-mark">G</span><span>GHOSTLINE<small>ENGINEERING CONTROL ROOM</small></span></a><div class="topbar-status"><form v-if="authStatus?.enabled && authStatus.login" method="post" action="/auth/logout"><span class="signed-in">{{ authStatus.login }}</span><button class="sign-out" type="submit">SIGN OUT</button></form><span class="live"><i></i> SYSTEM READY</span></div></header>
     <main id="main-content" tabindex="-1">
+    <section v-if="authLoading" class="auth-panel" role="status"><p class="eyebrow">ACCESS CHECK</p><h1>Verifying your session.</h1><p class="lede">Ghostline is checking whether this instance requires sign-in.</p></section>
+    <section v-else-if="authError" class="auth-panel auth-error" role="alert"><p class="eyebrow">ACCESS STATUS UNAVAILABLE</p><h1>Cannot verify access.</h1><p class="lede">{{ authError }}</p><button type="button" @click="reloadPage">RETRY</button></section>
+    <section v-else-if="authStatus?.enabled && !authStatus.login" class="auth-panel"><p class="eyebrow">GHOSTLINE / AUTHORIZED ACCESS</p><h1>Sign in to continue.</h1><p class="lede">This hosted instance is limited to approved GitHub accounts. Ghostline reads your public GitHub profile to verify your account; it does not request repository access.</p><a class="github-sign-in" href="/auth/github/login">CONTINUE WITH GITHUB <span aria-hidden="true">↗</span></a></section>
+    <div v-else class="workspace">
     <section class="hero"><p class="eyebrow">CHANGE INTELLIGENCE / 001</p><h1>See the work.<br><em>Trace the decisions.</em></h1><p class="lede">Import a pull request to inspect its revision history. Commit timestamps show when commits were authored, not when they were pushed.</p></section>
     <section class="import-panel"><label for="pr-url">GITHUB PULL REQUEST</label><div class="input-row"><span class="prefix">↗</span><input id="pr-url" v-model="url" placeholder="https://github.com/owner/repo/pull/123" @keyup.enter="loadPR"><button :disabled="loading" @click="loadPR">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button></div><p v-if="error" class="error" role="alert">{{ error }}</p></section>
     <section v-if="pr" class="change-card">
@@ -187,6 +207,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         <p class="footnote">Qodo review outcomes are reviewer feedback, not independent proof of correctness. Findings and summaries apply to their linked revision. A finding missing from a later review does not by itself prove the change was fixed.</p>
       </section>
     </section>
+    </div>
     </main>
     <footer><span>GHOSTLINE // DAY 01</span><span>EVERY SIGNAL HAS A SOURCE.</span></footer>
   </div>
