@@ -28,7 +28,7 @@ function citationURL(source?: string) {
     <h4 id="qodo-structured-title" class="section-title"><span>STRUCTURED QODO REVIEW · DIRECT SOURCE</span><span>{{ review.findings.length }} FINDINGS</span></h4>
     <p class="review-provenance">OBSERVED · {{ review.source }}</p>
     <p v-if="!review.reviewSession" class="checks-note" role="status"><strong>No review session returned.</strong> Qodo did not provide structured review-session data for this pull request.</p>
-    <template v-else>
+    <template v-if="review.reviewSession">
       <div class="qodo-session-status" :class="freshness">
         <div><span>QODO SESSION · {{ review.reviewSession.status.toUpperCase() }}</span>
           <p v-if="review.reviewSession.commitSha">Reviewed revision <a :href="revisionURL(review.reviewSession.commitSha)" target="_blank" rel="noreferrer">{{ review.reviewSession.commitSha.slice(0, 7) }} ↗</a></p>
@@ -38,8 +38,9 @@ function citationURL(source?: string) {
       </div>
       <p v-if="freshness === 'stale'" class="checks-note warn" role="status"><strong>Review evidence is stale.</strong> The reviewed commit does not match the imported pull request head; these findings do not describe the current head.</p>
       <p v-else-if="freshness === 'unknown'" class="checks-note warn" role="status"><strong>Review freshness is unknown.</strong> Ghostline cannot compare this session with a known pull request head revision.</p>
-      <p v-if="review.findings.length === 0" class="checks-note" role="status">Qodo returned no current findings for this review session.</p>
-      <ol v-else class="qodo-managed-findings">
+    </template>
+    <p v-if="review.findings.length === 0" class="checks-note" role="status">Qodo returned no current findings for this review response.</p>
+    <ol v-else class="qodo-managed-findings">
         <li v-for="finding in review.findings" :key="finding.id">
           <div class="finding-heading"><strong>{{ finding.title }}</strong><span v-if="finding.actionLevel">{{ finding.actionLevel.replaceAll('_', ' ') }}</span></div>
           <p class="finding-labels">QODO FINDING {{ finding.id }} · REPORTED {{ finding.status || 'NO STATUS' }}<span v-if="finding.category"> · {{ finding.category }}</span><span v-if="finding.attributionStatus"> · {{ finding.attributionStatus }}</span></p>
@@ -60,12 +61,11 @@ function citationURL(source?: string) {
           <p v-if="reviewRunForFinding(finding, review)" class="qodo-run-link">QODO-LINKED REVIEW RUN {{ reviewRunForFinding(finding, review)?.id }} · {{ reviewRunForFinding(finding, review)?.status }}<span v-if="reviewRunForFinding(finding, review)?.commitSha"> · REVISION {{ reviewRunForFinding(finding, review)?.commitSha?.slice(0, 7) }}</span></p>
           <p v-else class="qodo-run-link">NO REVIEW-RUN LINK RETURNED FOR THIS FINDING</p>
         </li>
-      </ol>
-      <section v-if="review.reviewRuns.length" class="qodo-runs" aria-label="Qodo review runs">
+    </ol>
+    <section v-if="review.reviewRuns.length" class="qodo-runs" aria-label="Qodo review runs">
         <h5>RECORDED QODO REVIEW RUNS</h5>
         <ol><li v-for="run in review.reviewRuns" :key="run.id"><span>{{ run.status.toUpperCase() }} · {{ run.id }}</span><a v-if="run.commitSha" :href="revisionURL(run.commitSha)" target="_blank" rel="noreferrer">{{ run.commitSha.slice(0, 7) }} ↗</a><span v-else>REVISION NOT RETURNED</span></li></ol>
-      </section>
-    </template>
+    </section>
     <p class="footnote">Statuses and run links are reported by Qodo. Ghostline does not independently verify that a finding was fixed, nor infer causation from commit order.</p>
   </section>
 </template>

@@ -80,4 +80,20 @@ describe('structured Qodo review presentation', () => {
     expect(host.textContent).not.toContain('Qodo did not return a reviewed commit SHA')
     expect(host.textContent).not.toContain('Review evidence is stale.')
   })
+
+  it('keeps source findings visible when Qodo returned no session metadata', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: { ...review, reviewSession: null },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('No review session returned.')
+    expect(host.textContent).toContain('QODO FINDING finding-17 · REPORTED implemented')
+    expect(host.textContent).toContain('QODO-LINKED REVIEW RUN run-2 · completed')
+  })
 })

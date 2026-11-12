@@ -120,6 +120,24 @@ func TestQodoReviewDataRejectsUnrecognizedEmptyObject(t *testing.T) {
 	}
 }
 
+func TestQodoReviewDataPreservesCamelCaseFindingDetails(t *testing.T) {
+	var data qodoReviewData
+	payload := `{"reviewSession":{"status":"completed"},"findings":[{"id":"f-1","title":"Keep details","actionLevel":"action_required","attributionStatus":"attributed","gitSha":"` + strings.Repeat("a", 40) + `","reviewRunId":"r-1","location":{"filePath":"backend/main.go","startLine":12,"endLine":14,"side":"RIGHT"},"evidence":{"citations":[{"sourceType":"code"}]}}],"reviewRuns":[]}`
+	if err := json.Unmarshal([]byte(payload), &data); err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Findings) != 1 {
+		t.Fatalf("findings = %+v", data.Findings)
+	}
+	finding := data.Findings[0]
+	if finding.ActionLevel != "action_required" || finding.AttributionStatus != "attributed" || finding.GitSHA != strings.Repeat("a", 40) || finding.ReviewRunID != "r-1" || finding.FilePath != "backend/main.go" || finding.StartLine != 12 || finding.EndLine != 14 || finding.Side != "RIGHT" {
+		t.Fatalf("camel-case finding details lost: %+v", finding)
+	}
+	if finding.Evidence == nil || len(finding.Evidence.Citations) != 1 || finding.Evidence.Citations[0].SourceType != "code" {
+		t.Fatalf("camel-case evidence lost: %+v", finding.Evidence)
+	}
+}
+
 func TestQodoReviewEndpointLogsFailureWithoutLeakingCredential(t *testing.T) {
 	var logs strings.Builder
 	logger := slog.New(slog.NewTextHandler(&logs, nil))

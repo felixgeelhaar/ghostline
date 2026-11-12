@@ -45,37 +45,10 @@ type qodoReviewDataWire struct {
 		CommitSHA string    `json:"commit_sha"`
 		StartedAt time.Time `json:"started_at"`
 	} `json:"review_session"`
-	CamelReviewSession *qodoReviewSession `json:"reviewSession"`
-	Findings           []struct {
-		ID                string `json:"id"`
-		Title             string `json:"title"`
-		Description       string `json:"description"`
-		Category          string `json:"category"`
-		ActionLevel       string `json:"action_level"`
-		AttributionStatus string `json:"attribution_status"`
-		GitSHA            string `json:"git_sha"`
-		Status            string `json:"status"`
-		ResolutionReason  string `json:"resolution_reason"`
-		ReviewRunID       string `json:"review_run_id"`
-		Evidence          *struct {
-			Explanation string `json:"explanation"`
-			Citations   []struct {
-				SourceType string          `json:"source_type"`
-				Source     string          `json:"source"`
-				Text       string          `json:"text"`
-				Context    string          `json:"context"`
-				Metadata   json.RawMessage `json:"metadata"`
-			} `json:"citations"`
-		} `json:"evidence"`
-		Location struct {
-			FilePath  string `json:"file_path"`
-			StartLine int    `json:"start_line"`
-			EndLine   int    `json:"end_line"`
-			Side      string `json:"side"`
-		} `json:"location"`
-	} `json:"findings"`
-	CamelFindings []qodoManagedFinding `json:"camelFindings"`
-	ReviewRuns    []struct {
+	CamelReviewSession *qodoReviewSession   `json:"reviewSession"`
+	Findings           []json.RawMessage    `json:"findings"`
+	CamelFindings      []qodoManagedFinding `json:"camelFindings"`
+	ReviewRuns         []struct {
 		ID        string    `json:"id"`
 		Status    string    `json:"status"`
 		CommitSHA string    `json:"commit_sha"`
@@ -116,20 +89,12 @@ func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
 	data.Findings = wire.CamelFindings
 	if data.Findings == nil {
 		data.Findings = make([]qodoManagedFinding, 0, len(wire.Findings))
-		for _, finding := range wire.Findings {
-			var evidence *qodoFindingEvidence
-			if finding.Evidence != nil {
-				evidence = &qodoFindingEvidence{Explanation: finding.Evidence.Explanation, Citations: make([]qodoFindingCitation, 0, len(finding.Evidence.Citations))}
-				for _, citation := range finding.Evidence.Citations {
-					evidence.Citations = append(evidence.Citations, qodoFindingCitation{SourceType: citation.SourceType, Source: citation.Source, Text: citation.Text, Context: citation.Context, Metadata: citation.Metadata})
-				}
+		for _, raw := range wire.Findings {
+			var finding qodoManagedFinding
+			if err := json.Unmarshal(raw, &finding); err != nil {
+				return err
 			}
-			data.Findings = append(data.Findings, qodoManagedFinding{
-				ID: finding.ID, Title: finding.Title, Description: finding.Description, Category: finding.Category,
-				ActionLevel: finding.ActionLevel, AttributionStatus: finding.AttributionStatus, GitSHA: finding.GitSHA,
-				Status: finding.Status, ResolutionReason: finding.ResolutionReason, ReviewRunID: finding.ReviewRunID,
-				Evidence: evidence, FilePath: finding.Location.FilePath, StartLine: finding.Location.StartLine, EndLine: finding.Location.EndLine, Side: finding.Location.Side,
-			})
+			data.Findings = append(data.Findings, finding)
 		}
 	}
 	data.ReviewRuns = wire.CamelReviewRuns
@@ -177,6 +142,90 @@ type qodoFindingCitation struct {
 	Text       string          `json:"text,omitempty"`
 	Context    string          `json:"context,omitempty"`
 	Metadata   json.RawMessage `json:"metadata,omitempty"`
+}
+
+func (citation *qodoFindingCitation) UnmarshalJSON(payload []byte) error {
+	type plain qodoFindingCitation
+	var decoded plain
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return err
+	}
+	var snake struct {
+		SourceType string `json:"source_type"`
+	}
+	if err := json.Unmarshal(payload, &snake); err != nil {
+		return err
+	}
+	*citation = qodoFindingCitation(decoded)
+	if citation.SourceType == "" {
+		citation.SourceType = snake.SourceType
+	}
+	return nil
+}
+
+func (finding *qodoManagedFinding) UnmarshalJSON(payload []byte) error {
+	type plain qodoManagedFinding
+	var decoded plain
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return err
+	}
+	var snake struct {
+		ActionLevel       string `json:"action_level"`
+		AttributionStatus string `json:"attribution_status"`
+		GitSHA            string `json:"git_sha"`
+		ResolutionReason  string `json:"resolution_reason"`
+		ReviewRunID       string `json:"review_run_id"`
+		Location          struct {
+			FilePath       string `json:"file_path"`
+			CamelFilePath  string `json:"filePath"`
+			StartLine      int    `json:"start_line"`
+			CamelStartLine int    `json:"startLine"`
+			EndLine        int    `json:"end_line"`
+			CamelEndLine   int    `json:"endLine"`
+			Side           string `json:"side"`
+		} `json:"location"`
+	}
+	if err := json.Unmarshal(payload, &snake); err != nil {
+		return err
+	}
+	*finding = qodoManagedFinding(decoded)
+	if finding.ActionLevel == "" {
+		finding.ActionLevel = snake.ActionLevel
+	}
+	if finding.AttributionStatus == "" {
+		finding.AttributionStatus = snake.AttributionStatus
+	}
+	if finding.GitSHA == "" {
+		finding.GitSHA = snake.GitSHA
+	}
+	if finding.ResolutionReason == "" {
+		finding.ResolutionReason = snake.ResolutionReason
+	}
+	if finding.ReviewRunID == "" {
+		finding.ReviewRunID = snake.ReviewRunID
+	}
+	if finding.FilePath == "" {
+		finding.FilePath = snake.Location.FilePath
+		if finding.FilePath == "" {
+			finding.FilePath = snake.Location.CamelFilePath
+		}
+	}
+	if finding.StartLine == 0 {
+		finding.StartLine = snake.Location.StartLine
+		if finding.StartLine == 0 {
+			finding.StartLine = snake.Location.CamelStartLine
+		}
+	}
+	if finding.EndLine == 0 {
+		finding.EndLine = snake.Location.EndLine
+		if finding.EndLine == 0 {
+			finding.EndLine = snake.Location.CamelEndLine
+		}
+	}
+	if finding.Side == "" {
+		finding.Side = snake.Location.Side
+	}
+	return nil
 }
 
 type qodoManagedReviewRun struct {

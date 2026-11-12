@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ghostline · Unknown revision evidence</title>
+    <title>Ghostline · Qodo findings without session metadata</title>
     <link rel="stylesheet" href="/src/presentation/style.css" />
     <style>
       body { min-height: 100vh; padding: 28px; background: #090b16; }
@@ -21,25 +21,22 @@
       const sha = 'a'.repeat(40)
       createApp(StructuredQodoReview, {
         pullRequestUrl: 'https://github.com/acme/payments/pull/42',
-        headSha: '',
+        headSha: 'b'.repeat(40),
         review: {
           availability: 'available',
           source: 'Qodo Agentic Toolbox · get-pr-review-findings',
-          reviewSession: { status: 'completed', commitSha: sha, startedAt: '2026-11-12T09:00:00Z' },
+          reviewSession: null,
           findings: [{
             id: 'finding-demo-1',
-            title: 'Review freshness cannot be verified',
-            description: 'The pull request head was not available when this evidence was displayed.',
+            title: 'Keep findings visible without session metadata',
+            description: 'A structured finding is still source evidence when Qodo omits the session envelope.',
             category: 'Correctness',
-            actionLevel: 'informational',
+            actionLevel: 'action_required',
             gitSha: sha,
             filePath: 'backend/review.go',
             startLine: 28,
             side: 'RIGHT',
-            evidence: {
-              explanation: 'The session contains a revision, but the import supplied no head SHA for comparison.',
-              citations: [],
-            },
+            evidence: { explanation: 'Prepared replay data demonstrates a finding retained without session metadata.', citations: [] },
           }],
           reviewRuns: [],
         },
