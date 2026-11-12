@@ -6,6 +6,7 @@ import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha
 import { checkOutcome, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
 import { findRecurringFindings, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import { buildFindingTrace } from '../domain/trace'
+import { isMergedOpenIssue } from '../domain/referencedIssues'
 import { validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import ReviewCard from './ReviewCard.vue'
 import DeepTrace from './DeepTrace.vue'
@@ -114,8 +115,8 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
       <section v-if="pr.referencedIssues.length" class="referenced-issues" aria-labelledby="referenced-issues-title">
         <h3 id="referenced-issues-title" class="section-title">REFERENCED ISSUES</h3>
         <ul>
-          <li v-for="issue in pr.referencedIssues" :key="issue.number" :class="{ warn: pr.merged && issue.availability === 'available' && issue.state === 'open', unavailable: issue.availability === 'unavailable' }">
-            <strong v-if="pr.merged && issue.availability === 'available' && issue.state === 'open'">Referenced issue #{{ issue.number }} is still open.</strong>
+          <li v-for="issue in pr.referencedIssues" :key="issue.number" :class="{ warn: isMergedOpenIssue(pr.merged, issue), unavailable: issue.availability === 'unavailable' }">
+            <strong v-if="isMergedOpenIssue(pr.merged, issue)">Referenced issue #{{ issue.number }} is still open.</strong>
             <strong v-else-if="issue.availability === 'unavailable'">Referenced issue #{{ issue.number }} is unavailable.</strong>
             <strong v-else-if="pr.merged && issue.availability === 'available'">Referenced issue #{{ issue.number }} is closed.</strong>
             <strong v-else>Referenced issue #{{ issue.number }} is {{ issue.state }}; this pull request is not merged.</strong>

@@ -66,6 +66,7 @@ type githubPR struct {
 		Repo struct {
 			Name     string `json:"name"`
 			FullName string `json:"full_name"`
+			Private  bool   `json:"private"`
 			Owner    struct {
 				Login string `json:"login"`
 			} `json:"owner"`
@@ -134,6 +135,10 @@ func (a api) importPR(c *gin.Context) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned incomplete repository identity for this pull request."})
 			return
 		}
+		if rawPR.Base.Repo.Private {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Only public GitHub pull requests can be imported."})
+			return
+		}
 		path = fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(identity.Owner), url.PathEscape(identity.Name), rawPR.Number)
 		var rawCommits []githubCommit
 		for page := 1; ; page++ {
@@ -159,6 +164,10 @@ func (a api) importPR(c *gin.Context) {
 		verifiedIdentity, err := domain.NewRepositoryIdentity(verifiedPR.Base.Repo.Owner.Login, verifiedPR.Base.Repo.Name)
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned incomplete repository identity for this pull request."})
+			return
+		}
+		if verifiedPR.Base.Repo.Private {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Only public GitHub pull requests can be imported."})
 			return
 		}
 		if verifiedPR.Head.SHA != rawPR.Head.SHA || !identity.Equal(verifiedIdentity) {

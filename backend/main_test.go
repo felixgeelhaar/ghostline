@@ -35,6 +35,29 @@ func TestParsePRURL(t *testing.T) {
 	}
 }
 
+func TestImportRejectsPrivateRepositoryBeforeFetchingCommits(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"number": 12, "title": "Private change", "state": "open",
+			"base": map[string]any{"repo": map[string]any{"name": "private-repo", "private": true, "owner": map[string]string{"login": "acme"}}},
+		})
+	}))
+	defer srv.Close()
+	router := newRouter(&githubClient{baseURL: srv.URL, http: srv.Client(), token: "configured-token"})
+	request := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(`{"url":"https://github.com/acme/private-repo/pull/12"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "Only public GitHub pull requests") {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if requests != 1 {
+		t.Fatalf("GitHub requests = %d, want the PR metadata lookup only", requests)
+	}
+}
+
 func TestImportPRUsesCanonicalRepositoryReturnedByGitHub(t *testing.T) {
 	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	var requests []string
