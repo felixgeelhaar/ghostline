@@ -2,7 +2,7 @@
 
 ## Short specification
 
-Ghostline is a change-centric engineering control room for engineers using coding agents. Its current slice imports a **public GitHub pull request** and presents the change’s metadata, commit history, revision-linked GitHub checks, and published Qodo review comments. Repeated Qodo finding titles can be traced across comments when their revision markers support it. Warden runs local developer gates and Nox scans; repository CI also runs Nox. Ghostline does not currently ingest Nox reports.
+Ghostline is a change-centric engineering control room for engineers using coding agents. Its current slice imports a **public GitHub pull request** and presents the change’s metadata, commit history, revision-linked GitHub checks, and published Qodo review comments. Repeated Qodo finding titles can be traced across comments when their revision markers support it. It also checks issue references in the PR description and highlights issues that remain open after the PR is merged. Warden runs local developer gates and Nox scans; repository CI also runs Nox. Ghostline does not currently ingest Nox reports.
 
 The product helps an engineer inspect what changed, understand which revision review feedback and checks describe, and decide what to inspect next. GitHub remains authoritative for pull-request facts; Qodo remains the review source. Ghostline does not run agents, repair code, prove that a finding was fixed, or replace CI, Qodo, Nox, or Warden. It does not scan a developer’s local filesystem.
 
@@ -16,12 +16,12 @@ Ghostline is a small Go API and Vue single-page application. It has no database 
 Browser (Vue 3 + TypeScript)
   presentation: App.vue, ReviewCard.vue, DeepTrace.vue
   application: importPullRequest, fetchRevisionChecks
-  domain: pullRequest, checks, reviews, trace
+  domain: pullRequest, checks, reviews, trace, referenced issues
           │ /api/import, /api/checks
           ▼
 Go + Gin API
   HTTP handlers and GitHub response normalization
-  GitHub client, check aggregation, Qodo comment parsing
+  GitHub client, referenced-issue lookup, check aggregation, Qodo comment parsing
           │ HTTPS GitHub REST API
           ▼
 GitHub: pull request, commits, checks, published issue comments
@@ -31,7 +31,7 @@ The frontend validates API payloads with Zod at the boundary in `frontend/src/do
 
 For code changes, preserve these domain boundaries and use test-driven development: write or update a focused failing test for the behavior first, then implement the smallest change that makes it pass.
 
-The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, normalize the response, and render the timeline and review evidence. `POST /api/checks` fetches checks for a focused full commit SHA. Checks are always labeled with the revision GitHub returned.
+The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, look up up to 20 issue references from the PR description, normalize the response, and render the timeline and review evidence. Issue references are parsed only from the PR description (`#N` or a same-repository GitHub issue URL); each GitHub issue response is checked against its repository and number. Failed or capped lookups are shown as unavailable. A merged PR with an open referenced issue is flagged with links to the PR and issue; Ghostline does not determine whether the issue's work was delivered. `POST /api/checks` fetches checks for a focused full commit SHA. Checks are always labeled with the revision GitHub returned.
 
 ## Setup and verification
 
@@ -76,3 +76,7 @@ Warden configures pre-commit and pre-push gates in `.warden.yaml`. It runs the G
 For detailed Qodo setup and review-evidence semantics, see [Qodo workflow](qodo-workflow.md). Repository rules for agents are in [AGENTS.md](../AGENTS.md).
 
 For current trust boundaries, abuse cases, and hosting limitations, see the [threat model](threat-model.md).
+
+## Feature evidence
+
+The [live referenced-issues panel](feature-evidence/referenced-issue-live-2026-11-13.jpg) shows issue states imported from a public pull request. This particular example's referenced issues are now closed; the merged/open warning is covered by the UI tests, which use explicit fixtures rather than implying that this live example is open.

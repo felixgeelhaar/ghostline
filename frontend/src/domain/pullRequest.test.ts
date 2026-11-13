@@ -8,6 +8,7 @@ const validPullRequest = {
   number: 12,
   title: 'Trust source links',
   state: 'open',
+  merged: false,
   url: 'https://github.com/acme/ghostline/pull/12',
   createdAt: '2026-11-06T08:00:00Z',
   updatedAt: '2026-11-06T08:00:00Z',
@@ -21,6 +22,7 @@ const validPullRequest = {
   }],
   checks: { availability: 'unavailable', reason: 'Not configured', revisionSha: '', revisionShortSha: '', revisionUrl: '', items: [] },
   qodoReviews: { availability: 'unavailable', reason: 'Not configured', unrecognizedCommentCount: 0, items: [] },
+  referencedIssues: { availability: 'available', items: [] },
 }
 
 describe('validatePullRequestURL', () => {
@@ -61,6 +63,50 @@ describe('PullRequestSchema source links', () => {
   it('rejects an encoded slash inside a commit path segment', () => {
     const candidate = { ...validPullRequest, commits: [{ ...validPullRequest.commits[0], url: `https://github.com/acme%2Fghostline/commit/${'a'.repeat(40)}` }] }
     expect(PullRequestSchema.safeParse(candidate).success).toBe(false)
+  })
+})
+
+describe('PullRequestSchema referenced issues', () => {
+  const referencedIssues = {
+    availability: 'available',
+    items: [{ number: 31, url: 'https://github.com/acme/ghostline/issues/31', state: 'open' }],
+  }
+
+  it('accepts issue evidence linked to the imported repository and number', () => {
+    expect(PullRequestSchema.safeParse({ ...validPullRequest, merged: true, referencedIssues }).success).toBe(true)
+  })
+
+  it('rejects an issue response exceeding the backend lookup limit', () => {
+    const items = Array.from({ length: 21 }, (_, index) => ({
+      number: index + 1,
+      url: `https://github.com/acme/ghostline/issues/${index + 1}`,
+      state: 'closed',
+    }))
+    const candidate = { ...validPullRequest, referencedIssues: { availability: 'unavailable', reason: 'Only the first 20 issue references are checked.', items } }
+    expect(PullRequestSchema.safeParse(candidate).success).toBe(false)
+  })
+
+  it.each([
+    ['another repository', 'https://github.com/acme/other/issues/31'],
+    ['another issue number', 'https://github.com/acme/ghostline/issues/32'],
+    ['a pull request path', 'https://github.com/acme/ghostline/pull/31'],
+    ['a non-GitHub URL', 'https://evil.example/acme/ghostline/issues/31'],
+  ])('rejects a referenced issue URL with %s', (_reason, url) => {
+    const candidate = { ...validPullRequest, referencedIssues: { ...referencedIssues, items: [{ ...referencedIssues.items[0], url }] } }
+    expect(PullRequestSchema.safeParse(candidate).success).toBe(false)
+  })
+
+  it('rejects unknown issue state values', () => {
+    const candidate = { ...validPullRequest, referencedIssues: { ...referencedIssues, items: [{ ...referencedIssues.items[0], state: 'merged' }] } }
+    expect(PullRequestSchema.safeParse(candidate).success).toBe(false)
+  })
+
+  it('accepts unavailable issue evidence with an explanation', () => {
+    const candidate = {
+      ...validPullRequest,
+      referencedIssues: { availability: 'unavailable', reason: 'GitHub could not confirm the issue state.', items: [{ ...referencedIssues.items[0], state: 'unavailable' }] },
+    }
+    expect(PullRequestSchema.safeParse(candidate).success).toBe(true)
   })
 })
 

@@ -13,11 +13,12 @@ const shaB = 'b'.repeat(40)
 const commitA = { sha: shaA, shortSha: 'a1b2c3d', message: 'First', author: 'A', committedAt: '2026-11-04T09:00:00Z', url: `https://github.com/acme/app/commit/${shaA}` }
 const commitB = { sha: shaB, shortSha: 'bbbbbbb', message: 'Second', author: 'A', committedAt: '2026-11-04T10:00:00Z', url: `https://github.com/acme/app/commit/${shaB}` }
 const pullRequest: PullRequest = {
-  repository: 'acme/app', owner: 'acme', repo: 'app', number: 7, title: 'Copy SHA', state: 'open',
+  repository: 'acme/app', owner: 'acme', repo: 'app', number: 7, title: 'Copy SHA', state: 'open', merged: false,
   url: 'https://github.com/acme/app/pull/7', createdAt: '2026-11-04T08:00:00Z', updatedAt: '2026-11-04T11:00:00Z',
   commits: [commitA, commitB],
   checks: { availability: 'available', revisionSha: shaB, revisionShortSha: 'bbbbbbb', revisionUrl: commitB.url, items: [] },
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] },
+  referencedIssues: { availability: 'available', items: [] },
 }
 
 let mounted: ReturnType<typeof createApp> | undefined
