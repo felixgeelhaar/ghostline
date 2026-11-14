@@ -120,4 +120,23 @@ describe('structured Qodo review request binding', () => {
     expect(host?.textContent).not.toContain('Stale structured finding')
     expect(host?.querySelector<HTMLInputElement>('#qodo-api-key')?.value).toBe('')
   })
+
+  it('shows actionable guidance when Qodo rejects an expired API key', async () => {
+    vi.stubGlobal('isSecureContext', true)
+    vi.mocked(importPullRequest).mockResolvedValue(makePR(7))
+    vi.mocked(fetchQodoReviewSession).mockRejectedValue(new Error('Qodo rejected this API key; it may be expired or revoked. Create a fresh personal Qodo key, then retry.'))
+    await mount()
+
+    await setValue('#pr-url', 'https://github.com/acme/app/pull/7')
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await settle()
+    await setValue('#qodo-api-key', 'expired-key')
+    host!.querySelector<HTMLButtonElement>('#load-qodo-review')!.click()
+    await settle()
+
+    const alert = host!.querySelector<HTMLElement>('.qodo-connect [role="alert"]')
+    expect(alert?.textContent).toContain('may be expired or revoked')
+    expect(alert?.textContent).toContain('Create a fresh personal Qodo key')
+    expect(host?.querySelector<HTMLInputElement>('#qodo-api-key')?.value).toBe('')
+  })
 })

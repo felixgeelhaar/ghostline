@@ -247,6 +247,20 @@ func (a api) loadQodoReview(c *gin.Context) {
 		}
 		cause := strings.ReplaceAll(err.Error(), apiKey, "[redacted]")
 		logger.Error("Qodo structured review request failed", "pull_request", strings.TrimSpace(body.URL), "cause", cause)
+		var serviceErr qodoServiceError
+		if errors.As(err, &serviceErr) {
+			switch serviceErr.StatusCode() {
+			case http.StatusUnauthorized:
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Qodo rejected this API key; it may be expired or revoked. Create a fresh personal Qodo key, then retry."})
+				return
+			case http.StatusForbidden:
+				c.JSON(http.StatusForbidden, gin.H{"error": "Qodo denied this key's access to the workspace. Check the key's workspace permissions and the pull request's workspace."})
+				return
+			case http.StatusTooManyRequests:
+				c.JSON(http.StatusTooManyRequests, gin.H{"error": "Qodo is rate-limiting structured review requests. Try again later."})
+				return
+			}
+		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Qodo structured review data could not be loaded. Check the key, workspace access, and pull request, then retry."})
 		return
 	}

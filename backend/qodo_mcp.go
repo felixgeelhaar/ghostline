@@ -20,16 +20,29 @@ import (
 )
 
 const (
-	qodoMCPURL             = "https://sdk.qodo.ai/v1/tools/mcp/"
-	qodoToolName           = "get-pr-review-findings"
-	qodoMCPProtocolVersion = "2025-03-26"
-	maxQodoAPIKeyLength    = 2048
-	maxQodoRequestBytes    = 8 << 10
-	maxQodoResponseBytes   = 2 << 20
+	qodoMCPURL                   = "https://sdk.qodo.ai/v1/tools/mcp/"
+	qodoToolName                 = "get-pr-review-findings"
+	qodoMCPProtocolVersion       = "2025-03-26"
+	maxQodoAPIKeyLength          = 2048
+	maxQodoRequestBytes          = 8 << 10
+	maxQodoResponseBytes         = 2 << 20
+	qodoTruncatedResponseWarning = "Qodo truncated the extended review response; the displayed review may be incomplete."
 )
 
 type qodoReviewSource interface {
 	fetch(context.Context, string, string) (qodoReviewData, error)
+}
+
+type qodoServiceError struct {
+	status int
+}
+
+func (err qodoServiceError) Error() string {
+	return fmt.Sprintf("Qodo review service returned HTTP %d", err.status)
+}
+
+func (err qodoServiceError) StatusCode() int {
+	return err.status
 }
 
 type qodoReviewClient struct {
@@ -55,6 +68,7 @@ type qodoReviewDataWire struct {
 	ReviewRuns         []qodoManagedReviewRun `json:"review_runs"`
 	CamelReviewRuns    []qodoManagedReviewRun `json:"reviewRuns"`
 	Warnings           []string               `json:"warnings"`
+	ResultTruncated    bool                   `json:"qar_operation_result_truncated"`
 }
 
 func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
@@ -105,6 +119,9 @@ func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
 		if warning = strings.TrimSpace(warning); warning != "" {
 			normalized.Warnings = append(normalized.Warnings, warning)
 		}
+	}
+	if wire.ResultTruncated {
+		normalized.Warnings = append(normalized.Warnings, qodoTruncatedResponseWarning)
 	}
 	normalized.Findings = make([]qodoManagedFinding, 0, len(wire.Findings)+len(wire.CamelFindings))
 	for _, raw := range wire.Findings {
@@ -729,7 +746,7 @@ func (client *qodoReviewClient) post(ctx context.Context, apiKey, sessionID stri
 	defer response.Body.Close()
 	newSessionID := response.Header.Get("Mcp-Session-Id")
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return empty, newSessionID, fmt.Errorf("Qodo review service returned HTTP %d", response.StatusCode)
+		return empty, newSessionID, qodoServiceError{status: response.StatusCode}
 	}
 	if !expectResult {
 		return empty, newSessionID, nil

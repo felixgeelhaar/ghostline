@@ -127,6 +127,14 @@ export function reviewSessionFreshness(review: QodoStructuredReview, headSha: st
   return reviewedSha.toLowerCase() === headSha.toLowerCase() ? 'current' : 'stale'
 }
 
+function runningReviewRunForHead(review: QodoStructuredReview, headSha: string): QodoStructuredReview['reviewRuns'][number] | undefined {
+  if (!fullSha.safeParse(headSha).success) return undefined
+  return review.reviewRuns.find((run) => {
+    const status = run.status.trim().toLowerCase()
+    return (status === 'started' || status === 'running') && run.commitSha?.toLowerCase() === headSha.toLowerCase()
+  })
+}
+
 export function isReviewSessionCurrent(review: QodoStructuredReview, headSha: string): boolean {
   return reviewSessionFreshness(review, headSha) === 'current'
 }
@@ -205,6 +213,21 @@ function baseReviewAttentionSummary(review: QodoStructuredReview, headSha: strin
     dismissedFindingCount,
     staleFindingCount,
     unknownFindingRevisionCount,
+  }
+
+  const activeHeadRun = runningReviewRunForHead(review, headSha)
+  if (activeHeadRun) {
+    const sessionFreshness = review.reviewSession ? reviewSessionFreshness(review, headSha) : 'unknown'
+    const sessionNote = sessionFreshness === 'stale'
+      ? ` The returned session inspected ${review.reviewSession!.commitSha!.slice(0, 7)} and is stale relative to this active run.`
+      : ' Findings shown below belong to the returned session and may not include this run’s results.'
+    return {
+      ...counts,
+      kind: 'in-progress',
+      title: 'Qodo review is still running',
+      detail: `Qodo reports active review run ${activeHeadRun.id} for the imported PR head ${headSha.slice(0, 7)}.${sessionNote}${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
+      nextAction: 'Wait for the current Qodo review run to finish, then refresh the structured review and confirm its reviewed revision before acting on its findings.',
+    }
   }
 
   if (!review.reviewSession) {
@@ -365,7 +388,7 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
   const detail = summary.kind === 'clear' && summary.findingCount === 0
     ? `No findings were present in the interpretable response. ${warning}`
     : `${summary.detail} ${warning}`
-  const nextAction = summary.kind === 'clear'
+  const nextAction = summary.kind === 'clear' && summary.findingCount === 0
     ? 'Retry the structured Qodo review or inspect the original Qodo response before relying on its completeness.'
     : summary.kind === 'in-progress'
       ? `${summary.nextAction} After it completes, retry the structured Qodo review or inspect the original Qodo response before relying on completeness.`

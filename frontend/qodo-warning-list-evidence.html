@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ghostline · Qodo partial response guidance</title>
+    <title>Ghostline · Qodo incomplete and active-run guidance</title>
     <link rel="stylesheet" href="/src/presentation/style.css" />
     <style>
       body { min-height: 100vh; padding: 28px; background: #090b16; }
@@ -12,7 +12,7 @@
     </style>
   </head>
   <body>
-    <p class="fixture-label">PREPARED REPLAY · PARTIAL QODO RESPONSE · NOT LIVE QODO OUTPUT</p>
+    <p class="fixture-label">PREPARED REPLAY · TRUNCATED RESPONSE + CURRENT-HEAD REVIEW RUN · NOT LIVE QODO OUTPUT</p>
     <div id="app"></div>
     <script type="module">
       import { createApp } from 'vue'
@@ -24,10 +24,10 @@
         review: {
           availability: 'available',
           source: 'Qodo Agentic Toolbox · get-pr-review-findings',
-          reviewSession: { status: 'completed', commitSha: 'b'.repeat(40) },
-          warnings: ['An additional response block could not be interpreted; the review may be incomplete.'],
-          findings: [{ id: 'finding-demo-1', title: 'Validate the idempotency key before replay', description: 'Confirm the reported finding against its source revision before deciding whether the repair is sufficient.', category: 'Correctness', actionLevel: 'action_required', gitSha: 'b'.repeat(40), reviewRunId: 'run-demo-1', filePath: 'backend/payments.go', startLine: 84 }],
-          reviewRuns: [],
+          reviewSession: { status: 'completed', commitSha: 'a'.repeat(40) },
+          warnings: ['Qodo truncated the extended review response; the displayed review may be incomplete.'],
+          findings: [{ id: 'finding-demo-1', title: 'Validate the idempotency key before replay', description: 'Confirm the reported finding against its source revision before deciding whether the repair is sufficient.', category: 'Correctness', actionLevel: 'action_required', gitSha: 'a'.repeat(40), reviewRunId: 'run-previous', filePath: 'backend/payments.go', startLine: 84 }],
+          reviewRuns: [{ id: 'run-current', status: 'running', commitSha: 'b'.repeat(40) }],
         },
       }).mount('#app')
     </script>
