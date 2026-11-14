@@ -361,6 +361,22 @@ describe('structured Qodo review evidence', () => {
     expect(summary.nextAction.toLowerCase()).toContain('wait for the current qodo review to finish')
   })
 
+  it('waits for a current-head review run when the returned session is stale', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: [{ id: 'finding-1', title: 'Guard retries', status: 'open', gitSha: shaA }],
+      reviewRuns: [{ id: 'run-current', status: 'running', commitSha: shaB }],
+    })
+
+    const summary = reviewAttentionSummary(review, shaB)
+    expect(summary).toMatchObject({ kind: 'in-progress', title: 'Qodo review is still running' })
+    expect(summary.detail).toContain('active review run run-current')
+    expect(summary.detail).toContain(shaB.slice(0, 7))
+    expect(summary.nextAction.toLowerCase()).toContain('wait for the current qodo review run to finish')
+    expect(summary.nextAction).not.toContain('load a Qodo review for the current PR head')
+  })
+
   it('does not call a finding stale when its own revision matches a stale session head', () => {
     const review = QodoStructuredReviewSchema.parse({
       availability: 'available', source: 'Qodo',
@@ -460,6 +476,20 @@ describe('structured Qodo review evidence', () => {
     expect(summary.detail).toContain('Qodo reports 1 finding as open')
     expect(summary.detail).toContain('An additional response block could not be interpreted.')
     expect(summary.nextAction.toLowerCase()).toContain('retry the structured qodo review')
+  })
+
+  it('keeps closed-finding inspection guidance when a response is incomplete', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: [{ id: 'finding-implemented', title: 'Guard duplicate requests', status: 'implemented', gitSha: shaA }],
+      reviewRuns: [], warnings: ['Qodo truncated the extended review response.'],
+    })
+
+    const summary = reviewAttentionSummary(review, shaA)
+    expect(summary).toMatchObject({ kind: 'incomplete', title: 'Qodo response may be incomplete', implementedFindingCount: 1 })
+    expect(summary.nextAction).toContain('Inspect the source findings and revision links before deciding whether to ship.')
+    expect(summary.nextAction).toContain('Retry the structured Qodo review')
   })
 
   it('does not present an empty partial response as a clear review', () => {

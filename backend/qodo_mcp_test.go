@@ -335,6 +335,17 @@ func TestQodoReviewDataUnmarshalFiltersBlankWarnings(t *testing.T) {
 	}
 }
 
+func TestQodoReviewDataWarnsWhenQodoTruncatesExtendedResult(t *testing.T) {
+	var got qodoReviewData
+	err := json.Unmarshal([]byte(`{"findings":[],"review_runs":[],"qar_operation_result_truncated":true}`), &got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "truncated") || !strings.Contains(got.Warnings[0], "incomplete") {
+		t.Fatalf("warnings = %#v; want explicit truncated-review warning", got.Warnings)
+	}
+}
+
 func BenchmarkDeduplicateQodoFindingsRepeatedIDs(b *testing.B) {
 	const distinctFindings = 5000
 	values := make([]qodoManagedFinding, 0, distinctFindings*2)
@@ -1009,6 +1020,72 @@ func TestQodoReviewEndpointLogsFailureWithoutLeakingCredential(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), secret) || strings.Contains(res.Body.String(), secret) {
 		t.Fatal("Qodo credential leaked into logs or response")
+	}
+}
+
+func TestQodoReviewEndpointExplainsUpstreamAuthenticationFailures(t *testing.T) {
+	const secret = "qodo-secret-value"
+	for _, tt := range []struct {
+		name       string
+		status     int
+		wantStatus int
+		wantText   string
+	}{
+		{"expired or revoked key", http.StatusUnauthorized, http.StatusUnauthorized, "may be expired or revoked"},
+		{"workspace access denied", http.StatusForbidden, http.StatusForbidden, "workspace permissions"},
+		{"rate limited", http.StatusTooManyRequests, http.StatusTooManyRequests, "Try again later"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			router := newRouterWithQodoAndLimiter(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, qodoSourceFunc(func(context.Context, string, string) (qodoReviewData, error) {
+				return qodoReviewData{}, qodoServiceError{status: tt.status}
+			}), newRateLimiter(defaultRateLimitRequests, defaultRateLimitWindow, time.Now), clientIdentity{})
+			req := httptest.NewRequest(http.MethodPost, "/api/qodo-review", strings.NewReader(`{"url":"https://github.com/acme/payments/pull/42"}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Origin", "https://ghostline.example")
+			req.Header.Set("X-Qodo-API-Key", secret)
+			res := httptest.NewRecorder()
+			router.ServeHTTP(res, req)
+
+			if res.Code != tt.wantStatus {
+				t.Fatalf("status = %d, body = %s; want %d", res.Code, res.Body.String(), tt.wantStatus)
+			}
+			if !strings.Contains(res.Body.String(), tt.wantText) {
+				t.Fatalf("body = %s; want guidance containing %q", res.Body.String(), tt.wantText)
+			}
+			if strings.Contains(res.Body.String(), secret) {
+				t.Fatal("response exposed the Qodo credential")
+			}
+		})
+	}
+}
+
+func TestQodoReviewClientPreservesAuthenticationStatusWithoutUpstreamBody(t *testing.T) {
+	const secret = "qodo-secret-value"
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			client := &qodoReviewClient{
+				endpoint: "https://qodo.test/v1/tools/mcp/",
+				http: &http.Client{Transport: qodoRoundTripperFunc(func(r *http.Request) (*http.Response, error) {
+					if r.Header.Get("Authorization") != "Bearer "+secret {
+						t.Errorf("authorization header was not forwarded to the fixed Qodo endpoint")
+					}
+					return &http.Response{
+						StatusCode: status,
+						Body:       io.NopCloser(strings.NewReader("upstream detail contains private data")),
+						Header:     make(http.Header),
+						Request:    r,
+					}, nil
+				})},
+			}
+			_, err := client.fetch(context.Background(), secret, "https://github.com/acme/payments/pull/42")
+			var serviceErr qodoServiceError
+			if !errors.As(err, &serviceErr) || serviceErr.StatusCode() != status {
+				t.Fatalf("error = %v; want an upstream status error with code %d", err, status)
+			}
+			if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "upstream detail") {
+				t.Fatalf("error exposed a credential or upstream response body: %v", err)
+			}
+		})
 	}
 }
 
