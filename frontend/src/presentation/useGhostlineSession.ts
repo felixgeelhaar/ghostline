@@ -29,5 +29,12 @@ export function useGhostlineSession() {
     await refreshGhostlineSession()
   }
 
-  return { ghostlineSession, sessionLoading, sessionError, refreshGhostlineSession, handleSessionRejected }
+  function endSession() {
+    latestRequest++
+    ghostlineSession.value = { authRequired: true, authenticated: false }
+    sessionLoading.value = false
+    sessionError.value = ''
+  }
+
+  return { ghostlineSession, sessionLoading, sessionError, refreshGhostlineSession, handleSessionRejected, endSession }
 }

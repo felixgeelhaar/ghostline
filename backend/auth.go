@@ -11,10 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/felixgeelhaar/ghostline/backend/internal/domain"
@@ -90,17 +92,26 @@ type oauthState struct {
 }
 
 type authManager struct {
-	cfg    authConfig
-	client *http.Client
-	now    func() time.Time
-	random io.Reader
+	cfg          authConfig
+	client       *http.Client
+	now          func() time.Time
+	random       io.Reader
+	logger       *slog.Logger
+	pendingMu    sync.Mutex
+	pendingOAuth map[string]*pendingOAuth
+}
+
+type pendingOAuth struct {
+	expiresAt  time.Time
+	processing bool
+	canceled   bool
 }
 
 func newAuthManager(cfg authConfig, client *http.Client) *authManager {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
-	return &authManager{cfg: cfg, client: client, now: time.Now, random: rand.Reader}
+	return &authManager{cfg: cfg, client: client, now: time.Now, random: rand.Reader, logger: slog.Default(), pendingOAuth: make(map[string]*pendingOAuth)}
 }
 
 func (m *authManager) authorizationURL(state, verifier string) (string, error) {
@@ -144,18 +155,19 @@ func (m *authManager) login(c *gin.Context) {
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
-	value, err := m.sign("oauth-state", oauthState{State: state, Verifier: verifier, ExpiresAt: m.now().Add(oauthStateLifetime).Unix()})
+	expiresAt := m.now().Add(oauthStateLifetime)
+	value, err := m.sign("oauth-state", oauthState{State: state, Verifier: verifier, ExpiresAt: expiresAt.Unix()})
 	if err != nil {
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(c.Writer, &http.Cookie{Name: oauthCookieName, Value: value, Path: "/", MaxAge: int(oauthStateLifetime.Seconds()), HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
 	target, err := m.authorizationURL(state, verifier)
 	if err != nil {
-		http.SetCookie(c.Writer, expiredCookie(oauthCookieName))
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
+	m.registerOAuthState(state, expiresAt)
+	http.SetCookie(c.Writer, &http.Cookie{Name: oauthCookieName, Value: value, Path: "/", MaxAge: int(oauthStateLifetime.Seconds()), HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
 	c.Redirect(http.StatusFound, target)
 }
 
@@ -174,6 +186,12 @@ func (m *authManager) callback(c *gin.Context) {
 		c.String(http.StatusUnauthorized, "GitHub sign-in could not be verified. Return to Ghostline and try again.")
 		return
 	}
+	if !m.beginOAuthCallback(pending.State) {
+		http.SetCookie(c.Writer, expiredCookie(oauthCookieName))
+		c.String(http.StatusUnauthorized, "GitHub sign-in expired. Return to Ghostline and try again.")
+		return
+	}
+	defer m.finishOAuthCallback(pending.State)
 	http.SetCookie(c.Writer, expiredCookie(oauthCookieName))
 	if c.Query("error") != "" {
 		c.String(http.StatusUnauthorized, "GitHub sign-in was not completed. Return to Ghostline and try again.")
@@ -186,11 +204,13 @@ func (m *authManager) callback(c *gin.Context) {
 	}
 	token, err := m.exchangeCode(c.Request.Context(), code, pending.Verifier)
 	if err != nil {
+		m.logger.Error("GitHub OAuth callback failed", "stage", "token_exchange", "error", err)
 		c.String(http.StatusBadGateway, "Ghostline could not complete GitHub sign-in. Try again shortly.")
 		return
 	}
 	identity, err := m.fetchIdentity(c.Request.Context(), token)
 	if err != nil {
+		m.logger.Error("GitHub OAuth callback failed", "stage", "identity_lookup", "error", err)
 		c.String(http.StatusBadGateway, "Ghostline could not verify the GitHub account. Try again shortly.")
 		return
 	}
@@ -203,8 +223,11 @@ func (m *authManager) callback(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "Ghostline could not create a sign-in session.")
 		return
 	}
-	http.SetCookie(c.Writer, &http.Cookie{Name: sessionCookieName, Value: session, Path: "/", MaxAge: int(defaultSessionLifetime.Seconds()), HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
-	c.Redirect(http.StatusSeeOther, "/")
+	if !m.completeOAuthCallback(pending.State, c, session) {
+		c.String(http.StatusUnauthorized, "GitHub sign-in was canceled. Return to Ghostline and try again.")
+		return
+	}
+	return
 }
 
 func (m *authManager) session(c *gin.Context) {
@@ -225,8 +248,68 @@ func (m *authManager) logout(c *gin.Context) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
+	if cookie, err := c.Request.Cookie(oauthCookieName); err == nil {
+		var pending oauthState
+		if m.verify(cookie.Value, "oauth-state", &pending) {
+			m.cancelOAuthState(pending.State)
+		}
+	}
 	http.SetCookie(c.Writer, expiredCookie(sessionCookieName))
+	http.SetCookie(c.Writer, expiredCookie(oauthCookieName))
 	c.Status(http.StatusNoContent)
+}
+
+func (m *authManager) registerOAuthState(state string, expiresAt time.Time) {
+	m.pendingMu.Lock()
+	defer m.pendingMu.Unlock()
+	now := m.now()
+	for key, pending := range m.pendingOAuth {
+		if !pending.processing && !pending.expiresAt.After(now) {
+			delete(m.pendingOAuth, key)
+		}
+	}
+	m.pendingOAuth[state] = &pendingOAuth{expiresAt: expiresAt}
+}
+
+func (m *authManager) beginOAuthCallback(state string) bool {
+	m.pendingMu.Lock()
+	defer m.pendingMu.Unlock()
+	pending, ok := m.pendingOAuth[state]
+	if !ok || pending.canceled || pending.processing || !pending.expiresAt.After(m.now()) {
+		return false
+	}
+	pending.processing = true
+	return true
+}
+
+func (m *authManager) finishOAuthCallback(state string) {
+	m.pendingMu.Lock()
+	delete(m.pendingOAuth, state)
+	m.pendingMu.Unlock()
+}
+
+func (m *authManager) cancelOAuthState(state string) {
+	m.pendingMu.Lock()
+	defer m.pendingMu.Unlock()
+	if pending, ok := m.pendingOAuth[state]; ok {
+		if pending.processing {
+			pending.canceled = true
+		} else {
+			delete(m.pendingOAuth, state)
+		}
+	}
+}
+
+func (m *authManager) completeOAuthCallback(state string, c *gin.Context, session string) bool {
+	m.pendingMu.Lock()
+	defer m.pendingMu.Unlock()
+	pending, ok := m.pendingOAuth[state]
+	if !ok || !pending.processing || pending.canceled || !pending.expiresAt.After(m.now()) {
+		return false
+	}
+	http.SetCookie(c.Writer, &http.Cookie{Name: sessionCookieName, Value: session, Path: "/", MaxAge: int(defaultSessionLifetime.Seconds()), HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
+	c.Redirect(http.StatusSeeOther, "/?ghostline_auth=complete")
+	return true
 }
 
 func (m *authManager) middleware() gin.HandlerFunc {

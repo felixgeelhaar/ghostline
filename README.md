@@ -61,7 +61,7 @@ Open http://localhost:5173 (or set `GHOSTLINE_PORT` if that port is occupied). C
 
 ### Protected hosted-mode sign-in
 
-Compose defaults to an unauthenticated local demo. To enable GitHub sign-in, configure these variables in the environment running Compose:
+Compose defaults to an unauthenticated local demo. Protected-mode sign-in requires a trusted HTTPS ingress whose public origin matches the origin in `GITHUB_OAUTH_CALLBACK_URL`. The ingress must route `/auth/*` and `/api/*` to Compose and overwrite `X-Real-IP` with the client address. Browsing directly to Compose over `http://localhost:5173` or a LAN IP is intentionally rejected by the same-origin check and is not a supported protected-mode setup. Configure these variables in the environment running Compose:
 
 | Variable | Purpose |
 | --- | --- |
@@ -70,8 +70,9 @@ Compose defaults to an unauthenticated local demo. To enable GitHub sign-in, con
 | `GITHUB_OAUTH_CALLBACK_URL` | Exact HTTPS callback, for example `https://ghostline.example/auth/callback`. |
 | `GHOSTLINE_SESSION_SECRET` | Random secret of at least 32 bytes used to sign state and sessions. |
 | `GHOSTLINE_ALLOWED_GITHUB_IDS` | Comma-separated numeric GitHub user IDs allowed to sign in. |
+| `GHOSTLINE_TRUSTED_PROXY_CIDRS` | Optional comma-separated CIDRs for ingress peers that are trusted to supply `X-Real-IP`; leave empty when clients connect directly to Vite. |
 
-The callback exchanges the temporary OAuth code, reads the account identity, and discards the GitHub token. Sessions last 12 hours. Use a secret manager for deployment credentials. The current Compose frontend still runs Vite's development server and is intended for a trusted demo environment; protected-mode sign-in alone does not make it production-hosting ready. See the [threat model](docs/threat-model.md).
+The callback exchanges the temporary OAuth code, reads the account identity, and discards the GitHub token. Sessions last 12 hours. Use a secret manager for deployment credentials. Vite's development server and this Compose stack are for trusted demos, not production hosting; protected-mode sign-in alone does not make them production-ready. See the [threat model](docs/threat-model.md).
 
 The protected-mode sign-in screen is shown in this [working-app screenshot](docs/feature-evidence/hosted-github-sign-in.jpg); completing sign-in requires configured GitHub OAuth credentials.
 

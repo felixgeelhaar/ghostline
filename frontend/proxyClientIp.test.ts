@@ -37,4 +37,32 @@ describe('clientIpAwareProxy', () => {
     listener?.(request, { socket: { remoteAddress: '192.168.1.10' } })
     expect(request.headers.get(CLIENT_IP_HEADER.toLowerCase())).toBe('192.168.1.10')
   })
+
+  it('uses the real client IP only when the connection comes from a configured trusted proxy', () => {
+    const route = clientIpAwareProxy('http://backend:8080', ['10.0.0.0/8'])
+    let listener: typeof setClientIpHeader | undefined
+    const fakeProxy = { on: (_event: string, handler: typeof setClientIpHeader) => { listener = handler } }
+    route.configure?.(fakeProxy as never, {} as never)
+    const request = proxyRequest()
+
+    listener?.(request, { socket: { remoteAddress: '10.1.2.3' }, headers: { 'x-real-ip': '203.0.113.9' } })
+
+    expect(request.headers.get(CLIENT_IP_HEADER.toLowerCase())).toBe('203.0.113.9')
+  })
+
+  it('ignores a caller-supplied real IP when the connection is not a trusted proxy', () => {
+    const route = clientIpAwareProxy('http://backend:8080', ['10.0.0.0/8'])
+    let listener: typeof setClientIpHeader | undefined
+    const fakeProxy = { on: (_event: string, handler: typeof setClientIpHeader) => { listener = handler } }
+    route.configure?.(fakeProxy as never, {} as never)
+    const request = proxyRequest()
+
+    listener?.(request, { socket: { remoteAddress: '192.168.1.10' }, headers: { 'x-real-ip': '203.0.113.9' } })
+
+    expect(request.headers.get(CLIENT_IP_HEADER.toLowerCase())).toBe('192.168.1.10')
+  })
+
+  it('rejects invalid trusted proxy ranges at startup', () => {
+    expect(() => clientIpAwareProxy('http://backend:8080', ['not-a-cidr'])).toThrow('Invalid trusted proxy CIDR')
+  })
 })

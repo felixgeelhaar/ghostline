@@ -44,4 +44,22 @@ describe('latest Ghostline access check wins', () => {
     await recheck
     expect(session.ghostlineSession.value).toEqual({ authRequired: true, authenticated: false })
   })
+
+  it('does not restore a signed-out session when an older check settles afterward', async () => {
+    const pendingCheck = deferred<{ authRequired: boolean; authenticated: boolean; login?: string }>()
+    vi.mocked(fetchGhostlineSession)
+      .mockResolvedValueOnce({ authRequired: true, authenticated: true, login: 'Felix-Dev' })
+      .mockReturnValueOnce(pendingCheck.promise)
+    const session = useGhostlineSession()
+    await session.refreshGhostlineSession()
+
+    const inFlightCheck = session.refreshGhostlineSession()
+    session.endSession()
+    pendingCheck.resolve({ authRequired: true, authenticated: true, login: 'Felix-Dev' })
+    await inFlightCheck
+
+    expect(session.ghostlineSession.value).toEqual({ authRequired: true, authenticated: false })
+    expect(session.sessionError.value).toBe('')
+    expect(session.sessionLoading.value).toBe(false)
+  })
 })

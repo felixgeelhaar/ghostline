@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
@@ -31,8 +31,9 @@ const qodoStructuredReview = ref<QodoStructuredReview>()
 const qodoReviewError = ref('')
 const qodoReviewLoading = ref(false)
 const qodoKeyTransportSecure = computed(() => globalThis.isSecureContext === true)
-const { ghostlineSession, sessionLoading, sessionError, refreshGhostlineSession, handleSessionRejected } = useGhostlineSession()
+const { ghostlineSession, sessionLoading, sessionError, refreshGhostlineSession, handleSessionRejected, endSession } = useGhostlineSession()
 let traceTrigger: HTMLButtonElement | undefined
+let authChannel: BroadcastChannel | undefined
 let revisionRequest = 0
 let importRequest = 0
 let qodoRequest = 0
@@ -59,21 +60,65 @@ const activeTrace = computed(() => {
 })
 const glyph: Record<CheckTone, string> = { pass: '✓', fail: '✕', running: '●', neutral: '–' }
 
-onMounted(refreshGhostlineSession)
+onMounted(() => {
+  if (typeof BroadcastChannel !== 'undefined') {
+    authChannel = new BroadcastChannel('ghostline-session')
+    authChannel.onmessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'session-changed') return
+      clearWorkspace()
+      void handleSessionRejected()
+    }
+  }
+  const currentURL = new URL(window.location.href)
+  const signInCompleted = currentURL.searchParams.get('ghostline_auth') === 'complete'
+  if (signInCompleted) {
+    currentURL.searchParams.delete('ghostline_auth')
+    window.history.replaceState(window.history.state, '', `${currentURL.pathname}${currentURL.search}${currentURL.hash}`)
+    authChannel?.postMessage({ type: 'session-changed' })
+  }
+  void refreshGhostlineSession()
+})
+
+onBeforeUnmount(() => authChannel?.close())
 
 function handleUnauthorized(error: unknown) {
-  if (error instanceof GhostlineApiError && error.code === 'AUTH_REQUIRED') void handleSessionRejected()
+  if (ghostlineSession.value?.authenticated && error instanceof GhostlineApiError && error.code === 'AUTH_REQUIRED') {
+    void handleSessionRejected()
+  }
 }
 
 async function logout() {
   try {
     const response = await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' })
     if (!response.ok) throw new Error()
-    ghostlineSession.value = { authRequired: true, authenticated: false }
-    sessionError.value = ''
+    clearWorkspace()
+    endSession()
+    authChannel?.postMessage({ type: 'session-changed' })
   } catch {
     sessionError.value = 'Ghostline could not end this session. Try again.'
   }
+}
+
+function clearWorkspace() {
+  importRequest++
+  revisionRequest++
+  qodoRequest++
+  copyRequest++
+  url.value = ''
+  pr.value = undefined
+  error.value = ''
+  loading.value = false
+  selectedRevision.value = ''
+  focusedChecks.value = undefined
+  checksLoading.value = false
+  checksError.value = ''
+  selectedTraceId.value = ''
+  traceTrigger = undefined
+  copyResult.value = undefined
+  qodoApiKey.value = ''
+  qodoStructuredReview.value = undefined
+  qodoReviewError.value = ''
+  qodoReviewLoading.value = false
 }
 
 async function loadPR() {

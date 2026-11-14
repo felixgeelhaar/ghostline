@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -237,7 +239,7 @@ func TestGitHubOAuthCallbackIssuesAllowlistedSessionAndDiscardsToken(t *testing.
 	callback.AddCookie(stateCookie)
 	completed := httptest.NewRecorder()
 	router.ServeHTTP(completed, callback)
-	if completed.Code != http.StatusSeeOther || completed.Header().Get("Location") != "/" {
+	if completed.Code != http.StatusSeeOther || completed.Header().Get("Location") != "/?ghostline_auth=complete" {
 		t.Fatalf("callback status=%d redirect=%q body=%s", completed.Code, completed.Header().Get("Location"), completed.Body.String())
 	}
 	var sessionCookie *http.Cookie
@@ -286,6 +288,7 @@ func TestGitHubOAuthRejectsStateMismatchAndNonAllowlistedUser(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			auth.registerOAuthState(pending.State, time.Unix(pending.ExpiresAt, 0))
 			request := httptest.NewRequest(http.MethodGet, "/auth/callback?state="+tc.state+"&code=code", nil)
 			request.AddCookie(&http.Cookie{Name: oauthCookieName, Value: value})
 			response := httptest.NewRecorder()
@@ -367,6 +370,27 @@ func TestLogoutRequiresTheHostedOrigin(t *testing.T) {
 	}
 }
 
+func TestLogoutExpiresSessionAndPendingOAuthState(t *testing.T) {
+	auth := newAuthManager(testAuthConfig(), nil)
+	router := newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(20, time.Minute, time.Now), clientIdentity{}, nil, auth)
+	request := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	request.Header.Set("Origin", "https://ghostline.example")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("logout status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+	expired := map[string]bool{}
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.MaxAge < 0 {
+			expired[cookie.Name] = true
+		}
+	}
+	if !expired[sessionCookieName] || !expired[oauthCookieName] {
+		t.Fatalf("logout did not expire both session and pending OAuth cookies: %+v", response.Result().Cookies())
+	}
+}
+
 func TestSameOriginNormalizesDefaultHTTPSPort(t *testing.T) {
 	cfg := testAuthConfig()
 	cfg.CallbackURL = "https://ghostline.example:443/auth/callback"
@@ -392,6 +416,7 @@ func TestOAuthCallbackIsRateLimitedPerClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	auth.registerOAuthState("expected", time.Now().Add(time.Minute))
 	request := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/auth/callback?state=expected&code=one-time-code", nil)
 		req.AddCookie(&http.Cookie{Name: oauthCookieName, Value: state})
@@ -408,6 +433,101 @@ func TestOAuthCallbackIsRateLimitedPerClient(t *testing.T) {
 	}
 	if tokenRequests != 1 {
 		t.Fatalf("token endpoint requests = %d, want 1 after callback rate limit", tokenRequests)
+	}
+}
+
+func TestLogoutCancelsOAuthCallbackAlreadyInFlight(t *testing.T) {
+	tokenRequestStarted := make(chan struct{})
+	allowTokenResponse := make(chan struct{})
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Host == "github.com" {
+			close(tokenRequestStarted)
+			<-allowTokenResponse
+			return oauthResponse(http.StatusOK, `{"access_token":"temporary-token","token_type":"bearer"}`), nil
+		}
+		return oauthResponse(http.StatusOK, `{"id":42,"login":"Felix-Dev"}`), nil
+	})}
+	auth := newAuthManager(testAuthConfig(), client)
+	router := newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(20, time.Minute, time.Now), clientIdentity{}, nil, auth)
+
+	login := httptest.NewRecorder()
+	loginRequest := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+	loginRequest.Header.Set("Origin", "https://ghostline.example")
+	router.ServeHTTP(login, loginRequest)
+	if login.Code != http.StatusFound {
+		t.Fatalf("login status=%d, want 302", login.Code)
+	}
+	stateCookie := login.Result().Cookies()[0]
+	authorization, err := url.Parse(login.Header().Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := authorization.Query().Get("state")
+	callback := httptest.NewRequest(http.MethodGet, "/auth/callback?state="+url.QueryEscape(state)+"&code=one-time-code", nil)
+	callback.AddCookie(stateCookie)
+	callbackResponse := httptest.NewRecorder()
+	callbackDone := make(chan struct{})
+	go func() {
+		router.ServeHTTP(callbackResponse, callback)
+		close(callbackDone)
+	}()
+	select {
+	case <-tokenRequestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("callback did not reach the token exchange")
+	}
+
+	logout := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	logout.Header.Set("Origin", "https://ghostline.example")
+	logout.AddCookie(stateCookie)
+	logoutResponse := httptest.NewRecorder()
+	router.ServeHTTP(logoutResponse, logout)
+	if logoutResponse.Code != http.StatusNoContent {
+		t.Fatalf("logout status=%d, want 204", logoutResponse.Code)
+	}
+	close(allowTokenResponse)
+	select {
+	case <-callbackDone:
+	case <-time.After(time.Second):
+		t.Fatal("OAuth callback did not finish")
+	}
+	if callbackResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("callback status=%d, want cancellation 401; body=%s", callbackResponse.Code, callbackResponse.Body.String())
+	}
+	for _, cookie := range callbackResponse.Result().Cookies() {
+		if cookie.Name == sessionCookieName && cookie.MaxAge >= 0 {
+			t.Fatal("canceled callback issued a session cookie")
+		}
+	}
+}
+
+func TestOAuthCallbackLogsSafeFailureStage(t *testing.T) {
+	var output bytes.Buffer
+	auth := newAuthManager(testAuthConfig(), &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("upstream unavailable")
+	})})
+	auth.logger = slog.New(slog.NewTextHandler(&output, nil))
+	state := oauthState{State: "state-secret", Verifier: "verifier", ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	value, err := auth.sign("oauth-state", state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth.registerOAuthState(state.State, time.Unix(state.ExpiresAt, 0))
+	request := httptest.NewRequest(http.MethodGet, "/auth/callback?state=state-secret&code=code-secret", nil)
+	request.AddCookie(&http.Cookie{Name: oauthCookieName, Value: value})
+	response := httptest.NewRecorder()
+	newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(10, time.Minute, time.Now), clientIdentity{}, nil, auth).ServeHTTP(response, request)
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("callback status=%d, want 502", response.Code)
+	}
+	logged := output.String()
+	if !strings.Contains(logged, "token_exchange") || !strings.Contains(logged, "upstream unavailable") {
+		t.Fatalf("callback failure log omitted stage or cause: %s", logged)
+	}
+	for _, secret := range []string{"code-secret", "state-secret", "verifier", "temporary-token"} {
+		if strings.Contains(logged, secret) {
+			t.Fatalf("callback log contains OAuth secret %q: %s", secret, logged)
+		}
 	}
 }
 
