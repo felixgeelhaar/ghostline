@@ -9,11 +9,12 @@ vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() 
 vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
 
 const makePR = (number: number, title: string): PullRequest => ({
-  repository: 'acme/app', owner: 'acme', repo: 'app', number, title, state: 'open',
+  repository: 'acme/app', owner: 'acme', repo: 'app', number, title, state: 'open', merged: false,
   url: `https://github.com/acme/app/pull/${number}`, createdAt: '2026-11-10T09:00:00Z', updatedAt: '2026-11-10T10:00:00Z',
   commits: [],
   checks: { availability: 'available', revisionSha: 'a'.repeat(40), revisionShortSha: 'aaaaaaa', revisionUrl: `https://github.com/acme/app/commit/${'a'.repeat(40)}`, items: [] },
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] },
+  referencedIssues: { availability: 'available', items: [] },
 })
 
 function deferred<T>() {

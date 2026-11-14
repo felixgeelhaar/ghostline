@@ -13,11 +13,12 @@ vi.mock('../application/fetchQodoReviewSession', () => ({ fetchQodoReviewSession
 
 const sha = 'a'.repeat(40)
 const makePR = (number: number): PullRequest => ({
-  repository: 'acme/app', owner: 'acme', repo: 'app', number, title: `Change ${number}`, state: 'open',
+  repository: 'acme/app', owner: 'acme', repo: 'app', number, title: `Change ${number}`, state: 'open', merged: false,
   url: `https://github.com/acme/app/pull/${number}`, createdAt: '2026-11-10T09:00:00Z', updatedAt: '2026-11-10T10:00:00Z',
   commits: [],
   checks: { availability: 'available', revisionSha: sha, revisionShortSha: sha.slice(0, 7), revisionUrl: `https://github.com/acme/app/commit/${sha}`, items: [] },
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] },
+  referencedIssues: { availability: 'available', items: [] },
 })
 
 const review = (title: string): QodoStructuredReview => ({
