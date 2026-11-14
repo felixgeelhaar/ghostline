@@ -184,6 +184,22 @@ func TestImportReturnsChecksForHeadCommit(t *testing.T) {
 	}
 }
 
+func TestImportPreservesGitHubCheckRunOutput(t *testing.T) {
+	const title = "No new alerts in code changed by this pull request"
+	const summary = "[View all branch alerts](/acme/app/security/code-scanning?query=pr%3A7+tool%3Anox+is%3Aopen)."
+	run := strings.TrimSuffix(checkRun("nox", headSHA, "completed", "success"), "}") +
+		`,"output":{"title":"` + title + `","summary":"` + summary + `"}}`
+	srv := fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(run), statuses: noStatuses}.serve(t)
+
+	code, pr := importVia(t, srv)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if len(pr.Checks.Items) != 1 || pr.Checks.Items[0].OutputTitle != title || pr.Checks.Items[0].OutputSummary != summary {
+		t.Fatalf("check output = %+v, want GitHub's title and summary preserved", pr.Checks.Items)
+	}
+}
+
 func TestFocusedRevisionChecksEndpointFetchesRequestedSHA(t *testing.T) {
 	requestedSHA := olderSHA
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
