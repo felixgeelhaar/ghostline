@@ -296,6 +296,19 @@ func TestParseQodoToolResultRejectsConflictingAliasesInCompanionData(t *testing.
 	}
 }
 
+func TestParseQodoToolResultDoesNotHideConflictBehindLaterInvalidCompanion(t *testing.T) {
+	got, err := parseQodoToolResult(qodoToolResult{
+		StructuredContent: json.RawMessage(`{"review_session":null,"findings":[{"id":"f-1","title":"Valid"}],"review_runs":[]}`),
+		Content: []qodoToolContent{
+			{Type: "text", Text: `{"findings":[{"id":"f-2","title":"Conflicting","git_sha":"` + strings.Repeat("a", 40) + `","gitSha":"` + strings.Repeat("b", 40) + `"}],"review_runs":[]}`},
+			{Type: "text", Text: `{"findings":[{"id":"","title":"Invalid companion"}],"review_runs":[]}`},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "conflicting") {
+		t.Fatalf("result = %+v, error = %v; want earlier conflicting revision rejection", got, err)
+	}
+}
+
 func TestParseQodoToolResultMarksMalformedReviewCandidateIncomplete(t *testing.T) {
 	valid := `{"findings":[{"id":"f-1","title":"Valid finding"}],"review_runs":[]}`
 	malformed := `{"findings":[],"review_runs":null}`

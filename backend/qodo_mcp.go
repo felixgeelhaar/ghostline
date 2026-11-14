@@ -593,17 +593,24 @@ func parseQodoToolResult(toolResult qodoToolResult) (qodoReviewData, error) {
 	decoded := false
 	incompleteCandidates := false
 	var candidateValidationError error
+	var conflictingCandidateValidationError error
+	recordCandidateValidationError := func(err error) {
+		candidateValidationError = err
+		if conflictingCandidateValidationError == nil && strings.Contains(err.Error(), "conflicting") {
+			conflictingCandidateValidationError = err
+		}
+	}
 	structuredContent := bytes.TrimSpace(toolResult.StructuredContent)
 	if len(structuredContent) > 0 && !bytes.Equal(structuredContent, []byte("null")) {
 		var candidate qodoReviewData
 		if err := json.Unmarshal(structuredContent, &candidate); err != nil {
 			incompleteCandidates = true
 			if json.Valid(structuredContent) && looksLikeQodoReviewObject(structuredContent) {
-				candidateValidationError = err
+				recordCandidateValidationError(err)
 			}
 		} else if err := validateQodoReviewData(candidate); err != nil {
 			incompleteCandidates = true
-			candidateValidationError = err
+			recordCandidateValidationError(err)
 		} else {
 			data = candidate
 			decoded = true
@@ -618,7 +625,7 @@ func parseQodoToolResult(toolResult qodoToolResult) (qodoReviewData, error) {
 		if err := json.Unmarshal(payload, &candidate); err != nil {
 			if json.Valid(payload) && looksLikeQodoReviewObject(payload) {
 				incompleteCandidates = true
-				candidateValidationError = err
+				recordCandidateValidationError(err)
 				continue
 			}
 			if !json.Valid(payload) && looksLikeQodoReviewCandidate(payload) {
@@ -628,7 +635,7 @@ func parseQodoToolResult(toolResult qodoToolResult) (qodoReviewData, error) {
 		}
 		if err := validateQodoReviewData(candidate); err != nil {
 			incompleteCandidates = true
-			candidateValidationError = err
+			recordCandidateValidationError(err)
 			continue
 		}
 		if !decoded {
@@ -642,8 +649,8 @@ func parseQodoToolResult(toolResult qodoToolResult) (qodoReviewData, error) {
 		}
 		data = merged
 	}
-	if candidateValidationError != nil && strings.Contains(candidateValidationError.Error(), "conflicting") {
-		return empty, candidateValidationError
+	if conflictingCandidateValidationError != nil {
+		return empty, conflictingCandidateValidationError
 	}
 	if !decoded {
 		if candidateValidationError != nil {

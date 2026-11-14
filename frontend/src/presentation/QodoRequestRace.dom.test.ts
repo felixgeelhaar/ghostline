@@ -66,6 +66,29 @@ afterEach(() => {
 })
 
 describe('structured Qodo review request binding', () => {
+  it('labels the first load, active request, and subsequent refresh accurately', async () => {
+    vi.stubGlobal('isSecureContext', true)
+    vi.mocked(importPullRequest).mockResolvedValue(makePR(7))
+    const pending = deferred<QodoStructuredReview>()
+    vi.mocked(fetchQodoReviewSession).mockReturnValueOnce(pending.promise)
+    await mount()
+
+    await setValue('#pr-url', 'https://github.com/acme/app/pull/7')
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await settle()
+    const button = host!.querySelector<HTMLButtonElement>('#load-qodo-review')!
+    expect(button.textContent).toContain('LOAD STRUCTURED REVIEW')
+
+    await setValue('#qodo-api-key', 'first-key')
+    button.click()
+    await settle()
+    expect(button.textContent).toContain('LOADING STRUCTURED REVIEW')
+
+    pending.resolve(review('Initial finding'))
+    await settle()
+    expect(button.textContent).toContain('REFRESH STRUCTURED REVIEW')
+  })
+
   it('refuses to send a personal Qodo key from an insecure context', async () => {
     vi.stubGlobal('isSecureContext', false)
     vi.mocked(importPullRequest).mockResolvedValue(makePR(7))
