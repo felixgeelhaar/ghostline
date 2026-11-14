@@ -3,13 +3,16 @@ import { computed, nextTick, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
+import { fetchQodoReviewSession } from '../application/fetchQodoReviewSession'
 import { buildChangeActivity, countReviewsWithUnavailableDetails, describeCheckActivity } from '../domain/changeActivity'
 import { checkOutcome, checkSummaryPreview, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
 import { findRecurringFindings, qodoHeadCoverage, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
+import type { QodoStructuredReview } from '../domain/qodoReviewSession'
 import { buildFindingTrace } from '../domain/trace'
-import { validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
+import { isSamePullRequest, validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import ReviewCard from './ReviewCard.vue'
 import DeepTrace from './DeepTrace.vue'
+import StructuredQodoReview from './StructuredQodoReview.vue'
 
 const url = ref('')
 const pr = ref<PullRequest>()
@@ -21,9 +24,15 @@ const checksLoading = ref(false)
 const checksError = ref('')
 const selectedTraceId = ref('')
 const copyResult = ref<CopyResult>()
+const qodoApiKey = ref('')
+const qodoStructuredReview = ref<QodoStructuredReview>()
+const qodoReviewError = ref('')
+const qodoReviewLoading = ref(false)
+const qodoKeyTransportSecure = computed(() => globalThis.isSecureContext === true)
 let traceTrigger: HTMLButtonElement | undefined
 let revisionRequest = 0
 let importRequest = 0
+let qodoRequest = 0
 const activeChecks = computed(() => selectedRevision.value ? focusedChecks.value : pr.value?.checks)
 const orderedChecks = computed(() => orderChecks(activeChecks.value?.availability === 'available' ? activeChecks.value.items : []))
 const checksSummary = computed(() => summarizeChecks(orderedChecks.value))
@@ -54,14 +63,65 @@ async function loadPR() {
     loading.value = false
     return
   }
-  loading.value = true; pr.value = undefined; selectedRevision.value = ''; selectedTraceId.value = ''; traceTrigger = undefined; focusedChecks.value = undefined; checksError.value = ''; checksLoading.value = false; copyResult.value = undefined; copyRequest++; revisionRequest++
+  const keepCurrentChange = isSamePullRequest(pr.value, url.value)
+  loading.value = true
+  if (!keepCurrentChange) {
+    pr.value = undefined
+    selectedRevision.value = ''
+    selectedTraceId.value = ''
+    traceTrigger = undefined
+    focusedChecks.value = undefined
+    checksError.value = ''
+    checksLoading.value = false
+    copyResult.value = undefined
+    qodoStructuredReview.value = undefined
+    qodoReviewError.value = ''
+  }
+  copyRequest++
+  if (!keepCurrentChange) revisionRequest++
+  qodoRequest++
+  qodoApiKey.value = ''
+  qodoReviewLoading.value = false
   try {
     const importedPR = await importPullRequest(url.value)
-    if (request === importRequest) pr.value = importedPR
+    if (request === importRequest) {
+      const focusedRevisionStillExists = importedPR.commits.some((commit) => commit.sha === selectedRevision.value)
+      if (selectedRevision.value && !focusedRevisionStillExists) {
+        revisionRequest++
+        selectedRevision.value = ''
+        focusedChecks.value = undefined
+        checksError.value = ''
+        checksLoading.value = false
+      } else if (selectedRevision.value && selectedRevision.value === importedPR.checks.revisionSha) {
+        revisionRequest++
+        focusedChecks.value = importedPR.checks
+        checksError.value = ''
+        checksLoading.value = false
+      }
+      pr.value = importedPR
+    }
   } catch (e) {
     if (request === importRequest) error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
   } finally {
     if (request === importRequest) loading.value = false
+  }
+}
+async function loadStructuredQodoReview() {
+  const importedPR = pr.value
+  const apiKey = qodoApiKey.value
+  if (!importedPR || !apiKey || !qodoKeyTransportSecure.value) return
+  const request = ++qodoRequest
+  const requestedPRURL = importedPR.url
+  qodoApiKey.value = ''
+  qodoReviewError.value = ''
+  qodoReviewLoading.value = true
+  try {
+    const result = await fetchQodoReviewSession(requestedPRURL, apiKey)
+    if (request === qodoRequest && pr.value?.url === requestedPRURL) qodoStructuredReview.value = result
+  } catch (e) {
+    if (request === qodoRequest && pr.value?.url === requestedPRURL) qodoReviewError.value = e instanceof Error ? e.message : 'Could not load structured Qodo review data.'
+  } finally {
+    if (request === qodoRequest) qodoReviewLoading.value = false
   }
 }
 async function focusRevision(sha: string) {
@@ -133,11 +193,11 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
       <div class="change-heading"><div><span class="eyebrow">{{ pr.repository }} / PULL REQUEST #{{ pr.number }}</span><h2>{{ pr.title }}</h2></div><span class="state" :class="pr.state">{{ pr.state }}</span></div>
       <div class="meta"><span>{{ pr.commits.length }} COMMITS</span><span>OPENED {{ date(pr.createdAt) }}</span><a :href="pr.url" target="_blank" rel="noreferrer">VIEW ON GITHUB ↗</a></div>
 
-      <section v-if="pr.referencedIssues.items.length || pr.referencedIssues.availability === 'unavailable'" class="referenced-issues" aria-labelledby="referenced-issues-title">
+      <section v-if="pr.referencedIssues?.items.length || pr.referencedIssues?.availability === 'unavailable'" class="referenced-issues" aria-labelledby="referenced-issues-title">
         <h3 id="referenced-issues-title" class="section-title">REFERENCED ISSUES · GITHUB STATE</h3>
-        <p v-if="pr.referencedIssues.availability === 'unavailable'" class="checks-note warn" role="status">{{ pr.referencedIssues.reason || 'GitHub could not confirm the state of every referenced issue.' }}</p>
+        <p v-if="pr.referencedIssues?.availability === 'unavailable'" class="checks-note warn" role="status">{{ pr.referencedIssues.reason || 'GitHub could not confirm the state of every referenced issue.' }}</p>
         <ul>
-          <li v-for="issue in pr.referencedIssues.items" :key="issue.number">
+          <li v-for="issue in pr.referencedIssues?.items ?? []" :key="issue.number">
             <div v-if="pr.merged && issue.state === 'open'" class="referenced-issue-warning" role="status">
               <strong>Referenced issue #{{ issue.number }} is still open.</strong>
               <div><a :href="pr.url" target="_blank" rel="noreferrer">VIEW MERGED PR #{{ pr.number }} ↗</a><a :href="issue.url" target="_blank" rel="noreferrer">VIEW ISSUE #{{ issue.number }} ↗</a></div>
@@ -217,6 +277,15 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         <section v-if="selectedReviews.unmarked.length" class="unmarked-reviews"><h4 class="section-title"><span>REVISION NOT MARKED · CONTEXT ONLY</span></h4><ol class="review-list"><li v-for="review in selectedReviews.unmarked" :key="review.id"><ReviewCard :review="review" :commits="pr.commits" context-only @focus-revision="focusRevision" /></li></ol></section>
         <section v-if="pr.qodoReviews.availability === 'available'" class="recurrence" aria-labelledby="recurrence-title"><h4 id="recurrence-title" class="section-title"><span>REPEATED FINDINGS · FULL IMPORT</span></h4><p v-if="recurringFindings.length === 0" class="checks-note" role="status">No repeated finding title appears in the Qodo comments returned for this import.</p><ol v-else class="recurrence-list"><li v-for="finding in recurringFindings" :key="finding.id"><div class="review-meta"><strong>{{ finding.title }}</strong><span class="recurrence-count">{{ finding.occurrences.length }} separate comments</span></div><ul><li v-for="occurrence in finding.occurrences" :key="occurrence.reviewId"><time :datetime="occurrence.createdAt">{{ date(occurrence.createdAt) }}</time><a v-if="occurrence.commitSha && occurrence.commitUrl" :href="occurrence.commitUrl" target="_blank" rel="noreferrer">REVISION {{ occurrence.commitSha.slice(0, 7) }} ↗</a><span v-else>REVISION NOT MARKED</span><a :href="occurrence.sourceUrl" target="_blank" rel="noreferrer">SOURCE FINDING ↗</a></li></ul><button type="button" class="trace-open" :aria-expanded="selectedTraceId === finding.id" :aria-controls="selectedTraceId === finding.id ? 'deep-trace' : undefined" @click="toggleTrace(finding.id, $event)">{{ selectedTraceId === finding.id ? 'CLOSE DEEP TRACE' : 'OPEN DEEP TRACE' }}</button></li></ol><DeepTrace v-if="activeTrace" :trace="activeTrace" @close="clearTrace" @focus-revision="focusRevision" /><p class="footnote">A repeated title is an observed match across separate Qodo comments. It does not establish what caused the repeat or whether a later change fixed it.</p></section>
         <p class="footnote">Qodo review outcomes are reviewer feedback, not independent proof of correctness. Findings and summaries apply to their linked revision. A finding missing from a later review does not by itself prove the change was fixed.</p>
+        <form class="qodo-connect" @submit.prevent="loadStructuredQodoReview">
+          <label for="qodo-api-key">OPTIONAL · LOAD STRUCTURED QODO REVIEW</label>
+          <div class="qodo-connect-row"><input id="qodo-api-key" v-model="qodoApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Personal Qodo API key" :disabled="!qodoKeyTransportSecure"><button id="load-qodo-review" type="submit" :disabled="!qodoApiKey || !qodoKeyTransportSecure">{{ qodoReviewLoading ? 'LOADING STRUCTURED REVIEW' : qodoStructuredReview ? 'REFRESH STRUCTURED REVIEW' : 'LOAD STRUCTURED REVIEW' }} <span>↗</span></button></div>
+          <p v-if="!qodoKeyTransportSecure" class="checks-note warn" role="status"><strong>Secure connection required.</strong> Open Ghostline over HTTPS before sending a Qodo key. Localhost is also allowed.</p>
+          <p v-else class="footnote">The key is used for this request only, sent in a header, and never saved by Ghostline. Use only a Ghostline instance you trust.</p>
+          <p v-if="qodoReviewLoading" class="checks-note" role="status">Loading structured review data for {{ pr.url }}…</p>
+          <p v-if="qodoReviewError" class="checks-note warn" role="alert">{{ qodoReviewError }}</p>
+        </form>
+        <StructuredQodoReview v-if="qodoStructuredReview && pr" :review="qodoStructuredReview" :pull-request-url="pr.url" :head-sha="pr.checks.revisionSha" />
       </section>
     </section>
     </main>

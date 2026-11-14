@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PullRequestSchema, validatePullRequestURL } from './pullRequest'
+import { PullRequestSchema, isSamePullRequest, validatePullRequestURL } from './pullRequest'
 
 const validPullRequest = {
   repository: 'acme/ghostline',
@@ -24,6 +24,7 @@ const validPullRequest = {
   qodoReviews: { availability: 'unavailable', reason: 'Not configured', unrecognizedCommentCount: 0, items: [] },
   referencedIssues: { availability: 'available', items: [] },
 }
+const validPullRequestEntity = PullRequestSchema.parse(validPullRequest)
 
 describe('validatePullRequestURL', () => {
   it('accepts a GitHub PR URL', () => expect(validatePullRequestURL('https://github.com/acme/ghostline/pull/12')).toBeUndefined())
@@ -31,6 +32,18 @@ describe('validatePullRequestURL', () => {
   it('rejects a non-pull URL', () => expect(validatePullRequestURL('https://github.com/acme/ghostline/issues/12')).toBeTruthy())
   it('rejects a non-default port', () => expect(validatePullRequestURL('https://github.com:8443/acme/ghostline/pull/12')).toBeTruthy())
   it('rejects query strings and fragments', () => expect(validatePullRequestURL('https://github.com/acme/ghostline/pull/12?x=1')).toBeTruthy())
+})
+
+describe('isSamePullRequest', () => {
+  it('matches imported identity regardless of owner and repository casing', () => {
+    expect(isSamePullRequest(validPullRequestEntity, 'https://github.com/ACME/GHOSTLINE/pull/12')).toBe(true)
+  })
+
+  it('rejects a different PR or invalid URL', () => {
+    expect(isSamePullRequest(validPullRequestEntity, 'https://github.com/acme/ghostline/pull/13')).toBe(false)
+    expect(isSamePullRequest(validPullRequestEntity, 'https://evil.example/acme/ghostline/pull/12')).toBe(false)
+    expect(isSamePullRequest(undefined, 'https://github.com/acme/ghostline/pull/12')).toBe(false)
+  })
 })
 
 describe('PullRequestSchema source links', () => {

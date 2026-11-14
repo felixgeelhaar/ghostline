@@ -86,6 +86,20 @@ export const PullRequestSchema = z.object({
 })
 export type PullRequest = z.infer<typeof PullRequestSchema>
 
+export function isSamePullRequest(importedPR: PullRequest | undefined, requestedURL: string): boolean {
+  if (!importedPR || validatePullRequestURL(requestedURL)) return false
+  try {
+    const segments = new URL(requestedURL.trim()).pathname.replace(/\/+$/, '').split('/').filter(Boolean)
+    return segments.length === 4
+      && segments[0].toLowerCase() === importedPR.owner.toLowerCase()
+      && segments[1].toLowerCase() === importedPR.repo.toLowerCase()
+      && segments[2].toLowerCase() === 'pull'
+      && segments[3] === String(importedPR.number)
+  } catch {
+    return false
+  }
+}
+
 function matchesGitHubPath(value: string, expectedPath: string): boolean {
   try {
     const url = new URL(value)
