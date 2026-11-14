@@ -13,6 +13,88 @@ Trust boundaries:
 3. **Build and deployment pipeline:** source, dependencies, container images, GitHub Actions, and deployment configuration determine what code and privileges reach users.
 4. **Engineer to coding agent:** Deep Trace can produce copyable context. It does not execute an agent, and copied text may still influence the engineer’s separate agent session.
 
+### Public endpoints and storage evidence
+
+The following routes are intentionally reachable without a Ghostline session, including when hosted authentication is enabled:
+
+| Route | Purpose and evidence boundary |
+| --- | --- |
+| `GET /api/health` | Liveness response only; it does not return imported PR data or credentials. |
+| `GET /api/auth/status` | Reports whether the current browser has a valid session and the visible GitHub login; it does not grant access to protected API operations. |
+| `GET /auth/github/login` | Starts the GitHub OAuth redirect. OAuth state is checked on callback, and only allowlisted GitHub account IDs receive a session. |
+| `GET /auth/github/callback` | Completes the OAuth state/code exchange and account-ID allowlist check; the callback is public because the browser must reach it from GitHub. |
+| `POST /auth/logout` | Clears the browser's Ghostline session cookie and redirects to `/`; it does not call GitHub or mutate server-side account state. |
+
+The Go module manifest includes `go.mongodb.org/mongo-driver/v2` as an indirect dependency, but Ghostline has no MongoDB client, connection configuration, or database operations in application code. The package is not evidence of a Ghostline datastore. Recheck this statement if database code or configuration is added.
+
+## Threat-model result
+
+**Method:** C4 context and container views, followed by STRIDE review of the trust boundaries above. This is a code-and-configuration review, not a penetration test or certification. No numeric risk score is claimed.
+
+**Result:** the code and Compose configuration provide guardrails for local use and a controlled, allowlisted demonstration that imports public GitHub PRs. This review does not prove that a particular deployment is configured safely. Ghostline is not ready for unrestricted multi-tenant hosting or private-repository access. The main remaining risks are per-process rate limiting, lack of durable security audit history, and account-level access without repository authorization.
+
+### C4 level 1 — system context
+
+```mermaid
+flowchart LR
+  Engineer[Engineer]
+  Browser[Browser]
+  Ghostline[Ghostline]
+  GitHub[GitHub REST and OAuth]
+  Proxy[Hosted TLS ingress]
+  Agent[External coding agent]
+
+  Engineer --> Browser
+  Browser -->|Hosted requests| Proxy
+  Proxy -->|Forwards app and API traffic| Ghostline
+  Browser -. Local Compose uses loopback .-> Ghostline
+  Browser -->|OAuth authorize redirect| GitHub
+  GitHub -->|Redirect back with code and state| Browser
+  Browser -->|Callback request| Ghostline
+  Ghostline -->|Public PR, commit, check and review reads| GitHub
+  Browser -. copies Deep Trace text by user action .-> Agent
+```
+
+The external coding agent is outside Ghostline's control. Ghostline does not start, pause, or resume it. GitHub supplies imported engineering facts; GitHub OAuth supplies identity only. The application does not store PR data in a database.
+
+### C4 level 2 — containers and security-relevant state
+
+```mermaid
+flowchart TB
+  subgraph Deployment[Ghostline service]
+    API["Go and Gin service<br/>serves embedded Vue assets<br/>validation, GitHub client, auth middleware"]
+    Limits[In-memory rate limiter]
+    API --> Limits
+  end
+  Browser["Engineer browser<br/>Vue 3 and TypeScript"]
+  Browser -->|Hosted HTTPS| Proxy[Hosted TLS ingress]
+  Proxy -->|Forwards app/API traffic and overwritten client IP header| API
+  Browser -. local Compose uses loopback directly .-> API
+  API -->|Serves embedded Vue assets and API responses| Browser
+  Browser -->|Same-origin API requests carry the signed HttpOnly session cookie| API
+  API -. sets and verifies stateless session cookie .-> Browser
+  API -->|fixed HTTPS: PR data and OAuth identity lookup| GitHub[GitHub REST API]
+  Browser -->|OAuth authorize redirect| GitHubOAuth[GitHub OAuth endpoints]
+  GitHubOAuth -->|Redirect with code and state| Browser
+  Browser -->|Callback request| API
+  API -. transient token exchange .-> GitHubOAuth
+```
+
+There is no database container or durable session store. The session cookie is signed and stateless; OAuth state is held in a short-lived browser cookie, while rate-limit counters are process-local. The scanner's SBOM includes `go.mongodb.org/mongo-driver/v2` as a dependency, but a repository search found no MongoDB client, connection configuration, or database operations. This dependency alone does not establish a data-store flow. Local Compose access uses loopback; a hosted deployment needs a TLS-terminating trusted proxy that overwrites the configured client-IP header. Docker Compose is a demonstration stack, not a hardened hosting topology.
+
+### STRIDE assessment
+
+| Category | Assessment | Current treatment and residual risk |
+| --- | --- | --- |
+| **Spoofing** | Partially mitigated | Hosted mode validates OAuth state, signs the session cookie, and checks an explicit immutable GitHub account-ID allowlist. The allowlist is not synchronized with GitHub organization membership; compromised allowlisted accounts remain in scope. |
+| **Tampering** | Mitigated for supported read paths | PR URLs and revision identifiers are validated; outbound GitHub destinations are fixed; imported GitHub and Qodo-authored text remains untrusted and is rendered as text. Ghostline has no write operation to GitHub. |
+| **Repudiation** | Open | Request logs record path, status, timing, and client identity, but there is no durable actor/action audit trail. A deployment needing incident reconstruction must add protected audit storage. |
+| **Information disclosure** | Partially mitigated | The supported product imports public PRs. OAuth requests `read:user`; tokens are transient. Do not configure a GitHub token with private-repository access on an untrusted instance: account authentication is not repository authorization. |
+| **Denial of service** | Partially mitigated | GitHub requests have timeouts and API reads are rate-limited. Limits are in memory and reset on restart; multiple instances do not share a budget, and allowlisted users can still consume GitHub quota. |
+| **Elevation of privilege** | Partially mitigated | Hosted production requires OAuth and allowlisting; the app requests no repository scope. Allowlisted users receive account-level access to the public-PR API, with no organization/team policy or per-repository authorization. |
+
+The highest-priority deployment boundary is therefore access to private data: keep private-repository credentials out of this service until per-user repository authorization exists. Before broader hosting, add shared rate limiting, operational monitoring, and a protected audit trail, then repeat this assessment against the deployed topology.
+
 ## Threats and current treatment
 
 | Threat | Current controls | Remaining exposure |
@@ -34,7 +116,9 @@ For hosted deployments, configure GitHub OAuth and an explicit numeric GitHub ac
 
 Warden runs local contributor gates; Nox scans repository artifacts; GitHub Actions records hosted checks. These controls help assess the source and build. They do not secure a running Ghostline service or prove that imported code is safe.
 
-The current Nox scan reports the zlib advisory with the same fingerprint for the Node builder, Go builder, and runtime `FROM` lines. The baseline retains one occurrence per report because removing duplicates caused the other two occurrences to fail the Warden Nox gate. Each reason names the corresponding stage; re-scan before retiring entries when an official base image updates.
+Nox 1.64.0 scanned implementation revision `de600b4b08c6c74f4804f00bcc3a15f4db3aff37` on 2026-11-14 at 14:40 UTC. The scan reports 12 baselined container-image findings across 190 dependencies: four OpenSSL 3.5.9 advisories in each of the Node 26 and Node 22 images (fixed upstream in 3.5.10), plus the zlib 1.3.2-r1 advisory in the Node 26 builder, Node 22 builder, Go builder, and Alpine runtime image (fixed upstream in 1.4-r0). Nox reports zero active findings because all 12 are baselined; this is not a clean scan. The zlib fingerprint repeats across image occurrences, so the baseline retains each Dockerfile location. Nox established affected package versions but did not establish symbol use or application applicability; its available reachability and taint analyses answered no questions in this scan. The findings therefore do not prove exploitability or harmlessness. Re-scan and verify actual pinned image contents before retiring entries; installing a fixed zlib package after `FROM` does not change the underlying base-image finding.
+
+Nox's automated threat-model report for that scan identified 15 elements and 9 flows. Its STRIDE matrix had 4 leads to verify, 4 cells with limited context, and 70 cells with no evidence; “not evidenced” is not evidence that a threat is absent. It also inferred a MongoDB data-store flow from the MongoDB driver in the SBOM. Manual repository review answered its five questions: four routes (health, auth status, and OAuth login/callback) are intentionally public, and no MongoDB client, connection configuration, or database operations exist. The dependency is therefore not treated as an actual Ghostline data store. Nox reads middleware names but does not verify authentication behavior, runtime configuration, or deployed network topology. These scan counts and the manual review are evidence for this dated snapshot, not a substitute for reviewing changes to the code or deployment.
 
 ## Review triggers
 
