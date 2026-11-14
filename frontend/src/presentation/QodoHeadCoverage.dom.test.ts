@@ -11,7 +11,7 @@ vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.f
 const headSha = 'a'.repeat(40)
 const oldSha = 'b'.repeat(40)
 const pullRequest: PullRequest = {
-  repository: 'acme/app', owner: 'acme', repo: 'app', number: 7, title: 'Qodo review coverage', state: 'open',
+  repository: 'acme/app', owner: 'acme', repo: 'app', number: 7, title: 'Qodo review coverage', state: 'open', merged: false,
   url: 'https://github.com/acme/app/pull/7', createdAt: '2026-11-04T08:00:00Z', updatedAt: '2026-11-04T11:00:00Z',
   commits: [
     { sha: oldSha, shortSha: oldSha.slice(0, 7), message: 'Earlier revision', author: 'A', committedAt: '2026-11-04T09:00:00Z', url: `https://github.com/acme/app/commit/${oldSha}` },
@@ -19,6 +19,7 @@ const pullRequest: PullRequest = {
   ],
   checks: { availability: 'available', revisionSha: headSha, revisionShortSha: headSha.slice(0, 7), revisionUrl: `https://github.com/acme/app/commit/${headSha}`, items: [{ name: 'nox', kind: 'check_run', source: 'nox', status: 'completed', conclusion: 'success', url: 'https://github.com/acme/app/runs/1', outputTitle: 'No new alerts in code changed by this pull request', outputSummary: '[View all branch alerts](/acme/app/security/code-scanning?query=pr%3A7+tool%3Anox+is%3Aopen).' }] },
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [{ id: 17, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [], commitSha: oldSha, commitUrl: `https://github.com/acme/app/commit/${oldSha}`, createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-17' }] },
+  referencedIssues: { availability: 'available', items: [] },
 }
 
 let mounted: ReturnType<typeof createApp> | undefined

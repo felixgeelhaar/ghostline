@@ -2,7 +2,7 @@
 
 ## Short specification
 
-Ghostline is a change-centric engineering control room for engineers using coding agents. Its current slice imports a **public GitHub pull request** and presents the change’s metadata, a source-labeled activity index of commit and published Qodo comment timestamps, revision-linked GitHub checks, and review details. For GitHub check runs it preserves the source title and shows a bounded text preview of the source summary; oversized previews are labeled, and the linked GitHub check remains the source for full output. This is check output, not a full Nox report ingested by Ghostline. It compares an explicit revision marker in a published Qodo comment with the current PR head; “current” means that comment names the head SHA, not that Ghostline found the latest complete review run. Repeated Qodo finding titles can be traced across comments when their revision markers support it. Warden runs local developer gates and Nox scans; repository CI also runs Nox. Ghostline does not currently ingest Nox reports.
+Ghostline is a change-centric engineering control room for engineers using coding agents. Its current slice imports a **public GitHub pull request** and presents the change’s metadata, a source-labeled activity index of commit and published Qodo comment timestamps, revision-linked GitHub checks, and review details. For GitHub check runs it preserves the source title and shows a bounded text preview of the source summary; oversized previews are labeled, and the linked GitHub check remains the source for full output. This is check output, not a full Nox report ingested by Ghostline. It compares an explicit revision marker in a published Qodo comment with the current PR head; “current” means that comment names the head SHA, not that Ghostline found the latest complete review run. Repeated Qodo finding titles can be traced across comments when their revision markers support it. It also checks issue references in the PR description and highlights issues that remain open after the PR is merged. Warden runs local developer gates and Nox scans; repository CI also runs Nox. Ghostline does not currently ingest Nox reports.
 
 The screenshot below shows the running app after importing Ghostline PR #56 at its earlier head `685decd`. The displayed Qodo comment, marked revision, and finding link to GitHub; this is live repository evidence captured for the feature, not a replay.
 
@@ -24,12 +24,12 @@ Ghostline is a small Go API and Vue single-page application. It has no database 
 Browser (Vue 3 + TypeScript)
   presentation: App.vue, ReviewCard.vue, DeepTrace.vue
   application: importPullRequest, fetchRevisionChecks
-  domain: pullRequest, checks, reviews, trace
+  domain: pullRequest, checks, reviews, trace, referenced issues
           │ /api/import, /api/checks
           ▼
 Go + Gin API
   HTTP handlers and GitHub response normalization
-  GitHub client, check aggregation, Qodo comment parsing
+  GitHub client, referenced-issue lookup, check aggregation, Qodo comment parsing
           │ HTTPS GitHub REST API
           ▼
 GitHub: pull request, commits, checks, published issue comments
@@ -39,7 +39,7 @@ The frontend validates API payloads with Zod at the boundary in `frontend/src/do
 
 For code changes, preserve these domain boundaries and use test-driven development: write or update a focused failing test for the behavior first, then implement the smallest change that makes it pass.
 
-The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, normalize the response, and render the source-labeled activity index and review evidence. The activity index orders commit metadata times, check-run start/completion/update times, commit-status creation/update times, and Qodo comment times while preserving each source's timestamp label and native check/status ID. Check entries are GitHub's latest records for the focused revision at fetch time, not a complete check-run history. The timeline does not treat sequence as causation. Check-run titles and bounded summaries stay attached to their source-linked check. `POST /api/checks` fetches checks for a focused full commit SHA. Checks are always labeled with the revision GitHub returned and shown in a revision-scoped section.
+The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, look up up to 20 issue references from the PR description, normalize the response, and render the source-labeled activity index and review evidence. Issue references are limited to `#N` and same-repository GitHub issue URLs; returned issues are validated against their repository and number. Failed or capped lookups are shown as unavailable. A merged PR with an open referenced issue is flagged with links to the PR and issue; Ghostline does not determine whether the issue’s work was delivered. The activity index orders commit metadata times, check-run start/completion/update times, commit-status creation/update times, and Qodo comment times while preserving each source's timestamp label and native check/status ID. Check entries are GitHub's latest records for the focused revision at fetch time, not a complete check-run history. The timeline does not treat sequence as causation. Check-run titles and bounded summaries stay attached to their source-linked check. `POST /api/checks` fetches checks for a focused full commit SHA. Checks are always labeled with the revision GitHub returned and shown in a revision-scoped section.
 
 ## Setup and verification
 
@@ -90,3 +90,5 @@ For current trust boundaries, abuse cases, and hosting limitations, see the [thr
 The running change activity index, imported from Ghostline PR #49, is shown in [this screenshot](feature-evidence/change-activity-index.jpg). The revision-linked GitHub check events are shown in [this screenshot](feature-evidence/revision-linked-check-activity.jpg), imported from Ghostline PR #50 at revision `286dcc7`. The empty-check state is shown in [this screenshot](feature-evidence/activity-index-check-coverage.jpg), captured from public PR `octocat/Hello-World#1` when GitHub reported no check runs or commit statuses for the displayed revision. Qodo activity was unavailable at capture time and the UI says so. These views show current records or fetch-time availability; they do not represent complete event history.
 
 The current source-backed review timeline, imported from Ghostline PR #50 at revision `4bae19d`, is shown in [this screenshot](feature-evidence/activity-index-review-timeline.jpg). It shows observed commit and published Qodo comment events; it does not imply that event order proves a repair relationship. Parser-incompleteness and partial-check-placement warnings are edge states covered by tests, not present in this PR's current records.
+
+The [live referenced-issues panel](feature-evidence/referenced-issue-live-2026-11-13.jpg) shows issue states imported from a public pull request. This example’s referenced issues are now closed; the merged/open warning is covered by UI tests using explicit fixtures.
