@@ -100,7 +100,7 @@ func NewRevisionComparison(owner, repo, baseSHA, headSHA string, source Revision
 		}
 		revisionSHA := headSHA
 		switch file.Status {
-		case "added", "modified", "renamed":
+		case "added", "modified", "renamed", "copied", "changed", "unchanged":
 		case "removed":
 			revisionSHA = baseSHA
 		default:

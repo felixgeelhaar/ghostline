@@ -286,30 +286,6 @@ func TestCompareRevisionsRejectsInvalidOrMismatchedSHAs(t *testing.T) {
 	}
 }
 
-func TestValidGitHubSourceURLRequiresExpectedRepositoryAndRevision(t *testing.T) {
-	base := strings.Repeat("a", 40)
-	head := strings.Repeat("b", 40)
-	tests := []struct {
-		name, raw, expected string
-		want                bool
-	}{
-		{"comparison", "https://github.com/acme/app/compare/" + base + "..." + head, "/acme/app/compare/" + base + "..." + head, true},
-		{"different repository", "https://github.com/other/app/compare/" + base + "..." + head, "/acme/app/compare/" + base + "..." + head, false},
-		{"wrong revision pair", "https://github.com/acme/app/compare/" + base + "..." + strings.Repeat("c", 40), "/acme/app/compare/" + base + "..." + head, false},
-		{"file at full commit", "https://github.com/acme/app/blob/" + head + "/backend/retry.go", "/acme/app/blob/", true},
-		{"file from another repo", "https://github.com/other/app/blob/" + head + "/backend/retry.go", "/acme/app/blob/", false},
-		{"file without full revision", "https://github.com/acme/app/blob/main/backend/retry.go", "/acme/app/blob/", false},
-		{"non-GitHub host", "https://github.example/acme/app/compare/" + base + "..." + head, "/acme/app/compare/" + base + "..." + head, false},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := validGitHubSourceURL(test.raw, test.expected); got != test.want {
-				t.Fatalf("validGitHubSourceURL(%q, %q) = %t, want %t", test.raw, test.expected, got, test.want)
-			}
-		})
-	}
-}
-
 func TestImportPRUsesCanonicalRepositoryReturnedByGitHub(t *testing.T) {
 	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	var requests []string

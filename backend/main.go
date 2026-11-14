@@ -255,24 +255,6 @@ func (a api) compareRevisions(c *gin.Context) {
 	c.JSON(http.StatusOK, comparison)
 }
 
-func validGitHubSourceURL(raw, expectedPath string) bool {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Host, "github.com") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return false
-	}
-	path := strings.ToLower(u.EscapedPath())
-	expected := strings.ToLower(expectedPath)
-	if strings.HasSuffix(expected, "/") {
-		if !strings.HasPrefix(path, expected) {
-			return false
-		}
-		remainder := strings.TrimPrefix(path, expected)
-		parts := strings.Split(strings.Trim(remainder, "/"), "/")
-		return len(parts) >= 2 && fullSHA.MatchString(parts[0])
-	}
-	return path == expected
-}
-
 func respondGitHubError(c *gin.Context, err error) {
 	var statusErr statusError
 	switch {

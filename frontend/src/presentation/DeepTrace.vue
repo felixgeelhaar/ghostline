@@ -141,10 +141,10 @@ async function inspectCandidate(baseSha: string, headSha: string) {
                 <section v-else-if="comparisonTarget?.baseSha === span.fromRevision?.sha && comparisonTarget?.headSha === revision.sha && comparisonError" class="candidate-comparison comparison-error" role="status"><strong>Comparison unavailable.</strong> {{ comparisonError }} <span>You can still inspect either revision directly on GitHub.</span></section>
                 <section v-else-if="comparisonTarget?.baseSha === span.fromRevision?.sha && comparisonTarget?.headSha === revision.sha && comparison" class="candidate-comparison" aria-label="Candidate revision comparison">
                   <p class="comparison-boundary">CANDIDATE DIFF · {{ comparison.baseSha.slice(0, 7) }} → {{ comparison.headSha.slice(0, 7) }}. This shows changed files between revisions; it does not prove a finding was addressed.</p>
-                  <p class="comparison-summary">{{ comparison.totalCommits }} commits · {{ comparison.files.length }} changed file{{ comparison.files.length === 1 ? '' : 's' }} returned by GitHub <a :href="comparison.compareUrl" target="_blank" rel="noreferrer">OPEN FULL COMPARISON ↗</a></p>
+                  <p class="comparison-summary">{{ comparison.totalCommits }} commits · {{ comparison.files.length }} file entr{{ comparison.files.length === 1 ? 'y' : 'ies' }} returned by GitHub <a :href="comparison.compareUrl" target="_blank" rel="noreferrer">OPEN FULL COMPARISON ↗</a></p>
                   <p v-if="comparison.filesTruncated" class="checks-note" role="status">GitHub returned the first 300 changed files. This comparison may omit additional files; open the full comparison for complete details.</p>
                   <ul v-if="comparison.files.length" class="comparison-files"><li v-for="file in comparison.files" :key="file.path"><a :href="file.url" target="_blank" rel="noreferrer">{{ file.path }} ↗</a><span>{{ file.status }} · +{{ file.additions }} −{{ file.deletions }}</span></li></ul>
-                  <p v-else class="checks-note">GitHub returned no changed file entries for this revision pair.</p>
+                  <p v-else class="checks-note">GitHub returned no file entries for this revision pair.</p>
                 </section>
               </li>
             </ul>

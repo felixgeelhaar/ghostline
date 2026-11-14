@@ -53,3 +53,20 @@ func TestNewRevisionComparisonUsesBaseLinkForRemovedFiles(t *testing.T) {
 		t.Fatalf("comparison = %+v, error = %v", comparison, err)
 	}
 }
+
+func TestNewRevisionComparisonPreservesAdditionalGitHubFileStatuses(t *testing.T) {
+	baseSHA, headSHA := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	for _, status := range []string{"copied", "changed", "unchanged"} {
+		t.Run(status, func(t *testing.T) {
+			source := validRevisionComparisonSource(baseSHA, headSHA, "src/copied.go", "https://github.com/acme/app/blob/"+headSHA+"/src/copied.go")
+			source.Files[0].Status = status
+			comparison, err := NewRevisionComparison("acme", "app", baseSHA, headSHA, source)
+			if err != nil {
+				t.Fatalf("NewRevisionComparison() error = %v", err)
+			}
+			if len(comparison.Files) != 1 || comparison.Files[0].Status != status {
+				t.Fatalf("files = %+v, want status %q preserved", comparison.Files, status)
+			}
+		})
+	}
+}

@@ -37,6 +37,14 @@ describe('revision comparison contract', () => {
     })).toThrow('different revision or path')
   })
 
+  it.each(['copied', 'changed', 'unchanged'])('preserves GitHub file status %s', (status) => {
+    const comparison = parseRevisionComparison({
+      ...payload,
+      files: [{ ...payload.files[0], status, additions: 0, deletions: 0, changes: 0 }],
+    }, { pullRequestUrl: 'https://github.com/acme/app/pull/7', baseSha, headSha })
+    expect(comparison.files[0]?.status).toBe(status)
+  })
+
   it('binds source evidence to the requested PR repository and revision pair', () => {
     expect(parseRevisionComparison(payload, {
       pullRequestUrl: 'https://github.com/acme/app/pull/7', baseSha, headSha,

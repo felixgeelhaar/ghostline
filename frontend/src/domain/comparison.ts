@@ -17,7 +17,7 @@ export const RevisionComparisonSchema = z.object({
   filesTruncated: z.boolean().default(false),
   files: z.array(z.object({
     path: z.string().min(1),
-    status: z.enum(['added', 'modified', 'removed', 'renamed']),
+    status: z.enum(['added', 'modified', 'removed', 'renamed', 'copied', 'changed', 'unchanged']),
     additions: z.number().int().nonnegative(),
     deletions: z.number().int().nonnegative(),
     changes: z.number().int().nonnegative(),
