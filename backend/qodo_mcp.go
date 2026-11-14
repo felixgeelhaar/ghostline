@@ -223,7 +223,7 @@ func findingFromDomain(value domain.QodoReviewFinding) qodoManagedFinding {
 }
 
 type qodoReviewSession struct {
-	Status    string     `json:"status"`
+	Status    string     `json:"status,omitempty"`
 	CommitSHA string     `json:"commitSha,omitempty"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`
 }

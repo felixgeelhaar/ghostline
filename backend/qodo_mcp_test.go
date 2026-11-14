@@ -367,6 +367,38 @@ func TestQodoReviewEndpointReturnsExplicitNoSessionState(t *testing.T) {
 	}
 }
 
+func TestQodoReviewEndpointOmitsMissingSessionStatus(t *testing.T) {
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	router := newRouterWithQodoAndLimiter(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, qodoSourceFunc(func(context.Context, string, string) (qodoReviewData, error) {
+		return qodoReviewData{
+			Availability: "available", Source: "Qodo Agentic Toolbox",
+			ReviewSession: &qodoReviewSession{CommitSHA: sha},
+			Findings: []qodoManagedFinding{{ID: "finding-1", Title: "Preserve review data", GitSHA: sha}},
+			ReviewRuns: []qodoManagedReviewRun{{ID: "run-1", Status: "completed", CommitSHA: sha}},
+		}, nil
+	}), newRateLimiter(defaultRateLimitRequests, defaultRateLimitWindow, time.Now), clientIdentity{})
+	req := httptest.NewRequest(http.MethodPost, "/api/qodo-review", strings.NewReader(`{"url":"https://github.com/acme/payments/pull/42"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://ghostline.example")
+	req.Header.Set("X-Qodo-API-Key", "qodo-secret")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s; want successful response", res.Code, res.Body.String())
+	}
+	if strings.Contains(res.Body.String(), `"status":""`) {
+		t.Fatalf("missing Qodo status was serialized as an empty string: %s", res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), `"commitSha":"`+sha+`"`) {
+		t.Fatalf("session revision was lost while omitting status: %s", res.Body.String())
+	}
+	for _, expected := range []string{`"id":"finding-1"`, `"id":"run-1"`} {
+		if !strings.Contains(res.Body.String(), expected) {
+			t.Fatalf("valid Qodo evidence %s was lost while omitting status: %s", expected, res.Body.String())
+		}
+	}
+}
+
 func TestQodoReviewEndpointRejectsOversizedRequestBody(t *testing.T) {
 	fetched := false
 	router := newRouterWithQodoAndLimiter(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, qodoSourceFunc(func(context.Context, string, string) (qodoReviewData, error) {

@@ -361,9 +361,22 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
   const summary = baseReviewAttentionSummary(review, headSha)
   if (!review.warnings?.length) return summary
 
+  const warning = `Qodo also reported a response warning: ${review.warnings.join(' ')}`
+  const detail = summary.kind === 'clear' && summary.findingCount === 0
+    ? `No findings were present in the interpretable response. ${warning}`
+    : `${summary.detail} ${warning}`
+  const nextAction = summary.kind === 'clear'
+    ? 'Retry the structured Qodo review or inspect the original Qodo response before relying on its completeness.'
+    : summary.kind === 'in-progress'
+      ? `${summary.nextAction} After it completes, retry the structured Qodo review or inspect the original Qodo response before relying on completeness.`
+      : `${summary.nextAction} Retry the structured Qodo review or inspect the original Qodo response before relying on completeness.`
+
   return {
     ...summary,
-    detail: `${summary.detail} Qodo also reported a response warning: ${review.warnings.join(' ')}`,
+    kind: 'incomplete',
+    title: 'Qodo response may be incomplete',
+    detail,
+    nextAction,
   }
 }
 

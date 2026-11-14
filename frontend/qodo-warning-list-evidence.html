@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ghostline · Qodo warning list replay</title>
+    <title>Ghostline · Qodo partial response guidance</title>
     <link rel="stylesheet" href="/src/presentation/style.css" />
     <style>
       body { min-height: 100vh; padding: 28px; background: #090b16; }
@@ -12,7 +12,7 @@
     </style>
   </head>
   <body>
-    <p class="fixture-label">PREPARED REPLAY · DUPLICATE SOURCE WARNINGS · NOT LIVE QODO OUTPUT</p>
+    <p class="fixture-label">PREPARED REPLAY · PARTIAL QODO RESPONSE · NOT LIVE QODO OUTPUT</p>
     <div id="app"></div>
     <script type="module">
       import { createApp } from 'vue'
@@ -25,11 +25,8 @@
           availability: 'available',
           source: 'Qodo Agentic Toolbox · get-pr-review-findings',
           reviewSession: { status: 'completed', commitSha: 'b'.repeat(40) },
-          warnings: [
-            'One companion response could not be interpreted; the review may be incomplete.',
-            'One companion response could not be interpreted; the review may be incomplete.',
-          ],
-          findings: [{ id: 'finding-demo-1', title: 'Preserve each source warning row', description: 'Repeated warning text remains readable without duplicate Vue keys.', category: 'Reliability', actionLevel: 'informational' }],
+          warnings: ['An additional response block could not be interpreted; the review may be incomplete.'],
+          findings: [{ id: 'finding-demo-1', title: 'Validate the idempotency key before replay', description: 'Confirm the reported finding against its source revision before deciding whether the repair is sufficient.', category: 'Correctness', actionLevel: 'action_required', gitSha: 'b'.repeat(40), reviewRunId: 'run-demo-1', filePath: 'backend/payments.go', startLine: 84 }],
           reviewRuns: [],
         },
       }).mount('#app')

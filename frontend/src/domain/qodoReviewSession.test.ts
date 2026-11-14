@@ -455,10 +455,41 @@ describe('structured Qodo review evidence', () => {
     })
 
     const summary = reviewAttentionSummary(review, shaA)
-    expect(summary).toMatchObject({ kind: 'attention', title: '1 finding reported open', openFindingCount: 1 })
+    expect(summary).toMatchObject({ kind: 'incomplete', title: 'Qodo response may be incomplete', openFindingCount: 1 })
     expect(summary.nextAction).toContain('Inspect the open findings below')
     expect(summary.detail).toContain('Qodo reports 1 finding as open')
     expect(summary.detail).toContain('An additional response block could not be interpreted.')
+    expect(summary.nextAction.toLowerCase()).toContain('retry the structured qodo review')
+  })
+
+  it('does not present an empty partial response as a clear review', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: [], reviewRuns: [],
+      warnings: ['An additional response block could not be interpreted.'],
+    })
+
+    const summary = reviewAttentionSummary(review, shaA)
+    expect(summary).toMatchObject({ kind: 'incomplete', title: 'Qodo response may be incomplete', openFindingCount: 0 })
+    expect(summary.detail).toContain('No findings were present in the interpretable response')
+    expect(summary.nextAction).toContain('Retry the structured Qodo review')
+    expect(summary.nextAction).not.toContain('when deciding whether to ship')
+  })
+
+  it('keeps the wait step when a running review response is partial', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'running', commitSha: shaA },
+      findings: [], reviewRuns: [],
+      warnings: ['An additional response block could not be interpreted.'],
+    })
+
+    const summary = reviewAttentionSummary(review, shaA)
+    expect(summary.kind).toBe('incomplete')
+    expect(summary.nextAction.toLowerCase()).toContain('wait')
+    expect(summary.nextAction).toContain('After it completes')
+    expect(summary.nextAction.toLowerCase()).toContain('retry the structured qodo review')
   })
 
   it('keeps findings visible as next steps when Qodo returns no session', () => {
