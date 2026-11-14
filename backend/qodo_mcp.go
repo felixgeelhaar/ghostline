@@ -20,11 +20,12 @@ import (
 )
 
 const (
-	qodoMCPURL           = "https://sdk.qodo.ai/v1/tools/mcp/"
-	qodoToolName         = "get-pr-review-findings"
-	maxQodoAPIKeyLength  = 2048
-	maxQodoRequestBytes  = 8 << 10
-	maxQodoResponseBytes = 2 << 20
+	qodoMCPURL             = "https://sdk.qodo.ai/v1/tools/mcp/"
+	qodoToolName           = "get-pr-review-findings"
+	qodoMCPProtocolVersion = "2025-03-26"
+	maxQodoAPIKeyLength    = 2048
+	maxQodoRequestBytes    = 8 << 10
+	maxQodoResponseBytes   = 2 << 20
 )
 
 type qodoReviewSource interface {
@@ -478,7 +479,7 @@ func (client *qodoReviewClient) fetch(ctx context.Context, apiKey, prURL string)
 	initialize := map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "initialize",
 		"params": map[string]any{
-			"protocolVersion": "2025-03-26", "capabilities": map[string]any{},
+			"protocolVersion": qodoMCPProtocolVersion, "capabilities": map[string]any{},
 			"clientInfo": map[string]string{"name": "ghostline", "version": "0.1.0"},
 		},
 	}
@@ -504,6 +505,9 @@ func (client *qodoReviewClient) fetch(ctx context.Context, apiKey, prURL string)
 	}
 	if err := json.Unmarshal(initResponse.Result, &initResult); err != nil || initResult.ProtocolVersion == "" {
 		return empty, errors.New("Qodo MCP initialization response was invalid")
+	}
+	if initResult.ProtocolVersion != qodoMCPProtocolVersion {
+		return empty, fmt.Errorf("unsupported Qodo MCP protocol version %q", initResult.ProtocolVersion)
 	}
 	if err := client.notifyInitialized(ctx, apiKey, sessionID); err != nil {
 		return empty, err

@@ -895,6 +895,41 @@ func TestQodoReviewClientClosesSessionWhenInitializationResponseIsInvalid(t *tes
 	}
 }
 
+func TestQodoReviewClientRejectsUnsupportedNegotiatedProtocolVersion(t *testing.T) {
+	var methods []string
+	client := qodoReviewClient{
+		endpoint: "https://qodo.test/v1/tools/mcp/",
+		http: &http.Client{Transport: qodoRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			recorder := httptest.NewRecorder()
+			if request.Method == http.MethodDelete {
+				methods = append(methods, "DELETE")
+				recorder.WriteHeader(http.StatusNoContent)
+				return recorder.Result(), nil
+			}
+			var body struct {
+				Method string `json:"method"`
+				ID     int64  `json:"id"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				return nil, err
+			}
+			methods = append(methods, body.Method)
+			recorder.Header().Set("Content-Type", "application/json")
+			recorder.Header().Set("Mcp-Session-Id", "new-session")
+			_, _ = fmt.Fprintf(recorder, `{"jsonrpc":"2.0","id":%d,"result":{"protocolVersion":"2099-01-01","capabilities":{},"serverInfo":{"name":"qodo","version":"test"}}}`, body.ID)
+			return recorder.Result(), nil
+		})},
+	}
+
+	_, err := client.fetch(context.Background(), "qodo-secret", "https://github.com/acme/payments/pull/42")
+	if err == nil || !strings.Contains(err.Error(), "unsupported Qodo MCP protocol version") {
+		t.Fatalf("fetch error = %v; want unsupported protocol version error", err)
+	}
+	if strings.Join(methods, ",") != "initialize,DELETE" {
+		t.Fatalf("MCP requests after unsupported negotiation = %v; want initialize then cleanup only", methods)
+	}
+}
+
 func TestDecodeMCPEnvelopeStreamCountsCRLFBytesAgainstLimit(t *testing.T) {
 	var data strings.Builder
 	data.Grow(maxQodoResponseBytes + 128)
