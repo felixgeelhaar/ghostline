@@ -338,6 +338,23 @@ func (citation *qodoFindingCitation) UnmarshalJSON(payload []byte) error {
 
 func (finding *qodoManagedFinding) UnmarshalJSON(payload []byte) error {
 	type plain qodoManagedFinding
+	// Check revision aliases before decoding the complete record. A malformed
+	// unrelated field must not hide contradictory revision evidence.
+	var revisionAliases struct {
+		GitSHA string `json:"git_sha"`
+	}
+	if err := json.Unmarshal(payload, &revisionAliases); err != nil {
+		return err
+	}
+	var camelRevision struct {
+		GitSHA string `json:"gitSha"`
+	}
+	if err := json.Unmarshal(payload, &camelRevision); err != nil {
+		return err
+	}
+	if _, err := domain.MergeQodoRevisions("revision fields", camelRevision.GitSHA, revisionAliases.GitSHA); err != nil {
+		return err
+	}
 	var decoded plain
 	if err := json.Unmarshal(payload, &decoded); err != nil {
 		return err

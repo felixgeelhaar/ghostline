@@ -663,6 +663,14 @@ func TestQodoManagedRecordsRejectConflictingRevisionAliases(t *testing.T) {
 			},
 		},
 		{
+			name:    "finding conflicting revisions survive unrelated malformed fields",
+			payload: `{"id":"finding-1","title":"A finding","gitSha":"` + shaA + `","git_sha":"` + shaB + `","action_level":17}`,
+			decode: func(payload []byte) error {
+				var value qodoManagedFinding
+				return json.Unmarshal(payload, &value)
+			},
+		},
+		{
 			name:    "review run",
 			payload: `{"id":"run-1","status":"completed","commitSha":"` + shaA + `","commit_sha":"` + shaB + `"}`,
 			decode: func(payload []byte) error {

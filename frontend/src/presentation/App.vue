@@ -81,7 +81,6 @@ async function loadStructuredQodoReview() {
   const request = ++qodoRequest
   const requestedPRURL = importedPR.url
   qodoApiKey.value = ''
-  qodoStructuredReview.value = undefined
   qodoReviewError.value = ''
   qodoReviewLoading.value = true
   try {

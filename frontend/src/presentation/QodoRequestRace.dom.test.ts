@@ -29,8 +29,9 @@ const review = (title: string): QodoStructuredReview => ({
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((res) => { resolve = res })
-  return { promise, resolve }
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+  return { promise, resolve, reject }
 }
 
 let app: ReturnType<typeof createApp> | undefined
@@ -142,6 +143,32 @@ describe('structured Qodo review request binding', () => {
     expect(host?.textContent).toContain('Latest structured finding')
     expect(host?.textContent).not.toContain('Stale structured finding')
     expect(host?.querySelector<HTMLInputElement>('#qodo-api-key')?.value).toBe('')
+  })
+
+  it('keeps the existing findings visible while refreshing and when refresh fails', async () => {
+    vi.stubGlobal('isSecureContext', true)
+    vi.mocked(importPullRequest).mockResolvedValue(makePR(7))
+    const refresh = deferred<QodoStructuredReview>()
+    vi.mocked(fetchQodoReviewSession).mockResolvedValueOnce(review('Existing finding')).mockReturnValueOnce(refresh.promise)
+    await mount()
+
+    await setValue('#pr-url', 'https://github.com/acme/app/pull/7')
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await settle()
+    await setValue('#qodo-api-key', 'first-key')
+    host!.querySelector<HTMLButtonElement>('#load-qodo-review')!.click()
+    await settle()
+    expect(host?.textContent).toContain('Existing finding')
+
+    await setValue('#qodo-api-key', 'refresh-key')
+    host!.querySelector<HTMLButtonElement>('#load-qodo-review')!.click()
+    await settle()
+    expect(host?.textContent).toContain('Existing finding')
+    refresh.reject(new Error('Qodo is temporarily unavailable.'))
+    await settle()
+
+    expect(host?.textContent).toContain('Existing finding')
+    expect(host?.querySelector('[role="alert"]')?.textContent).toContain('temporarily unavailable')
   })
 
   it('shows actionable guidance when Qodo rejects an expired API key', async () => {
