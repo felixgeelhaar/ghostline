@@ -20,6 +20,13 @@ var (
 
 var comparisonFullSHA = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
+// IsFullRevisionSHA reports whether value is a full hexadecimal commit ID.
+// GitHub treats commit IDs case-insensitively, so callers should normalize
+// accepted values before using them in source links or API requests.
+func IsFullRevisionSHA(value string) bool {
+	return comparisonFullSHA.MatchString(value)
+}
+
 // RevisionComparisonSource is the untrusted comparison response returned by GitHub.
 type RevisionComparisonSource struct {
 	Status       string                         `json:"status"`
@@ -73,7 +80,7 @@ const GitHubCompareFileLimit = 300
 // before returning any data for display. The compare endpoint's three-dot diff is
 // only unambiguous for this UI when base is an ancestor of head.
 func NewRevisionComparison(owner, repo, baseSHA, headSHA string, source RevisionComparisonSource) (RevisionComparison, error) {
-	if !comparisonFullSHA.MatchString(baseSHA) || !comparisonFullSHA.MatchString(headSHA) || strings.EqualFold(baseSHA, headSHA) {
+	if !IsFullRevisionSHA(baseSHA) || !IsFullRevisionSHA(headSHA) || strings.EqualFold(baseSHA, headSHA) {
 		return RevisionComparison{}, ErrInvalidRevisionComparison
 	}
 	if !strings.EqualFold(source.Base.SHA, baseSHA) || (source.Head.SHA != "" && !strings.EqualFold(source.Head.SHA, headSHA)) {

@@ -120,6 +120,41 @@ func TestCompareRevisionsReturnsSourceLinkedFileSummaryForRequestedSHAs(t *testi
 	}
 }
 
+func TestCompareRevisionsAcceptsUppercaseAndNormalizesRequestedSHAs(t *testing.T) {
+	baseSHA := strings.Repeat("a", 40)
+	headSHA := strings.Repeat("b", 40)
+	requestedBase := strings.ToUpper(baseSHA)
+	requestedHead := strings.ToUpper(headSHA[:20]) + headSHA[20:]
+	var requestedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.RequestURI()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ahead", "ahead_by": 1, "behind_by": 0, "total_commits": 1,
+			"html_url":    "https://github.com/acme/app/compare/" + baseSHA + "..." + headSHA,
+			"base_commit": map[string]string{"sha": baseSHA},
+			"files":       []map[string]any{{"filename": "backend/retry.go", "status": "modified", "additions": 1, "deletions": 0, "changes": 1, "blob_url": "https://github.com/acme/app/blob/" + headSHA + "/backend/retry.go"}},
+		})
+	}))
+	defer srv.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/compare", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7","baseSha":"`+requestedBase+`","headSha":"`+requestedHead+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	newRouter(&githubClient{baseURL: srv.URL, http: srv.Client()}).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(requestedPath, "/repos/acme/app/compare/"+baseSHA+"..."+headSHA) {
+		t.Fatalf("GitHub path = %q, want normalized revision pair", requestedPath)
+	}
+	var result domain.RevisionComparison
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.BaseSHA != baseSHA || result.HeadSHA != headSHA {
+		t.Fatalf("comparison revisions = %q...%q, want normalized %q...%q", result.BaseSHA, result.HeadSHA, baseSHA, headSHA)
+	}
+}
+
 func TestCompareRevisionsFlagsGitHubChangedFileLimit(t *testing.T) {
 	baseSHA := strings.Repeat("a", 40)
 	headSHA := strings.Repeat("b", 40)

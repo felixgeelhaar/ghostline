@@ -222,7 +222,7 @@ func (a api) compareRevisions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if !fullSHA.MatchString(body.BaseSHA) || !fullSHA.MatchString(body.HeadSHA) || strings.EqualFold(body.BaseSHA, body.HeadSHA) {
+	if !domain.IsFullRevisionSHA(body.BaseSHA) || !domain.IsFullRevisionSHA(body.HeadSHA) || strings.EqualFold(body.BaseSHA, body.HeadSHA) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Choose two different full 40-character commit SHAs."})
 		return
 	}
