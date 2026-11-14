@@ -4,7 +4,7 @@
 
 Ghostline is a change-centric engineering control room for engineers using coding agents. Its current slice imports a **public GitHub pull request** and presents the change’s metadata, commit history, revision-linked GitHub checks, and published Qodo review comments. Repeated Qodo finding titles can be traced across comments when their revision markers support it. Warden runs local developer gates and Nox scans; repository CI also runs Nox. Ghostline does not currently ingest Nox reports.
 
-The product helps an engineer inspect what changed, understand which revision review feedback and checks describe, and decide what to inspect next. GitHub remains authoritative for pull-request facts; Qodo remains the review source. Ghostline does not run agents, repair code, prove that a finding was fixed, or replace CI, Qodo, Nox, or Warden. It does not scan a developer’s local filesystem.
+The product helps an engineer inspect what changed, understand which revision review feedback and checks describe, and decide what to inspect next. GitHub remains authoritative for pull-request facts; Qodo remains the review source. Ghostline does not run agents, repair code, prove that a finding was fixed, or replace CI, Qodo, Nox, or Warden. It does not scan a developer’s local filesystem. Structured Qodo findings can be fetched for one imported public PR using a Qodo API key supplied for that request from a secure origin; Ghostline does not persist the key.
 
 Evidence labels and links must preserve source and revision. Commit timestamps are commit metadata, not push or review times. A later commit in the PR list is only a candidate to inspect; ordering alone does not establish that it repaired a finding. If evidence is missing or unavailable, the UI should say so.
 
@@ -15,23 +15,22 @@ Ghostline is a small Go API and Vue single-page application. It has no database 
 ```text
 Browser (Vue 3 + TypeScript)
   presentation: App.vue, ReviewCard.vue, DeepTrace.vue
-  application: importPullRequest, fetchRevisionChecks
+  application: importPullRequest, fetchRevisionChecks, fetchQodoReviewSession
   domain: pullRequest, checks, reviews, trace
-          │ /api/import, /api/checks
+          │ /api/import, /api/checks, /api/qodo-review
           ▼
 Go + Gin API
   HTTP handlers and GitHub response normalization
-  GitHub client, check aggregation, Qodo comment parsing
-          │ HTTPS GitHub REST API
-          ▼
-GitHub: pull request, commits, checks, published issue comments
+  GitHub client, check aggregation, Qodo comment parsing, fixed-endpoint Qodo MCP client
+          ├─ HTTPS GitHub REST API → GitHub: pull requests, commits, checks, published comments
+          └─ HTTPS Qodo MCP → Qodo: structured findings and review runs
 ```
 
 The frontend validates API payloads with Zod at the boundary in `frontend/src/domain`. Keep business rules in domain modules, request orchestration in application modules, and HTTP or rendering details at the edges. In the backend, domain concepts such as the canonical repository identity live in `backend/internal/domain`; HTTP handling, GitHub calls, and orchestration stay in the small files under `backend`. Put new business rules in the domain package, and avoid adding infrastructure layers without a concrete need.
 
 For code changes, preserve these domain boundaries and use test-driven development: write or update a focused failing test for the behavior first, then implement the smallest change that makes it pass.
 
-The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, normalize the response, and render the timeline and review evidence. `POST /api/checks` fetches checks for a focused full commit SHA. Checks are always labeled with the revision GitHub returned.
+The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, normalize the response, and render the timeline and review evidence. `POST /api/checks` fetches checks for a focused full commit SHA. `POST /api/qodo-review` sends the imported PR URL and a one-request Qodo key to Qodo's fixed MCP endpoint, then validates and normalizes the structured result. The key is never written to storage or returned to the browser by the API. Checks and review sessions are labeled with the revision their source returned.
 
 ## Setup and verification
 

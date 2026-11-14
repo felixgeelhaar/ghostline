@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ghostline · Qodo finding revision evidence</title>
+    <link rel="stylesheet" href="/src/presentation/style.css" />
+    <style>
+      body { min-height: 100vh; padding: 28px; background: #090b16; }
+      .fixture-label { max-width: 820px; margin: 0 auto 16px; padding: 12px 14px; border: 1px solid #ffc857; color: #ffe3a0; font: 11px 'IBM Plex Mono', monospace; letter-spacing: .06em; }
+      #app { max-width: 820px; margin: 0 auto; }
+    </style>
+  </head>
+  <body>
+    <p class="fixture-label">PREPARED REPLAY · SAMPLE QODO RESPONSE · NOT LIVE REVIEW DATA</p>
+    <div id="app"></div>
+    <script type="module">
+      import { createApp } from 'vue'
+      import StructuredQodoReview from '/src/presentation/StructuredQodoReview.vue'
+
+      const reviewedSha = 'a'.repeat(40)
+      const currentSha = 'b'.repeat(40)
+      createApp(StructuredQodoReview, {
+        pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+        headSha: currentSha,
+        review: {
+          availability: 'available',
+          source: 'Qodo Agentic Toolbox · get-pr-review-findings',
+          reviewSession: { status: 'running', commitSha: reviewedSha },
+          warnings: ['Qodo returned an additional text block that could not be interpreted as structured review data; the displayed review may be incomplete.'],
+          findings: [
+            { id: 'finding-demo-1', title: 'Validate the idempotency key before replay', attributionStatus: 'attributed', status: 'implemented', gitSha: reviewedSha, reviewRunId: 'run-demo-2', category: 'Correctness', actionLevel: 'action_required', filePath: 'backend/payments.go', startLine: 84, codeSnippet: 'if replayed {\n  return nil\n}\napplyPayment(request)', evidence: { explanation: 'Validate the key before applying replayed payment effects.', citations: [{ sourceType: 'code', source: 'https://github.com/acme/payments/blob/main/backend/payments.go#L84', context: 'before the payment mutation', metadata: { line: 84, symbol: 'validateIdempotencyKey' } }] } },
+            { id: 'finding-demo-2', title: 'Bound the retry window for duplicate requests', attributionStatus: 'pending', reviewRunId: 'run-demo-2', category: 'Reliability', actionLevel: 'action_required', filePath: 'backend/payments.go', startLine: 121 },
+          ],
+          reviewRuns: [{ id: 'run-demo-2', status: 'completed', commitSha: currentSha }],
+        },
+      }).mount('#app')
+    </script>
+  </body>
+</html>

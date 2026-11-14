@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ghostline · Qodo session revision unknown</title>
+    <link rel="stylesheet" href="/src/presentation/style.css" />
+    <style>
+      body { min-height: 100vh; padding: 28px; background: #090b16; }
+      .fixture-label { max-width: 820px; margin: 0 auto 16px; padding: 12px 14px; border: 1px solid #ffc857; color: #ffe3a0; font: 11px 'IBM Plex Mono', monospace; letter-spacing: .06em; }
+      #app { max-width: 820px; margin: 0 auto; }
+    </style>
+  </head>
+  <body>
+    <p class="fixture-label">PREPARED REPLAY · SAMPLE QODO RESPONSE · NOT LIVE REVIEW DATA</p>
+    <div id="app"></div>
+    <script type="module">
+      import { createApp } from 'vue'
+      import StructuredQodoReview from '/src/presentation/StructuredQodoReview.vue'
+
+      const currentSha = 'b'.repeat(40)
+      createApp(StructuredQodoReview, {
+        pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+        headSha: currentSha,
+        review: {
+          availability: 'available',
+          source: 'Qodo Agentic Toolbox · get-pr-review-findings',
+          reviewSession: { status: 'completed' },
+          findings: [
+            { id: 'finding-demo-1', title: 'Validate the idempotency key before replay', attributionStatus: 'pending', category: 'Correctness', actionLevel: 'action_required', gitSha: 'a'.repeat(40), filePath: 'backend/payments.go', startLine: 84 },
+          ],
+          reviewRuns: [],
+        },
+      }).mount('#app')
+    </script>
+  </body>
+</html>

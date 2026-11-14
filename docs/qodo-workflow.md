@@ -51,6 +51,11 @@ titles, categories, lifecycle labels, severity/action labels, and descriptions
 are extracted from the published review. A comment without a commit marker is
 shown as unmarked context, not assigned to the current PR head.
 
+Structured Qodo findings also retain their own revision marker. Ghostline
+compares that SHA with the imported PR head and labels a mismatch even when
+Qodo omits review-session metadata. Missing session or finding revision data
+remains explicitly unknown.
+
 When a comment marks a revision present in the imported PR, its card can also
 list later commits from GitHub's PR commit list for inspection. They are later
 revisions only; their position does not show that they are repair attempts or
@@ -77,10 +82,70 @@ review is not proof it was fixed, and a Qodo outcome is not independent
 verification. Inspect the linked comments and candidate patches, then use
 relevant checks for the exact revision you intend to ship.
 
-This is a GitHub-comment integration, not a private Qodo findings API. If Qodo
-changes its published comment format or omits evidence, Ghostline should show
-what it can attribute and surface the original source rather than fill in
-missing review details.
+Published GitHub comments remain available without a Qodo credential. For a
+Qodo workspace's structured findings and review runs, an engineer can supply a
+personal Qodo API key for one request from an HTTPS Ghostline origin (or
+localhost during development). Ghostline forwards it only to Qodo's fixed
+Agentic Toolbox MCP endpoint, clears the input before waiting for the result,
+and does not store it. Use this only on a Ghostline instance you trust. The
+structured result preserves Qodo's finding/run identifiers, statuses, source,
+revision references, locations, and citation evidence; it is shown separately
+from published comments.
+Workspace access and current availability depend on the supplied key. A result
+whose reviewed SHA differs from the imported PR head is explicitly labeled
+stale. If Qodo omits evidence, Ghostline shows that gap rather than filling it
+with an inferred relationship.
+
+The structured review also includes an engineer next-action summary derived
+only from Qodo's reported session and finding statuses. It distinguishes stale
+or unknown revisions, unfinished sessions, open or unclassified findings, and
+Qodo-reported outcomes. The summary directs engineers to the underlying source
+evidence; `implemented` or `dismissed` statuses are not presented as
+independent verification.
+
+For structured findings, the card shows the effective lifecycle classification
+alongside both Qodo source fields. A recognized Qodo lifecycle value in
+`attributionStatus` takes precedence; if attribution contains a non-lifecycle
+value, a recognized legacy `status` is used for classification. Qodo's open states are `pending`,
+`partial_implementation`, `not_implemented`, and `focus_areas_edited`; its closed
+states are `implemented`, `full_implementation`, `dismissed`,
+`detected_after_merge`, and `outdated`. A legacy `status` is used only when Qodo
+omitted the attribution status or it contains a non-lifecycle value. Unknown
+values stay visible as unclassified. `actionLevel` describes review severity
+and does not determine whether a finding is open.
+
+A completed review is not shown as clear when a finding lacks its own revision,
+even if the linked review run has a SHA. The run SHA identifies that run; it
+does not establish which revision Qodo attached to the finding. The summary
+keeps the finding's open/status state visible and asks the engineer to inspect
+its source and linked run. Citation metadata is rendered as source-provided JSON
+so location details are not silently dropped. A stale session summary does not
+override an individual finding revision marker that matches the imported head.
+Finding citations are clickable only when they point to the same GitHub
+repository as the imported PR. If a response includes a malformed companion
+block, Ghostline keeps valid structured data but warns that the result may be
+incomplete and directs the engineer to refresh it. Conflicting aliases or
+duplicate native IDs with different values are rejected rather than silently
+choosing one.
+
+The running UI's structured-review entry point is shown in the
+[feature screenshot](feature-evidence/qodo-structured-review.jpg). It shows
+the optional per-request credential control alongside the imported PR's
+source-backed review context; it does not depict a fetched structured session.
+The next-action presentation is shown in
+[its focused screenshot](feature-evidence/qodo-attention-summary.jpg), captured
+from a prepared replay labeled as sample data rather than a live Qodo response.
+The status fallback and revision-evidence states are shown in the
+[finding revision screenshot](feature-evidence/qodo-finding-revision-evidence.jpg):
+it distinguishes the finding's old source revision from a linked run revision,
+preserves both status fields, and marks a missing finding-specific revision.
+Qodo's extended `location.code_snippet` is preserved and shown as a cited code
+excerpt in the [finding code-context screenshot](feature-evidence/qodo-code-snippet.jpg).
+When Qodo omits the session revision while the imported PR head is known, the
+[unknown-session-revision screenshot](feature-evidence/qodo-session-revision-unknown.jpg)
+shows that Ghostline names the missing Qodo revision and still surfaces an
+individual finding's different recorded revision, without treating either as
+proof of repair. It is a prepared replay, not live Qodo output.
 
 ## Features to evaluate in the Qodo workspace
 
