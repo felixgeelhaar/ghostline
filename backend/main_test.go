@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -91,9 +92,10 @@ func TestCompareRevisionsReturnsSourceLinkedFileSummaryForRequestedSHAs(t *testi
 		requestedPath = r.URL.RequestURI()
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status": "ahead", "ahead_by": 1, "behind_by": 0, "total_commits": 1,
-			"html_url":    "https://github.com/acme/app/compare/" + baseSHA + "..." + headSHA,
-			"base_commit": map[string]string{"sha": baseSHA}, "head_commit": map[string]string{"sha": headSHA},
-			"files": []map[string]any{{"filename": "backend/retry.go", "status": "modified", "additions": 4, "deletions": 1, "changes": 5, "blob_url": "https://github.com/acme/app/blob/" + headSHA + "/backend/retry.go"}},
+			"html_url": "https://github.com/acme/app/compare/" + baseSHA + "..." + headSHA,
+			// The compare endpoint's documented response does not include head_commit.
+			"base_commit": map[string]string{"sha": baseSHA},
+			"files":       []map[string]any{{"filename": "backend/retry.go", "status": "modified", "additions": 4, "deletions": 1, "changes": 5, "blob_url": "https://github.com/acme/app/blob/" + headSHA + "/backend/retry.go"}},
 		})
 	}))
 	defer srv.Close()
@@ -113,6 +115,55 @@ func TestCompareRevisionsReturnsSourceLinkedFileSummaryForRequestedSHAs(t *testi
 	}
 	if result.BaseSHA != baseSHA || result.HeadSHA != headSHA || result.CompareURL == "" || len(result.Files) != 1 || result.Files[0].Path != "backend/retry.go" || result.Files[0].URL == "" {
 		t.Fatalf("comparison response lost revision or source identity: %+v", result)
+	}
+}
+
+func TestCompareRevisionsFlagsGitHubChangedFileLimit(t *testing.T) {
+	baseSHA := strings.Repeat("a", 40)
+	headSHA := strings.Repeat("b", 40)
+	files := make([]map[string]any, 300)
+	for i := range files {
+		files[i] = map[string]any{"filename": fmt.Sprintf("file-%d.go", i), "status": "modified", "additions": 1, "deletions": 0, "changes": 1, "blob_url": "https://github.com/acme/app/blob/" + headSHA + fmt.Sprintf("/file-%d.go", i)}
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ahead", "ahead_by": 1, "behind_by": 0, "total_commits": 1,
+			"html_url":    "https://github.com/acme/app/compare/" + baseSHA + "..." + headSHA,
+			"base_commit": map[string]string{"sha": baseSHA}, "files": files,
+		})
+	}))
+	defer srv.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/compare", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7","baseSha":"`+baseSHA+`","headSha":"`+headSHA+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	newRouter(&githubClient{baseURL: srv.URL, http: srv.Client()}).ServeHTTP(response, request)
+	var result revisionComparison
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || len(result.Files) != 300 || !result.FilesTruncated {
+		t.Fatalf("comparison = status %d, files %d, truncated %t", response.Code, len(result.Files), result.FilesTruncated)
+	}
+}
+
+func TestCompareRevisionsReportsInvalidChangedFileDetails(t *testing.T) {
+	baseSHA := strings.Repeat("a", 40)
+	headSHA := strings.Repeat("b", 40)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ahead", "ahead_by": 1, "behind_by": 0, "total_commits": 1,
+			"html_url":    "https://github.com/acme/app/compare/" + baseSHA + "..." + headSHA,
+			"base_commit": map[string]string{"sha": baseSHA},
+			"files":       []map[string]any{{"filename": "backend/retry.go", "status": "modified", "additions": -1, "deletions": 0, "changes": 1, "blob_url": "https://github.com/acme/app/blob/" + headSHA + "/backend/retry.go"}},
+		})
+	}))
+	defer srv.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/compare", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7","baseSha":"`+baseSHA+`","headSha":"`+headSHA+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	newRouter(&githubClient{baseURL: srv.URL, http: srv.Client()}).ServeHTTP(response, request)
+	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "invalid changed-file details") {
+		t.Fatalf("comparison error = status %d, body %s", response.Code, response.Body.String())
 	}
 }
 

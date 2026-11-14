@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { createApp, defineComponent, h, nextTick, ref } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ApiResponseError } from '../application/apiError'
 import type { PullRequest } from '../domain/pullRequest'
 import { buildRevisionSpans, type FindingTrace, type TracedOccurrence } from '../domain/trace'
 import { importPullRequest } from '../application/importPullRequest'
@@ -202,6 +203,7 @@ describe('Deep Trace browser interactions', () => {
     vi.mocked(compareRevisions).mockResolvedValue({
       baseSha: shaA, headSha: shaMiddle, compareUrl: `https://github.com/acme/app/compare/${shaA}...${shaMiddle}`,
       status: 'ahead', aheadBy: 1, behindBy: 0, totalCommits: 1,
+      filesTruncated: true,
       files: [{ path: 'backend/retry.go', status: 'modified', additions: 4, deletions: 1, changes: 5, url: `https://github.com/acme/app/blob/${shaMiddle}/backend/retry.go` }],
     })
     const current = findingTrace('one', 'Finding one')
@@ -215,7 +217,25 @@ describe('Deep Trace browser interactions', () => {
     await vi.waitFor(() => expect(host?.querySelector('.candidate-comparison')).not.toBeNull())
     expect(compareRevisions).toHaveBeenCalledWith(pullRequest.url, shaA, shaMiddle)
     expect(host.querySelector('.candidate-comparison')?.textContent).toContain('does not prove a finding was addressed')
+    expect(host.querySelector('.candidate-comparison')?.textContent).toContain('first 300 changed files')
     expect(host.querySelector('.comparison-files')?.textContent).toContain('backend/retry.go')
+  })
+
+  it('hands expired comparison sessions back to the sign-in gate', async () => {
+    vi.mocked(compareRevisions).mockRejectedValueOnce(new ApiResponseError('Sign in with GitHub to continue.', 401))
+    let authRequired = false
+    const current = findingTrace('one', 'Finding one')
+    mounted = createApp(DeepTrace, {
+      trace: current,
+      pullRequestUrl: pullRequest.url,
+      onAuthRequired: () => { authRequired = true },
+    })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted.mount(host)
+
+    host.querySelector<HTMLButtonElement>('[aria-label="Compare candidate ccccccc with earlier review revision aaaaaaa"]')!.click()
+    await vi.waitFor(() => expect(authRequired).toBe(true))
   })
 
   it('ignores an earlier comparison if a newer candidate comparison resolves first', async () => {
@@ -236,9 +256,9 @@ describe('Deep Trace browser interactions', () => {
     const buttons = host.querySelectorAll<HTMLButtonElement>('.review-followups-list button[aria-label^="Compare candidate"]')
     buttons[0]!.click()
     buttons[1]!.click()
-    resolveNew({ baseSha: shaA, headSha: secondCandidateSha, compareUrl: `https://github.com/acme/app/compare/${shaA}...${secondCandidateSha}`, status: 'ahead', aheadBy: 2, behindBy: 0, totalCommits: 2, files: [] })
+    resolveNew({ baseSha: shaA, headSha: secondCandidateSha, compareUrl: `https://github.com/acme/app/compare/${shaA}...${secondCandidateSha}`, status: 'ahead', aheadBy: 2, behindBy: 0, totalCommits: 2, filesTruncated: false, files: [] })
     await vi.waitFor(() => expect(host?.textContent).toContain(`${secondCandidateSha.slice(0, 7)}`))
-    resolveOld({ baseSha: shaA, headSha: shaMiddle, compareUrl: `https://github.com/acme/app/compare/${shaA}...${shaMiddle}`, status: 'ahead', aheadBy: 1, behindBy: 0, totalCommits: 1, files: [] })
+    resolveOld({ baseSha: shaA, headSha: shaMiddle, compareUrl: `https://github.com/acme/app/compare/${shaA}...${shaMiddle}`, status: 'ahead', aheadBy: 1, behindBy: 0, totalCommits: 1, filesTruncated: false, files: [] })
     await settleVue()
     expect(host.querySelector('.candidate-comparison')?.textContent).toContain(`${secondCandidateSha.slice(0, 7)}`)
     expect(host.querySelector('.candidate-comparison')?.textContent).not.toContain(`${shaMiddle.slice(0, 7)}`)
