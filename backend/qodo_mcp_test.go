@@ -751,6 +751,20 @@ func TestDecodeMCPEnvelopeStreamAcceptsCRLFEventBoundaries(t *testing.T) {
 	}
 }
 
+func TestDecodeMCPEnvelopeStreamCountsCRLFBytesAgainstLimit(t *testing.T) {
+	var data strings.Builder
+	data.Grow(maxQodoResponseBytes + 128)
+	for range maxQodoResponseBytes / 4 {
+		data.WriteString(":x\r\n")
+	}
+	data.WriteString("data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"review\":\"complete\"}}\r\n\r\n")
+
+	_, err := decodeMCPEnvelopeStream(strings.NewReader(data.String()), "text/event-stream", 2)
+	if err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("oversized CRLF response error = %v; want size-limit error", err)
+	}
+}
+
 func TestQodoReviewDataRejectsNullFindingOrRunArrays(t *testing.T) {
 	for _, payload := range []string{
 		`{"review_session":null,"findings":null,"review_runs":[]}`,

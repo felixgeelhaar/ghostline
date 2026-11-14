@@ -766,14 +766,25 @@ func decodeMCPEnvelopeStream(reader io.Reader, contentType string, expectedID in
 	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 4096), maxQodoResponseBytes)
+	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+		if index := bytes.IndexByte(data, '\n'); index >= 0 {
+			return index + 1, data[:index+1], nil
+		}
+		if atEOF && len(data) > 0 {
+			return len(data), data, nil
+		}
+		return 0, nil, nil
+	})
 	var eventData []string
 	var consumed int
 	for scanner.Scan() {
-		line := strings.TrimSuffix(scanner.Text(), "\r")
-		consumed += len(line) + 1
+		rawLine := scanner.Text()
+		consumed += len(rawLine)
 		if consumed > maxQodoResponseBytes {
 			return empty, errors.New("Qodo review response exceeded the size limit")
 		}
+		line := strings.TrimSuffix(rawLine, "\n")
+		line = strings.TrimSuffix(line, "\r")
 		if line == "" {
 			if envelope, ok := matchingMCPEvent(eventData, expectedID); ok {
 				return envelope, nil
