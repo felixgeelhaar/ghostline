@@ -55,6 +55,19 @@ describe('Qodo PR-head coverage status', () => {
     expect(check.querySelector('a[href="https://github.com/acme/app/runs/1"]')).not.toBeNull()
   })
 
+  it('labels a shortened check summary and points to the full GitHub run', async () => {
+    await showPullRequest({
+      ...pullRequest,
+      checks: {
+        ...pullRequest.checks,
+        items: [{ ...pullRequest.checks.items[0], outputSummary: 'First part of a longer report.', outputSummaryTruncated: true }],
+      },
+    })
+    const check = host!.querySelector('.check-list li')!
+    expect(check.textContent).toContain('Preview shortened')
+    expect(check.querySelector('a[href="https://github.com/acme/app/runs/1"]')).not.toBeNull()
+  })
+
   it('shows stale revision evidence, source links, and the next action', async () => {
     await showPullRequest()
     const status = host!.querySelector<HTMLElement>('.review-coverage')!

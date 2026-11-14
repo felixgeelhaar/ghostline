@@ -8,14 +8,17 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"unicode/utf8"
 )
 
 const (
-	checksAvailable   = "available"
-	checksUnavailable = "unavailable"
-	kindCheckRun      = "check_run"
-	kindCommitStatus  = "commit_status"
-	checksPageSize    = 100
+	checksAvailable      = "available"
+	checksUnavailable    = "unavailable"
+	kindCheckRun         = "check_run"
+	kindCommitStatus     = "commit_status"
+	checksPageSize       = 100
+	maxCheckSummaryRunes = 2000
+	maxCheckSummaryBytes = 64 * 1024
 )
 
 var (
@@ -35,14 +38,15 @@ type revisionChecks struct {
 }
 
 type check struct {
-	Name          string `json:"name"`
-	Kind          string `json:"kind"`
-	Source        string `json:"source,omitempty"`
-	Status        string `json:"status"`
-	Conclusion    string `json:"conclusion,omitempty"`
-	URL           string `json:"url,omitempty"`
-	OutputTitle   string `json:"outputTitle,omitempty"`
-	OutputSummary string `json:"outputSummary,omitempty"`
+	Name                   string `json:"name"`
+	Kind                   string `json:"kind"`
+	Source                 string `json:"source,omitempty"`
+	Status                 string `json:"status"`
+	Conclusion             string `json:"conclusion,omitempty"`
+	URL                    string `json:"url,omitempty"`
+	OutputTitle            string `json:"outputTitle,omitempty"`
+	OutputSummary          string `json:"outputSummary,omitempty"`
+	OutputSummaryTruncated bool   `json:"outputSummaryTruncated,omitempty"`
 }
 
 type githubCheckRuns struct {
@@ -105,6 +109,7 @@ func fetchRevisionChecks(ctx context.Context, gh *githubClient, owner, repo, sha
 
 func fetchCheckRuns(ctx context.Context, gh *githubClient, commitPath, sha string) ([]check, error) {
 	var items []check
+	remainingSummaryBytes := maxCheckSummaryBytes
 	for page := 1; ; page++ {
 		var batch githubCheckRuns
 		if err := gh.get(ctx, fmt.Sprintf("%s/check-runs?filter=latest&per_page=%d&page=%d", commitPath, checksPageSize, page), &batch); err != nil {
@@ -114,7 +119,9 @@ func fetchCheckRuns(ctx context.Context, gh *githubClient, commitPath, sha strin
 			if run.HeadSHA != sha {
 				return nil, errRevisionMismatch
 			}
-			item := check{Name: run.Name, Kind: kindCheckRun, Status: run.Status, URL: safeURL(run.HTMLURL), OutputTitle: run.Output.Title, OutputSummary: run.Output.Summary}
+			summary, summaryTruncated, summaryBytes := boundedCheckSummary(run.Output.Summary, remainingSummaryBytes)
+			remainingSummaryBytes -= summaryBytes
+			item := check{Name: run.Name, Kind: kindCheckRun, Status: run.Status, URL: safeURL(run.HTMLURL), OutputTitle: run.Output.Title, OutputSummary: summary, OutputSummaryTruncated: summaryTruncated}
 			if run.Conclusion != nil {
 				item.Conclusion = *run.Conclusion
 			}
@@ -127,6 +134,26 @@ func fetchCheckRuns(ctx context.Context, gh *githubClient, commitPath, sha strin
 			return items, nil
 		}
 	}
+}
+
+// boundedCheckSummary limits both one summary and the combined summary data
+// returned for a revision. The linked GitHub check remains the source for full output.
+func boundedCheckSummary(summary string, remainingBytes int) (string, bool, int) {
+	if summary == "" {
+		return "", false, 0
+	}
+
+	runes := 0
+	usedBytes := 0
+	for index, r := range summary {
+		runeBytes := utf8.RuneLen(r)
+		if runes >= maxCheckSummaryRunes || usedBytes+runeBytes > remainingBytes {
+			return summary[:index], true, usedBytes
+		}
+		runes++
+		usedBytes += runeBytes
+	}
+	return summary, false, usedBytes
 }
 
 func fetchCommitStatuses(ctx context.Context, gh *githubClient, commitPath, sha string) ([]check, error) {

@@ -34,12 +34,25 @@ describe('CheckSchema output evidence', () => {
       name: 'nox', kind: 'check_run', status: 'completed', conclusion: 'success',
       outputTitle: 'No new alerts in code changed by this pull request',
       outputSummary: '[View all branch alerts](/acme/app/security/code-scanning?query=pr%3A7+tool%3Anox+is%3Aopen).',
+      outputSummaryTruncated: false,
     }
     expect(CheckSchema.parse(check)).toEqual(check)
   })
 
-  it('shows Markdown link labels without rendering or exposing destinations as text', () => {
-    expect(checkSummaryPreview('[View all branch alerts](/acme/app/security/code-scanning?query=nox).')).toBe('View all branch alerts.')
+  it('converts Markdown structure to a compact, readable text preview', () => {
+    const markdown = '# Security report\n\n- **1 new issue** in [`auth.go`](https://example.com/auth.go)\n\n| package | severity |\n| --- | --- |\n| auth | high |'
+    expect(checkSummaryPreview(markdown)).toEqual({
+      text: 'Security report · 1 new issue in auth.go · package · severity · auth · high',
+      truncated: false,
+    })
+    expect(checkSummaryPreview('[View all branch alerts](/acme/app/security/code-scanning?query=nox).').text).toBe('View all branch alerts.')
+  })
+
+  it('limits long summaries and reports that the preview was shortened', () => {
+    const preview = checkSummaryPreview('word '.repeat(100))
+    expect(preview.text.length).toBeLessThanOrEqual(280)
+    expect(preview.text.endsWith('…')).toBe(true)
+    expect(preview.truncated).toBe(true)
   })
 })
 

@@ -6,7 +6,7 @@ const fullSha = z.string().regex(/^[0-9a-f]{40}$/)
 export const CheckSchema = z.object({
   name: z.string(), kind: z.enum(['check_run', 'commit_status']), source: z.string().optional(),
   status: z.string(), conclusion: z.string().optional(), url: webURL.optional(),
-  outputTitle: z.string().optional(), outputSummary: z.string().optional(),
+  outputTitle: z.string().optional(), outputSummary: z.string().optional(), outputSummaryTruncated: z.boolean().optional(),
 })
 export type Check = z.infer<typeof CheckSchema>
 
@@ -28,10 +28,32 @@ export function checkOutcome(check: Check): { label: string; tone: CheckTone } {
   return { label: conclusion.replaceAll('_', ' '), tone }
 }
 
-// GitHub check summaries are Markdown; render a concise text preview while the
+const checkSummaryPreviewLimit = 280
+
+// GitHub check summaries are Markdown. Show a bounded text preview while the
 // native check-run link remains the source for the complete report.
-export function checkSummaryPreview(summary: string): string {
-  return summary.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').trim()
+export function checkSummaryPreview(summary: string): { text: string; truncated: boolean } {
+  const text = summary
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s*>\s?/gm, '')
+    .replace(/^\s*[-+*]\s+/gm, '')
+    .replace(/^\s*\d+[.)]\s+/gm, '')
+    .replace(/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/gm, '')
+    .replace(/^\s*\|/gm, '')
+    .replace(/\|\s*$/gm, '')
+    .replace(/\s*\|\s*/g, ' · ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/[*_~]{1,3}/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\s*\n+\s*/g, ' · ')
+    .replace(/(?:\s*·\s*){2,}/g, ' · ')
+    .trim()
+
+  const characters = Array.from(text)
+  if (characters.length <= checkSummaryPreviewLimit) return { text, truncated: false }
+  return { text: `${characters.slice(0, checkSummaryPreviewLimit - 1).join('').trimEnd()}…`, truncated: true }
 }
 
 export function isHeadCommit(checks: RevisionChecks, sha: string): boolean {
