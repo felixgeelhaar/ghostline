@@ -59,6 +59,22 @@ docker compose up --build
 
 Open http://localhost:5173 (or set `GHOSTLINE_PORT` if that port is occupied). Compose binds the frontend to all network interfaces by default, so other devices on the LAN can use `http://<host-lan-ip>:5173`; set `GHOSTLINE_BIND_ADDRESS` to a specific interface address to restrict access. The development frontend proxies API requests to the backend container.
 
+### Protected hosted-mode sign-in
+
+Compose defaults to an unauthenticated local demo. To enable GitHub sign-in, configure these variables in the environment running Compose:
+
+| Variable | Purpose |
+| --- | --- |
+| `GHOSTLINE_AUTH_MODE` | Set to `required` to protect all `/api` routes. |
+| `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET` | GitHub OAuth App credentials. |
+| `GITHUB_OAUTH_CALLBACK_URL` | Exact HTTPS callback, for example `https://ghostline.example/auth/callback`. |
+| `GHOSTLINE_SESSION_SECRET` | Random secret of at least 32 bytes used to sign state and sessions. |
+| `GHOSTLINE_ALLOWED_GITHUB_IDS` | Comma-separated numeric GitHub user IDs allowed to sign in. |
+
+The callback exchanges the temporary OAuth code, reads the account identity, and discards the GitHub token. Sessions last 12 hours. Use a secret manager for deployment credentials. The current Compose frontend still runs Vite's development server and is intended for a trusted demo environment; protected-mode sign-in alone does not make it production-hosting ready. See the [threat model](docs/threat-model.md).
+
+The protected-mode sign-in screen is shown in this [working-app screenshot](docs/feature-evidence/hosted-github-sign-in.jpg); completing sign-in requires configured GitHub OAuth credentials.
+
 ## Verify
 
 ```sh

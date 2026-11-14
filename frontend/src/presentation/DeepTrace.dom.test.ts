@@ -9,6 +9,7 @@ import App from './App.vue'
 import DeepTrace from './DeepTrace.vue'
 
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
+vi.mock('../application/fetchGhostlineSession', () => ({ fetchGhostlineSession: vi.fn().mockResolvedValue({ authRequired: false, authenticated: true }) }))
 vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
 
 const shaA = 'a'.repeat(40)
@@ -82,6 +83,7 @@ describe('Deep Trace browser interactions', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector('#pr-url')).not.toBeNull())
 
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = 'https://github.com/acme/app/pull/7'
@@ -119,6 +121,7 @@ describe('Deep Trace browser interactions', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector('#pr-url')).not.toBeNull())
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = 'https://github.com/acme/app/pull/7'
     input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -173,6 +176,7 @@ describe('Deep Trace browser interactions', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector('#pr-url')).not.toBeNull())
 
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = 'https://github.com/acme/app/pull/7'

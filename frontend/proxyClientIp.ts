@@ -1,3 +1,5 @@
+import type { ProxyOptions } from 'vite'
+
 // The dev/Compose proxy tells the backend which browser sent each request, so
 // the backend's per-client rate limit is not shared by everyone behind it.
 export const CLIENT_IP_HEADER = 'X-Ghostline-Client-IP'
@@ -13,4 +15,11 @@ export function setClientIpHeader(proxyReq: OutgoingProxyRequest, req: IncomingR
   const address = req.socket.remoteAddress
   if (address) proxyReq.setHeader(CLIENT_IP_HEADER, address)
   else proxyReq.removeHeader(CLIENT_IP_HEADER)
+}
+
+export function clientIpAwareProxy(target: string): ProxyOptions {
+  return {
+    target,
+    configure: (proxy) => { proxy.on('proxyReq', setClientIpHeader) },
+  }
 }
