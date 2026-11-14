@@ -10,20 +10,23 @@ export const RevisionComparisonSchema = z.object({
   baseSha: fullSha,
   headSha: fullSha,
   compareUrl: githubUrl,
-  status: z.enum(['ahead', 'behind', 'identical', 'diverged']),
+  status: z.literal('ahead'),
   aheadBy: z.number().int().nonnegative(),
   behindBy: z.number().int().nonnegative(),
   totalCommits: z.number().int().nonnegative(),
   filesTruncated: z.boolean().default(false),
   files: z.array(z.object({
     path: z.string().min(1),
-    status: z.string().min(1),
+    status: z.enum(['added', 'modified', 'removed', 'renamed']),
     additions: z.number().int().nonnegative(),
     deletions: z.number().int().nonnegative(),
     changes: z.number().int().nonnegative(),
     url: githubUrl,
   })),
 }).superRefine((comparison, context) => {
+  if (comparison.behindBy !== 0) {
+    context.addIssue({ code: 'custom', path: ['behindBy'], message: 'Candidate revision must descend from the reviewed revision.' })
+  }
   const url = new URL(comparison.compareUrl)
   const segments = url.pathname.split('/').filter(Boolean)
   const expected = `${comparison.baseSha}...${comparison.headSha}`
@@ -44,12 +47,25 @@ export function parseRevisionComparison(
   }
 
   const pullRequest = new URL(requested.pullRequestUrl)
-  const repositoryPath = `/${pullRequest.pathname.split('/').filter(Boolean).slice(0, 2).join('/')}/`
+  const repositorySegments = pullRequest.pathname.split('/').filter(Boolean)
+  const owner = repositorySegments[0]
+  const repo = repositorySegments[1]
+  if (!owner || !repo || repositorySegments[2] !== 'pull') throw new Error('Expected a GitHub pull request URL.')
+  const repositoryPath = `/${owner}/${repo}`
   const comparisonPath = new URL(comparison.compareUrl).pathname.toLowerCase()
-  if (!comparisonPath.startsWith(repositoryPath.toLowerCase())) throw new Error('GitHub returned a comparison from a different repository.')
+  if (!comparisonPath.startsWith(`${repositoryPath.toLowerCase()}/compare/`)) throw new Error('GitHub returned a comparison from a different repository.')
   for (const file of comparison.files) {
-    if (!new URL(file.url).pathname.toLowerCase().startsWith(repositoryPath.toLowerCase())) {
+    const revision = file.status === 'removed' ? comparison.baseSha : comparison.headSha
+    let actualPath: string
+    try { actualPath = decodeURIComponent(new URL(file.url).pathname) } catch { throw new Error('GitHub returned an invalid changed-file source link.') }
+    const actualSegments = actualPath.split('/').filter(Boolean)
+    const expectedFileSegments = file.path.split('/')
+    if (actualSegments.length < 5 || actualSegments[0]?.toLowerCase() !== owner?.toLowerCase() || actualSegments[1]?.toLowerCase() !== repo?.toLowerCase()) {
       throw new Error('GitHub returned a changed-file link from a different repository.')
+    }
+    if (actualSegments[2]?.toLowerCase() !== 'blob' || actualSegments[3]?.toLowerCase() !== revision ||
+      actualSegments.slice(4).length !== expectedFileSegments.length || actualSegments.slice(4).some((segment, index) => segment !== expectedFileSegments[index])) {
+      throw new Error('GitHub returned a changed-file link for a different revision or path.')
     }
   }
   return comparison
