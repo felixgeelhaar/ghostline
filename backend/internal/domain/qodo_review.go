@@ -141,7 +141,6 @@ func mergeQodoFinding(left, right QodoReviewFinding) (QodoReviewFinding, error) 
 	}{
 		{"titles", &merged.Title, right.Title}, {"descriptions", &merged.Description, right.Description},
 		{"categories", &merged.Category, right.Category}, {"action levels", &merged.ActionLevel, right.ActionLevel},
-		{"attribution statuses", &merged.AttributionStatus, right.AttributionStatus}, {"statuses", &merged.Status, right.Status},
 		{"resolution reasons", &merged.ResolutionReason, right.ResolutionReason}, {"review-run IDs", &merged.ReviewRunID, right.ReviewRunID},
 		{"file paths", &merged.FilePath, right.FilePath}, {"diff sides", &merged.Side, right.Side}, {"code snippets", &merged.CodeSnippet, right.CodeSnippet},
 	} {
@@ -149,6 +148,14 @@ func mergeQodoFinding(left, right QodoReviewFinding) (QodoReviewFinding, error) 
 		if err != nil {
 			return QodoReviewFinding{}, err
 		}
+	}
+	merged.AttributionStatus, err = mergeQodoEnumAliases("finding attribution statuses", merged.AttributionStatus, right.AttributionStatus)
+	if err != nil {
+		return QodoReviewFinding{}, err
+	}
+	merged.Status, err = mergeQodoEnumAliases("finding statuses", merged.Status, right.Status)
+	if err != nil {
+		return QodoReviewFinding{}, err
 	}
 	merged.StartLine, err = MergeQodoIntAliases("finding start lines", merged.StartLine, right.StartLine)
 	if err != nil {
@@ -184,7 +191,7 @@ func mergeQodoFinding(left, right QodoReviewFinding) (QodoReviewFinding, error) 
 }
 
 func mergeQodoReviewRun(left, right QodoReviewRun) (QodoReviewRun, error) {
-	status, err := MergeQodoStringAliases("review-run statuses", left.Status, right.Status)
+	status, err := mergeQodoEnumAliases("review-run statuses", left.Status, right.Status)
 	if err != nil {
 		return QodoReviewRun{}, err
 	}
@@ -197,6 +204,16 @@ func mergeQodoReviewRun(left, right QodoReviewRun) (QodoReviewRun, error) {
 		return QodoReviewRun{}, err
 	}
 	return QodoReviewRun{ID: left.ID, Status: status, CommitSHA: sha, StartedAt: startedAt}, nil
+}
+
+func mergeQodoEnumAliases(field string, preferred, fallback string) (string, error) {
+	if preferred != "" && fallback != "" && !strings.EqualFold(preferred, fallback) {
+		return "", errors.New("Qodo returned conflicting " + field)
+	}
+	if preferred != "" {
+		return preferred, nil
+	}
+	return fallback, nil
 }
 
 func mergeQodoRevisions(field, preferred, fallback string) (string, error) {

@@ -259,6 +259,45 @@ func TestParseQodoToolResultRejectsConflictingAliasesInCompanionData(t *testing.
 	}
 }
 
+func TestParseQodoToolResultMarksMalformedReviewCandidateIncomplete(t *testing.T) {
+	valid := `{"findings":[{"id":"f-1","title":"Valid finding"}],"review_runs":[]}`
+	malformed := `{"findings":[],"review_runs":null}`
+	got, err := parseQodoToolResult(qodoToolResult{
+		StructuredContent: json.RawMessage(valid),
+		Content:           []qodoToolContent{{Type: "text", Text: malformed}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Findings) != 1 || len(got.Warnings) == 0 {
+		t.Fatalf("parsed result = %+v; want valid finding and incomplete-data warning", got)
+	}
+}
+
+func TestParseQodoToolResultIgnoresNonReviewProseWhenStructuredDataIsValid(t *testing.T) {
+	got, err := parseQodoToolResult(qodoToolResult{
+		StructuredContent: json.RawMessage(`{"findings":[],"review_runs":[]}`),
+		Content:           []qodoToolContent{{Type: "text", Text: "Review data follows in structured content."}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Warnings) != 0 {
+		t.Fatalf("warnings = %#v; prose should not imply incomplete review data", got.Warnings)
+	}
+}
+
+func TestQodoReviewDataUnmarshalFiltersBlankWarnings(t *testing.T) {
+	var got qodoReviewData
+	err := json.Unmarshal([]byte(`{"findings":[],"review_runs":[],"warnings":["  ","source warning",""]}`), &got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got.Warnings, "|") != "source warning" {
+		t.Fatalf("warnings = %#v", got.Warnings)
+	}
+}
+
 func BenchmarkDeduplicateQodoFindingsRepeatedIDs(b *testing.B) {
 	const distinctFindings = 5000
 	values := make([]qodoManagedFinding, 0, distinctFindings*2)

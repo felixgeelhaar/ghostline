@@ -100,3 +100,16 @@ func TestMergeQodoReviewSessionsAcceptsStatusCaseDifferences(t *testing.T) {
 		t.Fatalf("merged session = %+v", merged)
 	}
 }
+
+func TestMergeQodoReviewFindingsAcceptsStatusCaseDifferences(t *testing.T) {
+	merged, err := MergeQodoReviewFindings([]QodoReviewFinding{
+		{ID: "f-1", Title: "Finding", AttributionStatus: "confirmed", Status: "open"},
+		{ID: "f-1", Title: "Finding", AttributionStatus: "Confirmed", Status: "OPEN"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged) != 1 || merged[0].AttributionStatus != "confirmed" || merged[0].Status != "open" {
+		t.Fatalf("merged findings = %+v", merged)
+	}
+}

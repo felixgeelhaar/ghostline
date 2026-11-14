@@ -98,7 +98,11 @@ func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
 		return err
 	}
 	normalized.ReviewSession = reviewSession
-	normalized.Warnings = append([]string(nil), wire.Warnings...)
+	for _, warning := range wire.Warnings {
+		if warning = strings.TrimSpace(warning); warning != "" {
+			normalized.Warnings = append(normalized.Warnings, warning)
+		}
+	}
 	normalized.Findings = make([]qodoManagedFinding, 0, len(wire.Findings)+len(wire.CamelFindings))
 	for _, raw := range wire.Findings {
 		var finding qodoManagedFinding
@@ -599,10 +603,13 @@ func parseQodoToolResult(toolResult qodoToolResult) (qodoReviewData, error) {
 		var candidate qodoReviewData
 		if err := json.Unmarshal(payload, &candidate); err != nil {
 			if json.Valid(payload) && looksLikeQodoReviewObject(payload) {
+				incompleteCandidates = true
 				candidateValidationError = err
 				continue
 			}
-			incompleteCandidates = true
+			if !json.Valid(payload) && looksLikeQodoReviewCandidate(payload) {
+				incompleteCandidates = true
+			}
 			continue
 		}
 		if err := validateQodoReviewData(candidate); err != nil {
@@ -646,6 +653,19 @@ func looksLikeQodoReviewObject(payload []byte) bool {
 	}
 	for _, key := range []string{"review_session", "reviewSession", "findings", "review_runs", "reviewRuns"} {
 		if _, ok := fields[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeQodoReviewCandidate(payload []byte) bool {
+	if looksLikeQodoReviewObject(payload) {
+		return true
+	}
+	text := string(payload)
+	for _, key := range []string{`"review_session"`, `"reviewSession"`, `"findings"`, `"review_runs"`, `"reviewRuns"`} {
+		if strings.Contains(text, key) {
 			return true
 		}
 	}
