@@ -130,6 +130,10 @@ func (m *authManager) login(c *gin.Context) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
+	if !m.sameOrigin(c.GetHeader("Origin")) {
+		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
 	state, err := randomToken(m.random, 32)
 	if err != nil {
 		c.AbortWithStatus(http.StatusInternalServerError)
@@ -156,8 +160,7 @@ func (m *authManager) login(c *gin.Context) {
 }
 
 func (m *authManager) callback(c *gin.Context) {
-	http.SetCookie(c.Writer, expiredCookie(oauthCookieName))
-	if !m.cfg.Required || c.Query("error") != "" {
+	if !m.cfg.Required {
 		c.String(http.StatusUnauthorized, "GitHub sign-in was not completed. Return to Ghostline and try again.")
 		return
 	}
@@ -169,6 +172,11 @@ func (m *authManager) callback(c *gin.Context) {
 	var pending oauthState
 	if !m.verify(stateCookie.Value, "oauth-state", &pending) || pending.ExpiresAt <= m.now().Unix() || !constantEqual(c.Query("state"), pending.State) {
 		c.String(http.StatusUnauthorized, "GitHub sign-in could not be verified. Return to Ghostline and try again.")
+		return
+	}
+	http.SetCookie(c.Writer, expiredCookie(oauthCookieName))
+	if c.Query("error") != "" {
+		c.String(http.StatusUnauthorized, "GitHub sign-in was not completed. Return to Ghostline and try again.")
 		return
 	}
 	code := c.Query("code")
@@ -229,12 +237,12 @@ func (m *authManager) middleware() gin.HandlerFunc {
 		}
 		cookie, err := c.Request.Cookie(sessionCookieName)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Sign in with GitHub to use Ghostline."})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": "AUTH_REQUIRED", "error": "Sign in with GitHub to use Ghostline."})
 			return
 		}
 		session, ok := m.sessionFromCookie(cookie.Value)
 		if !ok || !domain.GitHubIdentityAllowed(session.Identity.ID, m.cfg.AllowedIDs) {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Your Ghostline session expired. Sign in with GitHub again."})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": "AUTH_REQUIRED", "error": "Your Ghostline session expired. Sign in with GitHub again."})
 			return
 		}
 		c.Set("ghostline.github_identity", session.Identity)

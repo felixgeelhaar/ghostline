@@ -29,4 +29,19 @@ describe('latest Ghostline access check wins', () => {
     expect(session.sessionError.value).toBe('')
     expect(session.sessionLoading.value).toBe(false)
   })
+
+  it('hides an expired workspace while rechecking session state', async () => {
+    vi.mocked(fetchGhostlineSession)
+      .mockResolvedValueOnce({ authRequired: true, authenticated: true, login: 'Felix-Dev' })
+      .mockResolvedValueOnce({ authRequired: true, authenticated: false })
+    const session = useGhostlineSession()
+    await session.refreshGhostlineSession()
+    expect(session.ghostlineSession.value?.authenticated).toBe(true)
+
+    const recheck = session.handleSessionRejected()
+    expect(session.ghostlineSession.value).toBeUndefined()
+    expect(session.sessionLoading.value).toBe(true)
+    await recheck
+    expect(session.ghostlineSession.value).toEqual({ authRequired: true, authenticated: false })
+  })
 })

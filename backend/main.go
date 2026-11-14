@@ -307,11 +307,12 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 		auth = newAuthManager(authConfig{}, nil)
 	}
 	r.GET("/api/session", auth.session)
-	oauthRateLimit := rateLimitMiddleware(limiter, identity)
-	r.GET("/auth/login", oauthRateLimit, auth.login)
-	r.GET("/auth/callback", oauthRateLimit, auth.callback)
+	oauthLoginLimiter := newRateLimiter(limiter.limit, limiter.window, limiter.now)
+	oauthCallbackLimiter := newRateLimiter(limiter.limit, limiter.window, limiter.now)
+	r.POST("/auth/login", rateLimitMiddleware(oauthLoginLimiter, identity), auth.login)
+	r.GET("/auth/callback", rateLimitMiddleware(oauthCallbackLimiter, identity), auth.callback)
 	r.POST("/auth/logout", auth.logout)
-	limited := r.Group("/api", auth.middleware(), rateLimitMiddleware(limiter, identity))
+	limited := r.Group("/api", rateLimitMiddleware(limiter, identity), auth.middleware())
 	client := api{gh: gh, qodo: qodo, logger: logger}
 	limited.POST("/import", client.importPR)
 	limited.POST("/checks", client.loadRevisionChecks)

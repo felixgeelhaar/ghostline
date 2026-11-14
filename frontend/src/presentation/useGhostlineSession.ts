@@ -24,5 +24,10 @@ export function useGhostlineSession() {
     }
   }
 
-  return { ghostlineSession, sessionLoading, sessionError, refreshGhostlineSession }
+  async function handleSessionRejected() {
+    ghostlineSession.value = undefined
+    await refreshGhostlineSession()
+  }
+
+  return { ghostlineSession, sessionLoading, sessionError, refreshGhostlineSession, handleSessionRejected }
 }

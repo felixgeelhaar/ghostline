@@ -10,6 +10,7 @@ import { findRecurringFindings, qodoHeadCoverage, reviewCountSummary, reviewsFor
 import type { QodoStructuredReview } from '../domain/qodoReviewSession'
 import { buildFindingTrace } from '../domain/trace'
 import { isSamePullRequest, validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
+import { GhostlineApiError } from '../application/apiError'
 import ReviewCard from './ReviewCard.vue'
 import DeepTrace from './DeepTrace.vue'
 import StructuredQodoReview from './StructuredQodoReview.vue'
@@ -30,7 +31,7 @@ const qodoStructuredReview = ref<QodoStructuredReview>()
 const qodoReviewError = ref('')
 const qodoReviewLoading = ref(false)
 const qodoKeyTransportSecure = computed(() => globalThis.isSecureContext === true)
-const { ghostlineSession, sessionLoading, sessionError, refreshGhostlineSession } = useGhostlineSession()
+const { ghostlineSession, sessionLoading, sessionError, refreshGhostlineSession, handleSessionRejected } = useGhostlineSession()
 let traceTrigger: HTMLButtonElement | undefined
 let revisionRequest = 0
 let importRequest = 0
@@ -59,6 +60,10 @@ const activeTrace = computed(() => {
 const glyph: Record<CheckTone, string> = { pass: '✓', fail: '✕', running: '●', neutral: '–' }
 
 onMounted(refreshGhostlineSession)
+
+function handleUnauthorized(error: unknown) {
+  if (error instanceof GhostlineApiError && error.code === 'AUTH_REQUIRED') void handleSessionRejected()
+}
 
 async function logout() {
   try {
@@ -116,7 +121,10 @@ async function loadPR() {
       pr.value = importedPR
     }
   } catch (e) {
-    if (request === importRequest) error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
+    if (request === importRequest) {
+      error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
+      handleUnauthorized(e)
+    }
   } finally {
     if (request === importRequest) loading.value = false
   }
@@ -134,7 +142,10 @@ async function loadStructuredQodoReview() {
     const result = await fetchQodoReviewSession(requestedPRURL, apiKey)
     if (request === qodoRequest && pr.value?.url === requestedPRURL) qodoStructuredReview.value = result
   } catch (e) {
-    if (request === qodoRequest && pr.value?.url === requestedPRURL) qodoReviewError.value = e instanceof Error ? e.message : 'Could not load structured Qodo review data.'
+    if (request === qodoRequest && pr.value?.url === requestedPRURL) {
+      qodoReviewError.value = e instanceof Error ? e.message : 'Could not load structured Qodo review data.'
+      handleUnauthorized(e)
+    }
   } finally {
     if (request === qodoRequest) qodoReviewLoading.value = false
   }
@@ -156,7 +167,10 @@ async function focusRevision(sha: string) {
     const checks = await fetchRevisionChecks(importedPR.url, sha)
     if (request === revisionRequest && selectedRevision.value === sha) focusedChecks.value = checks
   } catch (e) {
-    if (request === revisionRequest && selectedRevision.value === sha) checksError.value = e instanceof Error ? e.message : 'Could not load checks for this revision.'
+    if (request === revisionRequest && selectedRevision.value === sha) {
+      checksError.value = e instanceof Error ? e.message : 'Could not load checks for this revision.'
+      handleUnauthorized(e)
+    }
   } finally {
     if (request === revisionRequest) checksLoading.value = false
   }
@@ -204,7 +218,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
     <main id="main-content" tabindex="-1">
     <section v-if="sessionLoading && !ghostlineSession" class="auth-message" role="status"><p class="eyebrow">ACCESS CHECK</p><h1>Checking sign-in…</h1></section>
     <section v-else-if="sessionError && !ghostlineSession" class="auth-message" role="alert"><p class="eyebrow">CONNECTION REQUIRED</p><h1>Can’t verify access.</h1><p>{{ sessionError }}</p><button type="button" @click="refreshGhostlineSession">TRY AGAIN</button></section>
-    <section v-else-if="ghostlineSession?.authRequired && !ghostlineSession.authenticated" class="auth-message"><p class="eyebrow">GHOSTLINE ACCESS</p><h1>Sign in to your control room.</h1><p>Use the GitHub account invited to this Ghostline instance. Only your account name is kept in the session; the OAuth access token is discarded after sign-in.</p><a class="github-sign-in" href="/auth/login">SIGN IN WITH GITHUB <span aria-hidden="true">↗</span></a></section>
+    <section v-else-if="ghostlineSession?.authRequired && !ghostlineSession.authenticated" class="auth-message"><p class="eyebrow">GHOSTLINE ACCESS</p><h1>Sign in to your control room.</h1><p>Use the GitHub account invited to this Ghostline instance. Only your account name is kept in the session; the OAuth access token is discarded after sign-in.</p><form action="/auth/login" method="post"><button class="github-sign-in" type="submit">SIGN IN WITH GITHUB <span aria-hidden="true">↗</span></button></form></section>
     <div v-else-if="ghostlineSession && (!ghostlineSession.authRequired || ghostlineSession.authenticated)" class="workspace-content">
     <p v-if="sessionError && ghostlineSession.authenticated" class="session-error" role="alert">{{ sessionError }}</p>
     <section class="hero"><p class="eyebrow">CHANGE INTELLIGENCE / 001</p><h1>See the work.<br><em>Trace the decisions.</em></h1><p class="lede">Import a pull request to inspect its revision history. Commit timestamps show when commits were authored, not when they were pushed.</p></section>

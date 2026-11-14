@@ -211,10 +211,12 @@ func TestGitHubOAuthCallbackIssuesAllowlistedSessionAndDiscardsToken(t *testing.
 		}
 	})}
 	auth := newAuthManager(testAuthConfig(), client)
-	router := newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(20, time.Minute, time.Now), clientIdentity{}, nil, auth)
+	router := newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(1, time.Minute, time.Now), clientIdentity{}, nil, auth)
 
 	login := httptest.NewRecorder()
-	router.ServeHTTP(login, httptest.NewRequest(http.MethodGet, "/auth/login", nil))
+	loginRequest := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+	loginRequest.Header.Set("Origin", "https://ghostline.example")
+	router.ServeHTTP(login, loginRequest)
 	if login.Code != http.StatusFound {
 		t.Fatalf("login status = %d", login.Code)
 	}
@@ -291,7 +293,60 @@ func TestGitHubOAuthRejectsStateMismatchAndNonAllowlistedUser(t *testing.T) {
 			if response.Code != tc.want {
 				t.Fatalf("callback status = %d, want %d; body=%s", response.Code, tc.want, response.Body.String())
 			}
+			if tc.name == "state mismatch" {
+				for _, cookie := range response.Result().Cookies() {
+					if cookie.Name == oauthCookieName && cookie.MaxAge < 0 {
+						t.Fatal("invalid callback cleared the pending OAuth state cookie")
+					}
+				}
+			}
 		})
+	}
+}
+
+func TestCrossSiteLoginCannotReplacePendingOAuthState(t *testing.T) {
+	auth := newAuthManager(testAuthConfig(), nil)
+	router := newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(10, time.Minute, time.Now), clientIdentity{}, nil, auth)
+	start := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+	start.Header.Set("Origin", "https://ghostline.example")
+	started := httptest.NewRecorder()
+	router.ServeHTTP(started, start)
+	if started.Code != http.StatusFound {
+		t.Fatalf("same-origin login status = %d, want %d", started.Code, http.StatusFound)
+	}
+	stateCookie := started.Result().Cookies()[0]
+
+	attack := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+	attack.Header.Set("Origin", "https://attacker.example")
+	attack.AddCookie(stateCookie)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, attack)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("cross-site login status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Name == oauthCookieName {
+			t.Fatalf("cross-site login changed pending OAuth cookie: %+v", cookie)
+		}
+	}
+}
+
+func TestAnonymousProtectedRequestsConsumeRateLimitBudget(t *testing.T) {
+	auth := newAuthManager(testAuthConfig(), nil)
+	router := newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(1, time.Minute, time.Now), clientIdentity{}, nil, auth)
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(`{"url":"invalid"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "203.0.113.44:40000"
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		return response
+	}
+	if response := request(); response.Code != http.StatusUnauthorized {
+		t.Fatalf("first anonymous request status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+	if response := request(); response.Code != http.StatusTooManyRequests {
+		t.Fatalf("second anonymous request status = %d, want %d", response.Code, http.StatusTooManyRequests)
 	}
 }
 

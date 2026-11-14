@@ -2,9 +2,12 @@
 import { createApp, nextTick } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchGhostlineSession } from '../application/fetchGhostlineSession'
+import { importPullRequest } from '../application/importPullRequest'
+import { GhostlineApiError } from '../application/apiError'
 import App from './App.vue'
 
 vi.mock('../application/fetchGhostlineSession', () => ({ fetchGhostlineSession: vi.fn() }))
+vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
 
 let app: ReturnType<typeof createApp> | undefined
 let host: HTMLDivElement | undefined
@@ -52,7 +55,7 @@ describe('hosted GitHub sign-in presentation', () => {
     vi.mocked(fetchGhostlineSession).mockResolvedValue({ authRequired: true, authenticated: false })
     await mount()
 
-    expect(host?.querySelector<HTMLAnchorElement>('a[href="/auth/login"]')?.textContent).toContain('SIGN IN WITH GITHUB')
+    expect(host?.querySelector<HTMLButtonElement>('form[action="/auth/login"] button')?.textContent).toContain('SIGN IN WITH GITHUB')
     expect(host?.querySelector('#pr-url')).toBeNull()
     expect(host?.textContent).toContain('Use the GitHub account invited')
   })
@@ -68,7 +71,7 @@ describe('hosted GitHub sign-in presentation', () => {
     await nextTick()
 
     expect(fetch).toHaveBeenCalledWith('/auth/logout', { method: 'POST', credentials: 'same-origin' })
-    expect(host?.querySelector('a[href="/auth/login"]')).not.toBeNull()
+    expect(host?.querySelector('form[action="/auth/login"] button')).not.toBeNull()
   })
 
   it('warns when sign-out fails and the session remains active', async () => {
@@ -91,5 +94,23 @@ describe('hosted GitHub sign-in presentation', () => {
 
     expect(host?.querySelector('[role="alert"]')?.textContent).toContain('Could not reach Ghostline')
     expect(host?.querySelector('#pr-url')).toBeNull()
+  })
+
+  it('hides the workspace and returns to sign-in when a protected API reports an expired session', async () => {
+    vi.mocked(fetchGhostlineSession)
+      .mockResolvedValueOnce({ authRequired: true, authenticated: true, login: 'Felix-Dev' })
+      .mockResolvedValueOnce({ authRequired: true, authenticated: false })
+    vi.mocked(importPullRequest).mockRejectedValue(new GhostlineApiError(401, 'Your Ghostline session expired.', 'AUTH_REQUIRED'))
+    await mount()
+
+    const input = host?.querySelector<HTMLInputElement>('#pr-url')
+    if (!input) throw new Error('PR import field was not rendered')
+    input.value = 'https://github.com/acme/app/pull/7'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    host?.querySelector<HTMLButtonElement>('.import-panel button')?.click()
+
+    await vi.waitFor(() => expect(host?.querySelector('form[action="/auth/login"]')).not.toBeNull())
+    expect(host?.querySelector('#pr-url')).toBeNull()
+    expect(host?.textContent).toContain('Sign in to your control room')
   })
 })
