@@ -23,16 +23,18 @@ Ghostline is a small Go API and Vue single-page application. It has no database 
 ```text
 Browser (Vue 3 + TypeScript)
   presentation: App.vue, ReviewCard.vue, DeepTrace.vue
-  application: importPullRequest, fetchRevisionChecks
-  domain: pullRequest, checks, reviews, trace, referenced issues
-          │ /api/import, /api/checks
+  application: auth status, importPullRequest, fetchRevisionChecks, compareRevisions
+  domain: pullRequest, checks, reviews, trace, referenced issues, comparison
+          │ /api/import, /api/checks, /api/compare
+          │ /auth/github/login, /auth/github/callback
           ▼
 Go + Gin API
+  optional GitHub identity gate and signed session cookie
   HTTP handlers and GitHub response normalization
   GitHub client, referenced-issue lookup, check aggregation, Qodo comment parsing
           │ HTTPS GitHub REST API
           ▼
-GitHub: pull request, commits, checks, published issue comments
+GitHub: OAuth identity, pull request, commits, checks, published issue comments
 ```
 
 The frontend validates API payloads with Zod at the boundary in `frontend/src/domain`. Keep business rules in domain modules, request orchestration in application modules, and HTTP or rendering details at the edges. In the backend, domain concepts such as the canonical repository identity live in `backend/internal/domain`; HTTP handling, GitHub calls, and orchestration stay in the small files under `backend`. Put new business rules in the domain package, and avoid adding infrastructure layers without a concrete need.
@@ -40,6 +42,12 @@ The frontend validates API payloads with Zod at the boundary in `frontend/src/do
 For code changes, preserve these domain boundaries and use test-driven development: write or update a focused failing test for the behavior first, then implement the smallest change that makes it pass.
 
 The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, look up up to 20 issue references from the PR description, normalize the response, and render the source-labeled activity index and review evidence. Issue references are limited to `#N` and same-repository GitHub issue URLs; returned issues are validated against their repository and number. Failed or capped lookups are shown as unavailable. A merged PR with an open referenced issue is flagged with links to the PR and issue; Ghostline does not determine whether the issue’s work was delivered. The activity index orders commit metadata times, check-run start/completion/update times, commit-status creation/update times, and Qodo comment times while preserving each source's timestamp label and native check/status ID. Check entries are GitHub's latest records for the focused revision at fetch time, not a complete check-run history. The timeline does not treat sequence as causation. Check-run titles and bounded summaries stay attached to their source-linked check. `POST /api/checks` fetches checks for a focused full commit SHA. Checks are always labeled with the revision GitHub returned and shown in a revision-scoped section.
+
+## Revision comparison and hosted sign-in
+
+`POST /api/compare` accepts the imported PR URL and two distinct full commit SHAs. The backend asks GitHub to compare that exact pair and accepts only an `ahead` result with no commits behind, so the earlier revision is an ancestor of the candidate revision. It validates the returned base SHA, repository-scoped comparison link, and every changed-file link against the exact path and revision (head for added/modified/renamed files, base for removed files). GitHub's documented compare response does not include `head_commit`; the request path and returned comparison link identify the requested head SHA. Missing revisions receive a specific not-found response. When a response contains 300 files, Ghostline marks the list as potentially truncated and links to GitHub's full comparison. Deep Trace offers this for commits between two marked Qodo finding comments. The comparison is candidate diff context only: it does not show that a commit attempted or completed a repair. The UI binds each request to the PR and SHA pair that initiated it, and discards stale responses when the user changes the selected trace or comparison.
+
+When `GHOSTLINE_AUTH_MODE=github`, `/auth/github/login` starts an OAuth identity check and `/auth/github/callback` verifies the GitHub login against `GHOSTLINE_ALLOWED_GITHUB_USERS`, then issues a stateless signed eight-hour cookie. The token used to call GitHub's `/user` endpoint is not persisted. The auth status endpoint is public so the Vue app can render the right gate; imports and check lookups require a valid session. In production, set `GHOSTLINE_ENV=production`, which makes startup reject auth-off configuration. The local default remains unauthenticated for development.
 
 ## Setup and verification
 
@@ -63,13 +71,13 @@ npm run dev
 
 Open the URL Vite prints. The frontend proxies `/api` requests to `http://localhost:8080`. Public GitHub API access works without credentials but has a low rate limit; export `GITHUB_TOKEN` before starting the local Go API to raise it. Never commit or paste a token into a report.
 
-To run both services in containers:
+To build and run the production-style application container:
 
 ```sh
 docker compose up --build
 ```
 
-Open `http://localhost:5173`, or the configured `GHOSTLINE_PORT`. Compose exposes the frontend on network interfaces by default; use `GHOSTLINE_BIND_ADDRESS` to select a bind address. The Compose backend does not currently receive `GITHUB_TOKEN`, so use the local API run above when authenticated GitHub API access is needed.
+Open `http://localhost:8080`, or the configured `GHOSTLINE_PORT`. Compose builds the Vue assets and serves them from the Go API. Hosted authentication is required by default; configure a GitHub OAuth App and the required environment variables described in the README, including the client-IP header and exact trusted proxy CIDR. The app expects TLS termination at the hosting edge for internet access. Compose does not provide TLS or distributed rate limiting. The local development commands above remain available and run the Vite dev server separately.
 
 Run the project checks:
 
@@ -92,3 +100,9 @@ The running change activity index, imported from Ghostline PR #49, is shown in [
 The current source-backed review timeline, imported from Ghostline PR #50 at revision `4bae19d`, is shown in [this screenshot](feature-evidence/activity-index-review-timeline.jpg). It shows observed commit and published Qodo comment events; it does not imply that event order proves a repair relationship. Parser-incompleteness and partial-check-placement warnings are edge states covered by tests, not present in this PR's current records.
 
 The [live referenced-issues panel](feature-evidence/referenced-issue-live-2026-11-13.jpg) shows issue states imported from a public pull request. This example’s referenced issues are now closed; the merged/open warning is covered by UI tests using explicit fixtures.
+
+### Revision-comparison evidence
+
+![Ghostline Deep Trace candidate comparison prepared replay](feature-evidence/revision-comparison-prepared-replay.jpg)
+
+This screenshot shows the changed comparison panel using a prepared synthetic fixture. The Deep Trace component and comparison rendering are real; the PR, Qodo comments, revisions, and GitHub response shown here are fixture data, not a live review record.

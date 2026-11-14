@@ -8,6 +8,7 @@ import App from './App.vue'
 
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
 vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
+vi.mock('../application/fetchAuthStatus', () => ({ fetchAuthStatus: vi.fn().mockResolvedValue({ enabled: false, login: null }) }))
 
 const sha = 'a'.repeat(40)
 const commit = { sha, shortSha: 'aaaaaaa', message: 'Add retry guard', author: 'Felix', committedAt: '2026-11-04T09:00:00Z', url: `https://github.com/acme/app/commit/${sha}` }
@@ -48,6 +49,7 @@ describe('change activity index', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector("#pr-url")).not.toBeNull())
 
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = pullRequest.url
@@ -80,6 +82,7 @@ describe('change activity index', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector("#pr-url")).not.toBeNull())
 
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = pullRequest.url
@@ -101,6 +104,7 @@ describe('change activity index', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector("#pr-url")).not.toBeNull())
 
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = pullRequest.url
@@ -123,6 +127,7 @@ describe('change activity index', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector("#pr-url")).not.toBeNull())
 
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = pullRequest.url
@@ -152,6 +157,7 @@ describe('change activity index', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector("#pr-url")).not.toBeNull())
 
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = pullRequest.url
@@ -174,6 +180,7 @@ describe('change activity index', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector("#pr-url")).not.toBeNull())
 
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = pullRequest.url
@@ -192,6 +199,7 @@ describe('change activity index', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector("#pr-url")).not.toBeNull())
 
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = pullRequest.url
@@ -218,6 +226,7 @@ describe('change activity index', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector("#pr-url")).not.toBeNull())
 
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = pullRequest.url
@@ -242,6 +251,7 @@ describe('change activity index', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector("#pr-url")).not.toBeNull())
 
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = pullRequest.url
@@ -268,6 +278,7 @@ describe('change activity index', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector("#pr-url")).not.toBeNull())
 
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = pullRequest.url

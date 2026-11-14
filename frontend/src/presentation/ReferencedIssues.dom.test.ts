@@ -2,9 +2,11 @@
 import { createApp } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PullRequest } from '../domain/pullRequest'
+import { fetchAuthStatus } from '../application/fetchAuthStatus'
 import { importPullRequest } from '../application/importPullRequest'
 import App from './App.vue'
 
+vi.mock('../application/fetchAuthStatus', () => ({ fetchAuthStatus: vi.fn() }))
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
 
 const pullRequest: PullRequest = {
@@ -30,11 +32,13 @@ afterEach(() => {
 })
 
 async function importPR(data: PullRequest) {
+  vi.mocked(fetchAuthStatus).mockResolvedValue({ enabled: false, login: null })
   vi.mocked(importPullRequest).mockResolvedValue(data)
   host = document.createElement('div')
   document.body.append(host)
   app = createApp(App)
   app.mount(host)
+  await vi.waitFor(() => expect(host?.querySelector('#pr-url')).not.toBeNull())
   host.querySelector<HTMLInputElement>('#pr-url')!.value = data.url
   host.querySelector<HTMLInputElement>('#pr-url')!.dispatchEvent(new Event('input', { bubbles: true }))
   host.querySelector<HTMLButtonElement>('.input-row button')!.click()

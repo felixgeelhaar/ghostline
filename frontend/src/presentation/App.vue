@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
+import { fetchAuthStatus } from '../application/fetchAuthStatus'
+import { isAuthenticationRequired } from '../application/apiError'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
+import type { AuthStatus } from '../domain/auth'
 import { buildChangeActivity, countReviewsWithUnavailableDetails, describeCheckActivity } from '../domain/changeActivity'
 import { checkOutcome, checkSummaryPreview, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
 import { findRecurringFindings, qodoHeadCoverage, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
@@ -21,6 +24,9 @@ const checksLoading = ref(false)
 const checksError = ref('')
 const selectedTraceId = ref('')
 const copyResult = ref<CopyResult>()
+const authStatus = ref<AuthStatus>()
+const authError = ref('')
+const authLoading = ref(true)
 let traceTrigger: HTMLButtonElement | undefined
 let revisionRequest = 0
 let importRequest = 0
@@ -47,6 +53,16 @@ const activeTrace = computed(() => {
 })
 const glyph: Record<CheckTone, string> = { pass: '✓', fail: '✕', running: '●', neutral: '–' }
 
+onMounted(async () => {
+  try {
+    authStatus.value = await fetchAuthStatus()
+  } catch (e) {
+    authError.value = e instanceof Error ? e.message : 'Could not check Ghostline sign-in status.'
+  } finally {
+    authLoading.value = false
+  }
+})
+
 async function loadPR() {
   const request = ++importRequest
   error.value = validatePullRequestURL(url.value) ?? ''
@@ -59,7 +75,9 @@ async function loadPR() {
     const importedPR = await importPullRequest(url.value)
     if (request === importRequest) pr.value = importedPR
   } catch (e) {
-    if (request === importRequest) error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
+    if (request === importRequest && !(isAuthenticationRequired(e) && returnToSignIn())) {
+      error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
+    }
   } finally {
     if (request === importRequest) loading.value = false
   }
@@ -81,10 +99,31 @@ async function focusRevision(sha: string) {
     const checks = await fetchRevisionChecks(importedPR.url, sha)
     if (request === revisionRequest && selectedRevision.value === sha) focusedChecks.value = checks
   } catch (e) {
-    if (request === revisionRequest && selectedRevision.value === sha) checksError.value = e instanceof Error ? e.message : 'Could not load checks for this revision.'
+    if (request === revisionRequest && selectedRevision.value === sha && !(isAuthenticationRequired(e) && returnToSignIn())) {
+      checksError.value = e instanceof Error ? e.message : 'Could not load checks for this revision.'
+    }
   } finally {
     if (request === revisionRequest) checksLoading.value = false
   }
+}
+function returnToSignIn(): boolean {
+  if (!authStatus.value?.enabled) return false
+  authStatus.value = { enabled: true, login: null }
+  pr.value = undefined
+  loading.value = false
+  selectedRevision.value = ''
+  selectedTraceId.value = ''
+  traceTrigger = undefined
+  focusedChecks.value = undefined
+  checksLoading.value = false
+  checksError.value = ''
+  copyResult.value = undefined
+  error.value = ''
+  authError.value = ''
+  importRequest++
+  revisionRequest++
+  copyRequest++
+  return true
 }
 let copyRequest = 0
 async function copySha(sha: string) {
@@ -119,14 +158,19 @@ async function clearTrace() {
   traceTrigger?.focus()
   traceTrigger = undefined
 }
+function reloadPage() { window.location.reload() }
 function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
 </script>
 
 <template>
   <div class="shell">
     <a class="skip-link" href="#main-content">Skip to main content</a>
-    <header class="topbar"><a class="brand" href="#"><span class="brand-mark">G</span><span>GHOSTLINE<small>ENGINEERING CONTROL ROOM</small></span></a><span class="live"><i></i> SYSTEM READY</span></header>
+    <header class="topbar"><a class="brand" href="#"><span class="brand-mark">G</span><span>GHOSTLINE<small>ENGINEERING CONTROL ROOM</small></span></a><div class="topbar-status"><form v-if="authStatus?.enabled && authStatus.login" method="post" action="/auth/logout"><span class="signed-in">{{ authStatus.login }}</span><button class="sign-out" type="submit">SIGN OUT</button></form><span class="live"><i></i> SYSTEM READY</span></div></header>
     <main id="main-content" tabindex="-1">
+    <section v-if="authLoading" class="auth-panel" role="status"><p class="eyebrow">ACCESS CHECK</p><h1>Verifying your session.</h1><p class="lede">Ghostline is checking whether this instance requires sign-in.</p></section>
+    <section v-else-if="authError" class="auth-panel auth-error" role="alert"><p class="eyebrow">ACCESS STATUS UNAVAILABLE</p><h1>Cannot verify access.</h1><p class="lede">{{ authError }}</p><button type="button" @click="reloadPage">RETRY</button></section>
+    <section v-else-if="authStatus?.enabled && !authStatus.login" class="auth-panel"><p class="eyebrow">GHOSTLINE / AUTHORIZED ACCESS</p><h1>Sign in to continue.</h1><p class="lede">This hosted instance is limited to approved GitHub accounts. Ghostline reads your public GitHub profile to verify your account; it does not request repository access.</p><a class="github-sign-in" href="/auth/github/login">CONTINUE WITH GITHUB <span aria-hidden="true">↗</span></a></section>
+    <div v-else class="workspace">
     <section class="hero"><p class="eyebrow">CHANGE INTELLIGENCE / 001</p><h1>See the work.<br><em>Trace the decisions.</em></h1><p class="lede">Import a pull request to inspect its revision history. Commit timestamps show when commits were authored, not when they were pushed.</p></section>
     <section class="import-panel"><label for="pr-url">GITHUB PULL REQUEST</label><div class="input-row"><span class="prefix">↗</span><input id="pr-url" v-model="url" placeholder="https://github.com/owner/repo/pull/123" @keyup.enter="loadPR"><button :disabled="loading" @click="loadPR">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button></div><p v-if="error" class="error" role="alert">{{ error }}</p></section>
     <section v-if="pr" class="change-card">
@@ -215,10 +259,11 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         <ol v-else class="review-list"><li v-for="review in selectedReviews.matched" :key="review.id"><ReviewCard :review="review" :commits="pr.commits" @focus-revision="focusRevision" /></li></ol>
         <p v-if="pr.qodoReviews.availability === 'available' && pr.qodoReviews.items.length > 0 && pr.qodoReviews.unrecognizedCommentCount > 0" class="checks-note warn" role="status">{{ pr.qodoReviews.unrecognizedCommentCount }} additional Qodo comment{{ pr.qodoReviews.unrecognizedCommentCount === 1 ? '' : 's' }} could not be parsed as review output. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect all comments on GitHub ↗</a></p>
         <section v-if="selectedReviews.unmarked.length" class="unmarked-reviews"><h4 class="section-title"><span>REVISION NOT MARKED · CONTEXT ONLY</span></h4><ol class="review-list"><li v-for="review in selectedReviews.unmarked" :key="review.id"><ReviewCard :review="review" :commits="pr.commits" context-only @focus-revision="focusRevision" /></li></ol></section>
-        <section v-if="pr.qodoReviews.availability === 'available'" class="recurrence" aria-labelledby="recurrence-title"><h4 id="recurrence-title" class="section-title"><span>REPEATED FINDINGS · FULL IMPORT</span></h4><p v-if="recurringFindings.length === 0" class="checks-note" role="status">No repeated finding title appears in the Qodo comments returned for this import.</p><ol v-else class="recurrence-list"><li v-for="finding in recurringFindings" :key="finding.id"><div class="review-meta"><strong>{{ finding.title }}</strong><span class="recurrence-count">{{ finding.occurrences.length }} separate comments</span></div><ul><li v-for="occurrence in finding.occurrences" :key="occurrence.reviewId"><time :datetime="occurrence.createdAt">{{ date(occurrence.createdAt) }}</time><a v-if="occurrence.commitSha && occurrence.commitUrl" :href="occurrence.commitUrl" target="_blank" rel="noreferrer">REVISION {{ occurrence.commitSha.slice(0, 7) }} ↗</a><span v-else>REVISION NOT MARKED</span><a :href="occurrence.sourceUrl" target="_blank" rel="noreferrer">SOURCE FINDING ↗</a></li></ul><button type="button" class="trace-open" :aria-expanded="selectedTraceId === finding.id" :aria-controls="selectedTraceId === finding.id ? 'deep-trace' : undefined" @click="toggleTrace(finding.id, $event)">{{ selectedTraceId === finding.id ? 'CLOSE DEEP TRACE' : 'OPEN DEEP TRACE' }}</button></li></ol><DeepTrace v-if="activeTrace" :trace="activeTrace" @close="clearTrace" @focus-revision="focusRevision" /><p class="footnote">A repeated title is an observed match across separate Qodo comments. It does not establish what caused the repeat or whether a later change fixed it.</p></section>
+        <section v-if="pr.qodoReviews.availability === 'available'" class="recurrence" aria-labelledby="recurrence-title"><h4 id="recurrence-title" class="section-title"><span>REPEATED FINDINGS · FULL IMPORT</span></h4><p v-if="recurringFindings.length === 0" class="checks-note" role="status">No repeated finding title appears in the Qodo comments returned for this import.</p><ol v-else class="recurrence-list"><li v-for="finding in recurringFindings" :key="finding.id"><div class="review-meta"><strong>{{ finding.title }}</strong><span class="recurrence-count">{{ finding.occurrences.length }} separate comments</span></div><ul><li v-for="occurrence in finding.occurrences" :key="occurrence.reviewId"><time :datetime="occurrence.createdAt">{{ date(occurrence.createdAt) }}</time><a v-if="occurrence.commitSha && occurrence.commitUrl" :href="occurrence.commitUrl" target="_blank" rel="noreferrer">REVISION {{ occurrence.commitSha.slice(0, 7) }} ↗</a><span v-else>REVISION NOT MARKED</span><a :href="occurrence.sourceUrl" target="_blank" rel="noreferrer">SOURCE FINDING ↗</a></li></ul><button type="button" class="trace-open" :aria-expanded="selectedTraceId === finding.id" :aria-controls="selectedTraceId === finding.id ? 'deep-trace' : undefined" @click="toggleTrace(finding.id, $event)">{{ selectedTraceId === finding.id ? 'CLOSE DEEP TRACE' : 'OPEN DEEP TRACE' }}</button></li></ol><DeepTrace v-if="activeTrace" :key="`${activeTrace.id}:${pr.url}`" :trace="activeTrace" :pull-request-url="pr.url" @close="clearTrace" @focus-revision="focusRevision" @auth-required="returnToSignIn" /><p class="footnote">A repeated title is an observed match across separate Qodo comments. It does not establish what caused the repeat or whether a later change fixed it.</p></section>
         <p class="footnote">Qodo review outcomes are reviewer feedback, not independent proof of correctness. Findings and summaries apply to their linked revision. A finding missing from a later review does not by itself prove the change was fixed.</p>
       </section>
     </section>
+    </div>
     </main>
     <footer><span>GHOSTLINE // DAY 01</span><span>EVERY SIGNAL HAS A SOURCE.</span></footer>
   </div>

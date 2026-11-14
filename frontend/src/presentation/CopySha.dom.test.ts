@@ -7,6 +7,7 @@ import App from './App.vue'
 
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
 vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
+vi.mock('../application/fetchAuthStatus', () => ({ fetchAuthStatus: vi.fn().mockResolvedValue({ enabled: false, login: null }) }))
 
 const shaA = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
 const shaB = 'b'.repeat(40)
@@ -30,6 +31,7 @@ async function importFixture() {
   document.body.append(host)
   mounted = createApp(App)
   mounted.mount(host)
+  await vi.waitFor(() => expect(host?.querySelector('#pr-url')).not.toBeNull())
   const input = host.querySelector<HTMLInputElement>('#pr-url')!
   input.value = 'https://github.com/acme/app/pull/7'
   input.dispatchEvent(new Event('input', { bubbles: true }))

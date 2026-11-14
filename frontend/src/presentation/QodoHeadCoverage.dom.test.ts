@@ -2,9 +2,11 @@
 import { createApp, nextTick } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PullRequest } from '../domain/pullRequest'
+import { fetchAuthStatus } from '../application/fetchAuthStatus'
 import { importPullRequest } from '../application/importPullRequest'
 import App from './App.vue'
 
+vi.mock('../application/fetchAuthStatus', () => ({ fetchAuthStatus: vi.fn() }))
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
 vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
 
@@ -26,11 +28,13 @@ let mounted: ReturnType<typeof createApp> | undefined
 let host: HTMLDivElement | undefined
 
 async function showPullRequest(result: PullRequest = pullRequest) {
+  vi.mocked(fetchAuthStatus).mockResolvedValue({ enabled: false, login: null })
   vi.mocked(importPullRequest).mockResolvedValue(result)
   host = document.createElement('div')
   document.body.append(host)
   mounted = createApp(App)
   mounted.mount(host)
+  await vi.waitFor(() => expect(host?.querySelector('#pr-url')).not.toBeNull())
   const input = host.querySelector<HTMLInputElement>('#pr-url')!
   input.value = pullRequest.url
   input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -87,10 +91,12 @@ describe('Qodo PR-head coverage status', () => {
       qodoReviews: { availability: 'available' as const, unrecognizedCommentCount: 0, items: [{ id: 19, provider: 'Qodo' as const, sourceType: 'github_issue_comment' as const, sourceAuthor: 'qodo-code-review[bot]', kind: 'findings' as const, findings: [], commitSha: outsideSha, commitUrl: `https://github.com/acme/app/commit/${outsideSha}`, createdAt: '2026-11-04T10:30:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-19' }] },
     }
     vi.mocked(importPullRequest).mockResolvedValue(outsidePullRequest)
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ enabled: false, login: null })
     host = document.createElement('div')
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector('#pr-url')).not.toBeNull())
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = pullRequest.url
     input.dispatchEvent(new Event('input', { bubbles: true }))

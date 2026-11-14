@@ -1,18 +1,34 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import { compareRevisions } from '../application/compareRevisions'
+import { isAuthenticationRequired } from '../application/apiError'
+import type { RevisionComparison } from '../domain/comparison'
 import { interventionPrompt, type FindingTrace } from '../domain/trace'
 
-const props = defineProps<{ trace: FindingTrace }>()
+const props = defineProps<{ trace: FindingTrace; pullRequestUrl: string }>()
 const emit = defineEmits<{
   close: []
   focusRevision: [sha: string]
+  authRequired: []
 }>()
 
 const copyStatus = ref('')
 const heading = ref<HTMLHeadingElement | null>(null)
+const comparison = ref<RevisionComparison>()
+const comparisonLoading = ref(false)
+const comparisonError = ref('')
+const comparisonTarget = ref<{ baseSha: string; headSha: string }>()
+const comparisonRequest = ref(0)
 
 onMounted(() => heading.value?.focus())
-watch(() => props.trace.id, () => { copyStatus.value = '' })
+watch(() => `${props.trace.id}:${props.pullRequestUrl}:${props.trace.occurrences.map((item) => item.commitSha ?? '').join(',')}`, () => {
+  copyStatus.value = ''
+  comparisonRequest.value++
+  comparison.value = undefined
+  comparisonTarget.value = undefined
+  comparisonLoading.value = false
+  comparisonError.value = ''
+})
 
 function date(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
@@ -25,6 +41,28 @@ async function copyGuidance(trace: FindingTrace) {
     copyStatus.value = 'Guidance copied. Review it, then paste it into your existing IDE or coding agent.'
   } catch {
     copyStatus.value = 'Could not copy guidance here. Use the source links and summary above in your existing IDE or coding agent.'
+  }
+}
+
+async function inspectCandidate(baseSha: string, headSha: string) {
+  const request = ++comparisonRequest.value
+  comparisonTarget.value = { baseSha, headSha }
+  comparison.value = undefined
+  comparisonError.value = ''
+  comparisonLoading.value = true
+  try {
+    const result = await compareRevisions(props.pullRequestUrl, baseSha, headSha)
+    if (request === comparisonRequest.value) comparison.value = result
+  } catch (error) {
+    if (request === comparisonRequest.value) {
+      if (isAuthenticationRequired(error)) {
+        emit('authRequired')
+        return
+      }
+      comparisonError.value = error instanceof Error ? error.message : 'Could not compare these revisions.'
+    }
+  } finally {
+    if (request === comparisonRequest.value) comparisonLoading.value = false
   }
 }
 </script>
@@ -98,6 +136,16 @@ async function copyGuidance(trace: FindingTrace) {
               <li v-for="revision in span.candidateRevisions" :key="revision.sha">
                 <span><a :href="revision.url" target="_blank" rel="noreferrer">{{ revision.shortSha }} ↗</a> {{ revision.message }}</span>
                 <button type="button" :aria-label="`Focus candidate PR revision ${revision.shortSha}`" @click="emit('focusRevision', revision.sha)">FOCUS</button>
+                <button v-if="span.fromRevision" type="button" :aria-label="`Compare candidate ${revision.shortSha} with earlier review revision ${span.fromRevision.shortSha}`" @click="inspectCandidate(span.fromRevision.sha, revision.sha)">INSPECT CHANGES</button>
+                <section v-if="comparisonTarget?.baseSha === span.fromRevision?.sha && comparisonTarget?.headSha === revision.sha && comparisonLoading" class="candidate-comparison" role="status">Loading GitHub comparison for the selected revision pair…</section>
+                <section v-else-if="comparisonTarget?.baseSha === span.fromRevision?.sha && comparisonTarget?.headSha === revision.sha && comparisonError" class="candidate-comparison comparison-error" role="status"><strong>Comparison unavailable.</strong> {{ comparisonError }} <span>You can still inspect either revision directly on GitHub.</span></section>
+                <section v-else-if="comparisonTarget?.baseSha === span.fromRevision?.sha && comparisonTarget?.headSha === revision.sha && comparison" class="candidate-comparison" aria-label="Candidate revision comparison">
+                  <p class="comparison-boundary">CANDIDATE DIFF · {{ comparison.baseSha.slice(0, 7) }} → {{ comparison.headSha.slice(0, 7) }}. This shows changed files between revisions; it does not prove a finding was addressed.</p>
+                  <p class="comparison-summary">{{ comparison.totalCommits }} commits · {{ comparison.files.length }} file entr{{ comparison.files.length === 1 ? 'y' : 'ies' }} returned by GitHub <a :href="comparison.compareUrl" target="_blank" rel="noreferrer">OPEN FULL COMPARISON ↗</a></p>
+                  <p v-if="comparison.filesTruncated" class="checks-note" role="status">GitHub returned the first 300 changed files. This comparison may omit additional files; open the full comparison for complete details.</p>
+                  <ul v-if="comparison.files.length" class="comparison-files"><li v-for="file in comparison.files" :key="file.path"><a :href="file.url" target="_blank" rel="noreferrer">{{ file.path }} ↗</a><span>{{ file.status }} · +{{ file.additions }} −{{ file.deletions }}</span></li></ul>
+                  <p v-else class="checks-note">GitHub returned no file entries for this revision pair.</p>
+                </section>
               </li>
             </ul>
           </template>

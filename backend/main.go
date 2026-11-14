@@ -1,11 +1,15 @@
 package main
 
 import (
+	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,6 +18,9 @@ import (
 	"github.com/felixgeelhaar/ghostline/backend/internal/domain"
 	"github.com/gin-gonic/gin"
 )
+
+//go:embed all:web
+var frontendAssets embed.FS
 
 type pullRequest struct {
 	Repository       string             `json:"repository"`
@@ -204,6 +211,54 @@ func (a api) loadRevisionChecks(c *gin.Context) {
 	c.JSON(http.StatusOK, fetchRevisionChecks(c.Request.Context(), a.gh, owner, repo, body.SHA))
 }
 
+func (a api) compareRevisions(c *gin.Context) {
+	var body struct {
+		URL     string `json:"url"`
+		BaseSHA string `json:"baseSha"`
+		HeadSHA string `json:"headSha"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Provide a GitHub pull request URL and two full commit SHAs."})
+		return
+	}
+	owner, repo, _, err := parsePRURL(body.URL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !domain.IsFullRevisionSHA(body.BaseSHA) || !domain.IsFullRevisionSHA(body.HeadSHA) || strings.EqualFold(body.BaseSHA, body.HeadSHA) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Choose two different full 40-character commit SHAs."})
+		return
+	}
+	path := fmt.Sprintf("/repos/%s/%s/compare/%s...%s?per_page=100", url.PathEscape(owner), url.PathEscape(repo), strings.ToLower(body.BaseSHA), strings.ToLower(body.HeadSHA))
+	var raw domain.RevisionComparisonSource
+	if err := a.gh.get(c.Request.Context(), path, &raw); err != nil {
+		if errors.Is(err, errNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "GitHub could not find one of the requested revisions for this comparison."})
+			return
+		}
+		respondGitHubError(c, err)
+		return
+	}
+	comparison, err := domain.NewRevisionComparison(owner, repo, body.BaseSHA, body.HeadSHA, raw)
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrComparisonRevisionsNotAncestor):
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		case errors.Is(err, domain.ErrUnrecognizedComparisonStatus):
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		case errors.Is(err, domain.ErrInvalidComparisonCounts), errors.Is(err, domain.ErrInvalidChangedFileDetails):
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		case errors.Is(err, domain.ErrInvalidComparisonSourceLink), errors.Is(err, domain.ErrInvalidChangedFileSourceLink):
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned invalid revision comparison evidence. Please retry."})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, comparison)
+}
+
 func respondGitHubError(c *gin.Context, err error) {
 	var statusErr statusError
 	switch {
@@ -223,11 +278,65 @@ func newRouter(gh *githubClient) *gin.Engine {
 }
 
 func newRouterWithLimiter(gh *githubClient, limiter *rateLimiter, identity clientIdentity) *gin.Engine {
-	r := gin.Default()
-	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
-	limited := r.Group("/api", rateLimitMiddleware(limiter, identity))
-	limited.POST("/import", api{gh: gh}.importPR)
-	limited.POST("/checks", api{gh: gh}.loadRevisionChecks)
+	return newRouterWithAuth(gh, limiter, identity, authSettings{Now: time.Now})
+}
+
+func newProductionRouter(gh *githubClient, limiter *rateLimiter, identity clientIdentity, settings authSettings, assets fs.FS) *gin.Engine {
+	r := newRouterWithAuth(gh, limiter, identity, settings)
+	if assets == nil {
+		return r
+	}
+	static, err := fs.Sub(assets, "web")
+	if err != nil {
+		// Unit tests may provide an already-rooted asset filesystem.
+		static = assets
+	}
+	index, err := fs.ReadFile(static, "index.html")
+	if err != nil {
+		// `go run ./backend` is an API-only local development mode.
+		return r
+	}
+	r.NoRoute(func(c *gin.Context) {
+		if c.Request.URL.Path == "/api" || strings.HasPrefix(c.Request.URL.Path, "/api/") || c.Request.URL.Path == "/auth" || strings.HasPrefix(c.Request.URL.Path, "/auth/") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Not found."})
+			return
+		}
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		name := strings.TrimPrefix(strings.TrimPrefix(c.Request.URL.Path, "/"), "/")
+		if name != "." && name != "" {
+			if body, readErr := fs.ReadFile(static, name); readErr == nil {
+				contentType := mime.TypeByExtension(filepath.Ext(name))
+				if contentType == "" {
+					switch filepath.Ext(name) {
+					case ".js":
+						contentType = "text/javascript; charset=utf-8"
+					case ".css":
+						contentType = "text/css; charset=utf-8"
+					case ".svg":
+						contentType = "image/svg+xml"
+					case ".woff2":
+						contentType = "font/woff2"
+					}
+				}
+				if contentType != "" {
+					c.Header("Content-Type", contentType)
+				}
+				if strings.HasPrefix(name, "assets/") {
+					c.Header("Cache-Control", "public, max-age=31536000, immutable")
+				}
+				c.Data(http.StatusOK, contentType, body)
+				return
+			}
+			if strings.HasPrefix(name, "assets/") || filepath.Ext(name) != "" {
+				http.NotFound(c.Writer, c.Request)
+				return
+			}
+		}
+		c.Data(http.StatusOK, "text/html; charset=utf-8", index)
+	})
 	return r
 }
 
@@ -237,7 +346,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	r := newRouterWithLimiter(newGitHubClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity)
+	auth, err := loadAuthConfig(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	r := newProductionRouter(newGitHubClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity, auth, frontendAssets)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

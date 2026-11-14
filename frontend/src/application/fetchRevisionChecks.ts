@@ -1,4 +1,4 @@
-import { apiErrorMessage } from './apiError'
+import { ApiResponseError, apiErrorMessage } from './apiError'
 import { RevisionChecksSchema } from '../domain/checks'
 
 export async function fetchRevisionChecks(url: string, sha: string) {
@@ -8,7 +8,7 @@ export async function fetchRevisionChecks(url: string, sha: string) {
     body: JSON.stringify({ url, sha }),
   })
   const payload: unknown = await response.json()
-  if (!response.ok) throw new Error(apiErrorMessage(response, payload, 'Unable to load checks for this revision.'))
+  if (!response.ok) throw new ApiResponseError(apiErrorMessage(response, payload, 'Unable to load checks for this revision.'), response.status)
   const checks = RevisionChecksSchema.parse(payload)
   if (checks.revisionSha !== sha) throw new Error('GitHub returned checks for a different revision.')
   return checks
