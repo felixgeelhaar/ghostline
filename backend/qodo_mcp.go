@@ -483,9 +483,6 @@ func (client *qodoReviewClient) fetch(ctx context.Context, apiKey, prURL string)
 		},
 	}
 	initResponse, sessionID, err := client.post(ctx, apiKey, "", initialize, 1, true)
-	if err != nil {
-		return empty, err
-	}
 	if sessionID != "" {
 		defer func() {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
@@ -498,6 +495,9 @@ func (client *qodoReviewClient) fetch(ctx context.Context, apiKey, prURL string)
 				logger.Warn("Qodo MCP session cleanup failed", "cause", cleanupErr)
 			}
 		}()
+	}
+	if err != nil {
+		return empty, err
 	}
 	var initResult struct {
 		ProtocolVersion string `json:"protocolVersion"`
@@ -773,25 +773,54 @@ func decodeMCPEnvelopeStream(reader io.Reader, contentType string, expectedID in
 	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 4096), maxQodoResponseBytes)
+	var consumed int
+	skipLF := false
 	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
-		if index := bytes.IndexByte(data, '\n'); index >= 0 {
-			return index + 1, data[:index+1], nil
+		start := 0
+		if skipLF {
+			if len(data) == 0 {
+				return 0, nil, nil
+			}
+			if data[0] == '\n' {
+				start = 1
+				consumed++
+			}
+			skipLF = false
 		}
-		if atEOF && len(data) > 0 {
-			return len(data), data, nil
+		for index := start; index < len(data); index++ {
+			switch data[index] {
+			case '\n':
+				consumed++
+				return index + 1, data[start:index], nil
+			case '\r':
+				delimiterBytes := 1
+				if index+1 < len(data) {
+					if data[index+1] == '\n' {
+						delimiterBytes++
+					}
+				} else if !atEOF {
+					skipLF = true
+				}
+				consumed += delimiterBytes
+				return index + delimiterBytes, data[start:index], nil
+			}
+		}
+		if atEOF && len(data) > start {
+			return len(data), data[start:], nil
+		}
+		if start > 0 {
+			return start, nil, nil
 		}
 		return 0, nil, nil
 	})
 	var eventData []string
-	var consumed int
 	for scanner.Scan() {
 		rawLine := scanner.Text()
 		consumed += len(rawLine)
 		if consumed > maxQodoResponseBytes {
 			return empty, errors.New("Qodo review response exceeded the size limit")
 		}
-		line := strings.TrimSuffix(rawLine, "\n")
-		line = strings.TrimSuffix(line, "\r")
+		line := rawLine
 		if line == "" {
 			if envelope, ok := matchingMCPEvent(eventData, expectedID); ok {
 				return envelope, nil

@@ -373,8 +373,8 @@ func TestQodoReviewEndpointOmitsMissingSessionStatus(t *testing.T) {
 		return qodoReviewData{
 			Availability: "available", Source: "Qodo Agentic Toolbox",
 			ReviewSession: &qodoReviewSession{CommitSHA: sha},
-			Findings: []qodoManagedFinding{{ID: "finding-1", Title: "Preserve review data", GitSHA: sha}},
-			ReviewRuns: []qodoManagedReviewRun{{ID: "run-1", Status: "completed", CommitSHA: sha}},
+			Findings:      []qodoManagedFinding{{ID: "finding-1", Title: "Preserve review data", GitSHA: sha}},
+			ReviewRuns:    []qodoManagedReviewRun{{ID: "run-1", Status: "completed", CommitSHA: sha}},
 		}, nil
 	}), newRateLimiter(defaultRateLimitRequests, defaultRateLimitWindow, time.Now), clientIdentity{})
 	req := httptest.NewRequest(http.MethodPost, "/api/qodo-review", strings.NewReader(`{"url":"https://github.com/acme/payments/pull/42"}`))
@@ -803,6 +803,98 @@ func TestDecodeMCPEnvelopeStreamAcceptsCRLFEventBoundaries(t *testing.T) {
 	}
 }
 
+func TestDecodeMCPEnvelopeStreamAcceptsStandaloneCREventBoundaries(t *testing.T) {
+	data := []byte("event: message\rdata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"review\":\"complete\"}}\r\revent: keepalive\r\r")
+	envelope, err := decodeMCPEnvelopeStream(bytes.NewReader(data), "text/event-stream", 2)
+	if err != nil {
+		t.Fatalf("valid CR-delimited event stream rejected: %v", err)
+	}
+	if string(envelope.Result) != `{"review":"complete"}` {
+		t.Fatalf("result = %s", envelope.Result)
+	}
+}
+
+func TestDecodeMCPEnvelopeStreamReturnsOnStandaloneCRBeforeStreamCloses(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	go func() {
+		_, _ = io.WriteString(writer, "event: message\rdata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"review\":\"complete\"}}\r\r")
+	}()
+	done := make(chan error, 1)
+	go func() {
+		envelope, err := decodeMCPEnvelopeStream(reader, "text/event-stream", 2)
+		if err == nil && string(envelope.Result) != `{"review":"complete"}` {
+			err = fmt.Errorf("unexpected result: %s", envelope.Result)
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("decoder waited for the open CR-delimited SSE body to close")
+	}
+	_ = writer.Close()
+}
+
+func TestDecodeMCPEnvelopeStreamAcceptsCRLFSeparatedAcrossReads(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	go func() {
+		_, _ = io.WriteString(writer, "event: message\r")
+		_, _ = io.WriteString(writer, "\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"review\":\"complete\"}}\r")
+		_, _ = io.WriteString(writer, "\n\r\n")
+	}()
+	done := make(chan error, 1)
+	go func() {
+		envelope, err := decodeMCPEnvelopeStream(reader, "text/event-stream", 2)
+		if err == nil && string(envelope.Result) != `{"review":"complete"}` {
+			err = fmt.Errorf("unexpected result: %s", envelope.Result)
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("decoder waited for the open SSE body to close")
+	}
+	_ = writer.Close()
+}
+
+func TestQodoReviewClientClosesSessionWhenInitializationResponseIsInvalid(t *testing.T) {
+	var cleanupRequests int
+	client := qodoReviewClient{
+		endpoint: "https://qodo.test/v1/tools/mcp/",
+		http: &http.Client{Transport: qodoRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			recorder := httptest.NewRecorder()
+			if request.Method == http.MethodDelete {
+				cleanupRequests++
+				if request.Header.Get("Mcp-Session-Id") != "new-session" {
+					t.Errorf("cleanup session = %q, want new-session", request.Header.Get("Mcp-Session-Id"))
+				}
+				recorder.WriteHeader(http.StatusNoContent)
+				return recorder.Result(), nil
+			}
+			recorder.Header().Set("Content-Type", "application/json")
+			recorder.Header().Set("Mcp-Session-Id", "new-session")
+			_, _ = io.WriteString(recorder, `{"jsonrpc":`)
+			return recorder.Result(), nil
+		})},
+	}
+
+	if _, err := client.fetch(context.Background(), "qodo-secret", "https://github.com/acme/payments/pull/42"); err == nil {
+		t.Fatal("invalid initialization response was accepted")
+	}
+	if cleanupRequests != 1 {
+		t.Fatalf("session cleanup requests = %d, want 1 after initialization decode failure", cleanupRequests)
+	}
+}
+
 func TestDecodeMCPEnvelopeStreamCountsCRLFBytesAgainstLimit(t *testing.T) {
 	var data strings.Builder
 	data.Grow(maxQodoResponseBytes + 128)
@@ -814,6 +906,20 @@ func TestDecodeMCPEnvelopeStreamCountsCRLFBytesAgainstLimit(t *testing.T) {
 	_, err := decodeMCPEnvelopeStream(strings.NewReader(data.String()), "text/event-stream", 2)
 	if err == nil || !strings.Contains(err.Error(), "size limit") {
 		t.Fatalf("oversized CRLF response error = %v; want size-limit error", err)
+	}
+}
+
+func TestDecodeMCPEnvelopeStreamCountsStandaloneCRBytesAgainstLimit(t *testing.T) {
+	var data strings.Builder
+	data.Grow(maxQodoResponseBytes + 128)
+	for range maxQodoResponseBytes / 3 {
+		data.WriteString(":x\r")
+	}
+	data.WriteString("data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"review\":\"complete\"}}\r\r")
+
+	_, err := decodeMCPEnvelopeStream(strings.NewReader(data.String()), "text/event-stream", 2)
+	if err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("oversized CR response error = %v; want size-limit error", err)
 	}
 }
 
