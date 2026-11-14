@@ -4,7 +4,7 @@
 
 ## System and trust boundaries
 
-Ghostline accepts a GitHub pull-request URL in a browser and sends it to a Go API, which fetches pull-request data, commits, checks, and published Qodo comments from the fixed `https://api.github.com` origin. Local development defaults to authentication off. Hosted mode can require GitHub OAuth identity and an explicit login allowlist; it requests `read:user` only and does not request repository scopes. The OAuth access token is used transiently for `GET /user` and discarded. The backend issues an eight-hour HMAC-signed, HttpOnly, SameSite=Lax cookie. The Vue application validates API responses with Zod. No database or agent execution is part of this slice.
+Ghostline accepts a GitHub pull-request URL in a browser and sends it to a Go API, which fetches pull-request data, commits, checks, and published Qodo comments from the fixed `https://api.github.com` origin. Local development defaults to authentication off. Hosted mode can require GitHub OAuth identity and an explicit immutable GitHub account-ID allowlist; it requests `read:user` only and does not request repository scopes. The OAuth access token is used for `GET /user` and revoked before a session is issued. The backend issues an eight-hour HMAC-signed, HttpOnly, SameSite=Lax cookie. The Vue application validates API responses with Zod. No database or agent execution is part of this slice.
 
 Trust boundaries:
 
@@ -30,7 +30,7 @@ Trust boundaries:
 
 ## Hosting boundary
 
-For hosted deployments, configure GitHub OAuth and an explicit allowlist, establish shared or edge-level rate limiting, configure TLS and operational monitoring, and store/rotate secrets through the hosting platform. The current feature grants access at the account level to public PR import; it does not add private-repository access or team membership policy. Do not supply a GitHub token with private-repository access to an instance reachable by untrusted users.
+For hosted deployments, configure GitHub OAuth and an explicit numeric GitHub account-ID allowlist (`GHOSTLINE_ALLOWED_GITHUB_IDS`), establish shared or edge-level rate limiting, configure TLS and operational monitoring, and store/rotate secrets through the hosting platform. The current feature grants access at the account level to public PR import; it does not add private-repository access or team membership policy. Do not supply a GitHub token with private-repository access to an instance reachable by untrusted users.
 
 Warden runs local contributor gates; Nox scans repository artifacts; GitHub Actions records hosted checks. These controls help assess the source and build. They do not secure a running Ghostline service or prove that imported code is safe.
 
