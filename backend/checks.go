@@ -38,12 +38,17 @@ type revisionChecks struct {
 }
 
 type check struct {
+	ID                     int64  `json:"id,omitempty"`
 	Name                   string `json:"name"`
 	Kind                   string `json:"kind"`
 	Source                 string `json:"source,omitempty"`
 	Status                 string `json:"status"`
 	Conclusion             string `json:"conclusion,omitempty"`
 	URL                    string `json:"url,omitempty"`
+	StartedAt              string `json:"startedAt,omitempty"`
+	CompletedAt            string `json:"completedAt,omitempty"`
+	CreatedAt              string `json:"createdAt,omitempty"`
+	UpdatedAt              string `json:"updatedAt,omitempty"`
 	OutputTitle            string `json:"outputTitle,omitempty"`
 	OutputSummary          string `json:"outputSummary,omitempty"`
 	OutputSummaryTruncated bool   `json:"outputSummaryTruncated,omitempty"`
@@ -52,12 +57,16 @@ type check struct {
 type githubCheckRuns struct {
 	TotalCount int `json:"total_count"`
 	CheckRuns  []struct {
-		Name       string  `json:"name"`
-		HeadSHA    string  `json:"head_sha"`
-		Status     string  `json:"status"`
-		Conclusion *string `json:"conclusion"`
-		HTMLURL    string  `json:"html_url"`
-		App        *struct {
+		ID          int64   `json:"id"`
+		Name        string  `json:"name"`
+		HeadSHA     string  `json:"head_sha"`
+		Status      string  `json:"status"`
+		Conclusion  *string `json:"conclusion"`
+		HTMLURL     string  `json:"html_url"`
+		StartedAt   *string `json:"started_at"`
+		CompletedAt *string `json:"completed_at"`
+		UpdatedAt   *string `json:"updated_at"`
+		App         *struct {
 			Name string `json:"name"`
 		} `json:"app"`
 		Output struct {
@@ -71,9 +80,12 @@ type githubCombinedStatus struct {
 	SHA        string `json:"sha"`
 	TotalCount int    `json:"total_count"`
 	Statuses   []struct {
+		ID        int64  `json:"id"`
 		Context   string `json:"context"`
 		State     string `json:"state"`
 		TargetURL string `json:"target_url"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
 	} `json:"statuses"`
 }
 
@@ -121,7 +133,7 @@ func fetchCheckRuns(ctx context.Context, gh *githubClient, commitPath, sha strin
 			}
 			summary, summaryTruncated, summaryBytes := boundedCheckSummary(run.Output.Summary, remainingSummaryBytes)
 			remainingSummaryBytes -= summaryBytes
-			item := check{Name: run.Name, Kind: kindCheckRun, Status: run.Status, URL: safeURL(run.HTMLURL), OutputTitle: run.Output.Title, OutputSummary: summary, OutputSummaryTruncated: summaryTruncated}
+			item := check{ID: run.ID, Name: run.Name, Kind: kindCheckRun, Status: run.Status, URL: safeURL(run.HTMLURL), StartedAt: stringValue(run.StartedAt), CompletedAt: stringValue(run.CompletedAt), UpdatedAt: stringValue(run.UpdatedAt), OutputTitle: run.Output.Title, OutputSummary: summary, OutputSummaryTruncated: summaryTruncated}
 			if run.Conclusion != nil {
 				item.Conclusion = *run.Conclusion
 			}
@@ -168,7 +180,7 @@ func fetchCommitStatuses(ctx context.Context, gh *githubClient, commitPath, sha 
 		}
 		for _, status := range batch.Statuses {
 			// Commit statuses report a single state; pending is the only non-final one.
-			item := check{Name: status.Context, Kind: kindCommitStatus, Status: "pending", URL: safeURL(status.TargetURL)}
+			item := check{ID: status.ID, Name: status.Context, Kind: kindCommitStatus, Status: "pending", URL: safeURL(status.TargetURL), CreatedAt: status.CreatedAt, UpdatedAt: status.UpdatedAt}
 			if status.State != "pending" {
 				item.Status = "completed"
 				item.Conclusion = status.State
@@ -179,6 +191,13 @@ func fetchCommitStatuses(ctx context.Context, gh *githubClient, commitPath, sha 
 			return items, nil
 		}
 	}
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 // safeURL keeps only http(s) links; commit status target URLs are set by third parties.
