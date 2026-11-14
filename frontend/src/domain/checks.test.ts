@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { checkOutcome, headCommitLabel, isHeadCommit, orderChecks, RevisionChecksSchema, summarizeChecks, type Check, type RevisionChecks } from './checks'
+import { checkOutcome, checkSummaryPreview, CheckSchema, headCommitLabel, isHeadCommit, orderChecks, RevisionChecksSchema, summarizeChecks, type Check, type RevisionChecks } from './checks'
 
 const head = 'a'.repeat(40)
 const checks: RevisionChecks = { revisionSha: head, revisionShortSha: 'aaaaaaa', revisionUrl: `https://github.com/acme/app/commit/${head}`, availability: 'available', items: [] }
@@ -26,6 +26,21 @@ describe('RevisionChecksSchema', () => {
   it('rejects unavailable checks without an explanation', () => expect(RevisionChecksSchema.safeParse({ ...checks, availability: 'unavailable' }).success).toBe(false))
   it('rejects non-web check links', () => expect(RevisionChecksSchema.safeParse({ ...checks, items: [{ name: 'x', kind: 'commit_status', status: 'pending', url: 'javascript:alert(1)' }] }).success).toBe(false))
   it('accepts unavailable checks without a revision when explained', () => expect(RevisionChecksSchema.safeParse({ revisionSha: '', revisionShortSha: '', revisionUrl: '', availability: 'unavailable', reason: 'No revision.', items: [] }).success).toBe(true))
+})
+
+describe('CheckSchema output evidence', () => {
+  it('preserves GitHub check-run titles and summaries', () => {
+    const check = {
+      name: 'nox', kind: 'check_run', status: 'completed', conclusion: 'success',
+      outputTitle: 'No new alerts in code changed by this pull request',
+      outputSummary: '[View all branch alerts](/acme/app/security/code-scanning?query=pr%3A7+tool%3Anox+is%3Aopen).',
+    }
+    expect(CheckSchema.parse(check)).toEqual(check)
+  })
+
+  it('shows Markdown link labels without rendering or exposing destinations as text', () => {
+    expect(checkSummaryPreview('[View all branch alerts](/acme/app/security/code-scanning?query=nox).')).toBe('View all branch alerts.')
+  })
 })
 
 const run = (name: string, status: string, conclusion?: string): Check => ({ name, kind: 'check_run', status, conclusion })
