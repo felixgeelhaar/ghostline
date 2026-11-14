@@ -145,13 +145,14 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         <h3 id="qodo-reviews-title" class="section-title"><span>QODO REVIEW EVIDENCE <span v-if="selectedRevision">· MATCHED REVISION</span></span><span v-if="pr.qodoReviews.availability === 'available'">{{ reviewCount }}</span></h3>
         <div v-if="headCoverage" class="review-coverage" :class="headCoverage.state" role="status" aria-live="polite">
           <strong v-if="headCoverage.state === 'outside_history'">PUBLISHED COMMENT · MARKER OUTSIDE IMPORTED HISTORY</strong>
-          <strong v-else>PUBLISHED COMMENT · PR HEAD {{ headCoverage.state.toUpperCase() }}</strong>
+          <strong v-else-if="headCoverage.state === 'current' || headCoverage.state === 'stale'">PUBLISHED COMMENT · PR HEAD {{ headCoverage.state.toUpperCase() }}</strong>
+          <strong v-else>QODO REVIEW COVERAGE · {{ headCoverage.state.toUpperCase() }}</strong>
           <p>{{ headCoverage.detail }}</p>
           <p v-if="headCoverage.state === 'current' || headCoverage.state === 'stale' || headCoverage.state === 'outside_history'" class="review-coverage-sources">
             <a v-if="headCoverage.revisionUrl" :href="headCoverage.revisionUrl" target="_blank" rel="noreferrer">MARKED REVISION {{ headCoverage.revisionSha.slice(0, 7) }} ↗</a>
             <a :href="headCoverage.sourceUrl" target="_blank" rel="noreferrer">SOURCE COMMENT ↗</a>
           </p>
-          <p class="review-coverage-caveat">A comment matched to the PR head does not establish the latest complete Qodo review.</p>
+          <p v-if="headCoverage.state === 'current' || headCoverage.state === 'stale' || headCoverage.state === 'outside_history'" class="review-coverage-caveat">A comment matched to the PR head does not establish the latest complete Qodo review.</p>
           <p v-if="headCoverage.state === 'stale'" class="review-coverage-next">Inspect the current PR head in Qodo before treating these comments as feedback on the version you intend to ship.</p>
           <p v-else-if="headCoverage.state === 'unknown'" class="review-coverage-next">Open the source comments and confirm which revision Qodo reviewed.</p>
         </div>

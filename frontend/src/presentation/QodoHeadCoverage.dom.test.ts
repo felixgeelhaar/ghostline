@@ -24,8 +24,8 @@ const pullRequest: PullRequest = {
 let mounted: ReturnType<typeof createApp> | undefined
 let host: HTMLDivElement | undefined
 
-async function showPullRequest() {
-  vi.mocked(importPullRequest).mockResolvedValue(pullRequest)
+async function showPullRequest(result: PullRequest = pullRequest) {
+  vi.mocked(importPullRequest).mockResolvedValue(result)
   host = document.createElement('div')
   document.body.append(host)
   mounted = createApp(App)
@@ -81,5 +81,27 @@ describe('Qodo PR-head coverage status', () => {
     expect(status.textContent).toContain('MARKER OUTSIDE IMPORTED HISTORY')
     expect(status.textContent).not.toContain('earlier revision')
     expect(status.querySelector(`a[href="https://github.com/acme/app/commit/${outsideSha}"]`)?.textContent).toContain('MARKED REVISION')
+  })
+
+  it('does not call missing Qodo feedback a published comment', async () => {
+    await showPullRequest({
+      ...pullRequest,
+      qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] },
+    })
+
+    const status = host!.querySelector<HTMLElement>('.review-coverage')!
+    expect(status.textContent).toContain('QODO REVIEW COVERAGE · MISSING')
+    expect(status.textContent).not.toContain('PUBLISHED COMMENT')
+  })
+
+  it('does not call unavailable Qodo feedback a published comment', async () => {
+    await showPullRequest({
+      ...pullRequest,
+      qodoReviews: { availability: 'unavailable', reason: 'GitHub denied the request.', unrecognizedCommentCount: 0, items: [] },
+    })
+
+    const status = host!.querySelector<HTMLElement>('.review-coverage')!
+    expect(status.textContent).toContain('QODO REVIEW COVERAGE · UNAVAILABLE')
+    expect(status.textContent).not.toContain('PUBLISHED COMMENT')
   })
 })
