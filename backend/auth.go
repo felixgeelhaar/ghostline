@@ -161,6 +161,7 @@ func newRouterWithAuth(gh *githubClient, limiter *rateLimiter, identity clientId
 	limited := r.Group("/api", auth.middleware(), authenticatedRateLimitMiddleware(limiter, identity))
 	limited.POST("/import", api{gh: gh}.importPR)
 	limited.POST("/checks", api{gh: gh}.loadRevisionChecks)
+	limited.POST("/compare", api{gh: gh}.compareRevisions)
 	return r
 }
 

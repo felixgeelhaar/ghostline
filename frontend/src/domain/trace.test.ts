@@ -134,7 +134,7 @@ describe('Qodo finding trace', () => {
   })
 
   it('renders the focused trace, actionable context, and only focusable PR revisions', async () => {
-    const html = await renderToString(createSSRApp(DeepTrace, { trace }))
+    const html = await renderToString(createSSRApp(DeepTrace, { trace, pullRequestUrl: 'https://github.com/acme/app/pull/7' }))
     expect(html).toContain('REVISION SIGNAL')
     expect(html).toContain('aria-labelledby="revision-signal-title"')
     expect(html).toContain('id="revision-signal-title"')
@@ -157,7 +157,7 @@ describe('Qodo finding trace', () => {
 
   it('does not make a marked SHA focusable when GitHub did not include it in this PR', async () => {
     const outsidePullRequest = buildFindingTrace(recurring, [])
-    const html = await renderToString(createSSRApp(DeepTrace, { trace: outsidePullRequest, commits: [] }))
+    const html = await renderToString(createSSRApp(DeepTrace, { trace: outsidePullRequest, pullRequestUrl: 'https://github.com/acme/app/pull/7', commits: [] }))
 
     expect(outsidePullRequest.occurrences.filter((item) => item.commitSha)).toHaveLength(2)
     expect(outsidePullRequest.occurrences.filter((item) => item.revisionInPullRequest)).toHaveLength(0)

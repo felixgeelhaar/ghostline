@@ -7,7 +7,7 @@ Ghostline is a change-centric engineering control room. It imports public GitHub
 ## Setup and verification
 
 - Run locally: `go run ./backend`; in another terminal run `cd frontend && npm ci && npm run dev`.
-- Run with Docker Compose: `docker compose up --build`.
+- Run with Docker Compose only after configuring the required hosted settings. Follow [the README's Compose setup](README.md#docker-compose-hosted-style-run), including GitHub OAuth credentials, an allowed GitHub login, a session signing key, and the proxy client-IP header plus exact trusted-proxy CIDR; then run `docker compose up --build`.
 - Verify Go: `go test ./... -count=1` and `go vet ./...`.
 - Verify frontend: `cd frontend && npm ci && npm test && npm run build`.
 - Run the repository security scan: `nox --format all --output .nox/results scan . --tracked-only`.
