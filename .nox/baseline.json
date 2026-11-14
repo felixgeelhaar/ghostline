@@ -6,7 +6,7 @@
       "rule_id": "VULN-001",
       "file_path": "Dockerfile",
       "severity": "medium",
-      "reason": "ALPINE-CVE-2026-4738 (zlib 1.3.2-r1) is in the pinned golang:1.27-alpine base image; no upstream digest ships the fixed zlib 1.4-r0 yet. The Dockerfile installs zlib\u003e=1.4-r0 during the build and fails if that version is unavailable, but Nox inventories the base image, not the built one. Remove this entry when the FROM digest moves to an image with zlib \u003e= 1.4-r0.",
+      "reason": "ALPINE-CVE-2026-4738 (zlib 1.3.2-r1) is in the pinned golang:1.27-alpine base image; no upstream digest ships the fixed zlib 1.4-r0 yet. The Dockerfile installs zlib>=1.4-r0 during the build and fails if that version is unavailable, but Nox inventories the base image, not the built one. Remove this entry when the FROM digest moves to an image with zlib >= 1.4-r0.",
       "created_at": "2026-11-10T20:25:45.47479Z"
     },
     {
@@ -14,7 +14,7 @@
       "rule_id": "VULN-001",
       "file_path": "frontend/Dockerfile",
       "severity": "medium",
-      "reason": "ALPINE-CVE-2026-4738 (zlib 1.3.2-r1) is in the pinned node:22-alpine base image; no upstream digest ships the fixed zlib 1.4-r0 yet. The Dockerfile installs zlib\u003e=1.4-r0 during the build and fails if that version is unavailable, but Nox inventories the base image, not the built one. Remove this entry when the FROM digest moves to an image with zlib \u003e= 1.4-r0.",
+      "reason": "ALPINE-CVE-2026-4738 affects zlib 1.3.2-r1 embedded in node:22.23.5-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a. Alpine v3.24 has not published fixed zlib 1.4-r0 yet. The Dockerfile installs zlib>=1.4-r0 and fails the build if unavailable; Nox inventories the FROM image rather than the post-install image. Remove when the base digest includes fixed zlib.",
       "created_at": "2026-11-10T20:25:45.47479Z"
     },
     {
