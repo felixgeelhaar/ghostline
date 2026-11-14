@@ -20,7 +20,10 @@ describe('compareRevisions', () => {
   })
 
   it('rejects a response tied to another candidate revision', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...payload, headSha: 'c'.repeat(40) }), { status: 200 })))
+    const otherHead = 'c'.repeat(40)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...payload, headSha: otherHead, compareUrl: `https://github.com/acme/app/compare/${baseSha}...${otherHead}`,
+    }), { status: 200 })))
     await expect(compareRevisions('https://github.com/acme/app/pull/7', baseSha, headSha)).rejects.toThrow('different revisions')
   })
 

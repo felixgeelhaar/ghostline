@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { RevisionComparisonSchema } from './comparison'
+import { parseRevisionComparison, RevisionComparisonSchema } from './comparison'
 
 const baseSha = 'a'.repeat(40)
 const headSha = 'b'.repeat(40)
@@ -21,5 +21,21 @@ describe('revision comparison contract', () => {
   it('rejects external comparison and file links', () => {
     expect(RevisionComparisonSchema.safeParse({ ...payload, compareUrl: 'https://example.com/compare' }).success).toBe(false)
     expect(RevisionComparisonSchema.safeParse({ ...payload, files: [{ ...payload.files[0], url: 'https://example.com/file' }] }).success).toBe(false)
+  })
+
+  it('binds source evidence to the requested PR repository and revision pair', () => {
+    expect(parseRevisionComparison(payload, {
+      pullRequestUrl: 'https://github.com/acme/app/pull/7', baseSha, headSha,
+    })).toMatchObject({ baseSha, headSha, filesTruncated: false })
+    expect(() => parseRevisionComparison(payload, {
+      pullRequestUrl: 'https://github.com/acme/app/pull/7', baseSha, headSha: 'c'.repeat(40),
+    })).toThrow('different revisions')
+    expect(() => parseRevisionComparison({ ...payload, compareUrl: `https://github.com/other/repo/compare/${baseSha}...${headSha}` }, {
+      pullRequestUrl: 'https://github.com/acme/app/pull/7', baseSha, headSha,
+    })).toThrow('different repository')
+  })
+
+  it('preserves an explicit changed-file truncation signal', () => {
+    expect(RevisionComparisonSchema.parse({ ...payload, filesTruncated: true }).filesTruncated).toBe(true)
   })
 })

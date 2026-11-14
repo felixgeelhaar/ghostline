@@ -208,15 +208,18 @@ func (a api) loadRevisionChecks(c *gin.Context) {
 }
 
 type revisionComparison struct {
-	BaseSHA      string         `json:"baseSha"`
-	HeadSHA      string         `json:"headSha"`
-	CompareURL   string         `json:"compareUrl"`
-	Status       string         `json:"status"`
-	AheadBy      int            `json:"aheadBy"`
-	BehindBy     int            `json:"behindBy"`
-	TotalCommits int            `json:"totalCommits"`
-	Files        []comparedFile `json:"files"`
+	BaseSHA        string         `json:"baseSha"`
+	HeadSHA        string         `json:"headSha"`
+	CompareURL     string         `json:"compareUrl"`
+	Status         string         `json:"status"`
+	AheadBy        int            `json:"aheadBy"`
+	BehindBy       int            `json:"behindBy"`
+	TotalCommits   int            `json:"totalCommits"`
+	Files          []comparedFile `json:"files"`
+	FilesTruncated bool           `json:"filesTruncated"`
 }
+
+const githubCompareFileLimit = 300
 
 type comparedFile struct {
 	Path      string `json:"path"`
@@ -272,7 +275,10 @@ func (a api) compareRevisions(c *gin.Context) {
 		respondGitHubError(c, err)
 		return
 	}
-	if !strings.EqualFold(raw.Base.SHA, body.BaseSHA) || !strings.EqualFold(raw.Head.SHA, body.HeadSHA) {
+	// GitHub's documented compare response includes base_commit but does not
+	// include head_commit. The requested compare URL anchors the head SHA; when
+	// GitHub does return a head_commit, still reject a mismatch.
+	if !strings.EqualFold(raw.Base.SHA, body.BaseSHA) || (raw.Head.SHA != "" && !strings.EqualFold(raw.Head.SHA, body.HeadSHA)) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned a comparison for different revisions. Please retry."})
 		return
 	}
@@ -291,7 +297,11 @@ func (a api) compareRevisions(c *gin.Context) {
 	}
 	files := make([]comparedFile, 0, len(raw.Files))
 	for _, file := range raw.Files {
-		if strings.TrimSpace(file.Filename) == "" || file.Additions < 0 || file.Deletions < 0 || file.Changes < 0 || !validGitHubSourceURL(file.BlobURL, fmt.Sprintf("/%s/%s/blob/", owner, repo)) {
+		if strings.TrimSpace(file.Filename) == "" || file.Additions < 0 || file.Deletions < 0 || file.Changes < 0 {
+			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned invalid changed-file details."})
+			return
+		}
+		if !validGitHubSourceURL(file.BlobURL, fmt.Sprintf("/%s/%s/blob/", owner, repo)) {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned an invalid changed-file source link."})
 			return
 		}
@@ -300,6 +310,7 @@ func (a api) compareRevisions(c *gin.Context) {
 	c.JSON(http.StatusOK, revisionComparison{
 		BaseSHA: strings.ToLower(body.BaseSHA), HeadSHA: strings.ToLower(body.HeadSHA), CompareURL: raw.HTMLURL,
 		Status: raw.Status, AheadBy: raw.AheadBy, BehindBy: raw.BehindBy, TotalCommits: raw.TotalCommits, Files: files,
+		FilesTruncated: len(files) >= githubCompareFileLimit,
 	})
 }
 

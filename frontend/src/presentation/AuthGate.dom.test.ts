@@ -5,19 +5,26 @@ import { ApiResponseError } from '../application/apiError'
 import { fetchAuthStatus } from '../application/fetchAuthStatus'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { importPullRequest } from '../application/importPullRequest'
+import { compareRevisions } from '../application/compareRevisions'
 import type { PullRequest } from '../domain/pullRequest'
 import App from './App.vue'
 
 vi.mock('../application/fetchAuthStatus', () => ({ fetchAuthStatus: vi.fn() }))
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
 vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
+vi.mock('../application/compareRevisions', () => ({ compareRevisions: vi.fn() }))
 
 const headSha = 'a'.repeat(40)
 const earlierSha = 'b'.repeat(40)
+const middleSha = 'c'.repeat(40)
 const makePR = (): PullRequest => ({
   repository: 'acme/app', owner: 'acme', repo: 'app', number: 12, title: 'Session-bound change', state: 'open',
   url: 'https://github.com/acme/app/pull/12', createdAt: '2026-11-11T09:00:00Z', updatedAt: '2026-11-11T10:00:00Z',
-  commits: [{ sha: earlierSha, shortSha: 'bbbbbbb', message: 'Add behavior', author: 'felix', committedAt: '2026-11-11T09:00:00Z', url: `https://github.com/acme/app/commit/${earlierSha}` }],
+  commits: [
+    { sha: earlierSha, shortSha: 'bbbbbbb', message: 'Add behavior', author: 'felix', committedAt: '2026-11-11T09:00:00Z', url: `https://github.com/acme/app/commit/${earlierSha}` },
+    { sha: middleSha, shortSha: 'ccccccc', message: 'Candidate repair', author: 'felix', committedAt: '2026-11-11T09:30:00Z', url: `https://github.com/acme/app/commit/${middleSha}` },
+    { sha: headSha, shortSha: 'aaaaaaa', message: 'Follow-up', author: 'felix', committedAt: '2026-11-11T10:00:00Z', url: `https://github.com/acme/app/commit/${headSha}` },
+  ],
   checks: { availability: 'available', revisionSha: headSha, revisionShortSha: 'aaaaaaa', revisionUrl: `https://github.com/acme/app/commit/${headSha}`, items: [] },
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] },
 })
@@ -102,6 +109,33 @@ describe('hosted GitHub sign-in gate', () => {
     host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
     await vi.waitFor(() => expect(host?.querySelector('h2')?.textContent).toBe('Session-bound change'))
     host!.querySelector<HTMLButtonElement>('[aria-label="Focus history on revision bbbbbbb"]')!.click()
+
+    await vi.waitFor(() => expect(host?.querySelector('.github-sign-in')).not.toBeNull())
+    expect(host?.querySelector('#pr-url')).toBeNull()
+  })
+
+  it('returns to the sign-in gate when a Deep Trace comparison reports an expired session', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValueOnce({ enabled: true, login: 'felixgeelhaar' })
+    const pr = makePR()
+    pr.qodoReviews.items = [earlierSha, headSha].map((sha, index) => ({
+      id: 20 + index, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings',
+      findings: [{ id: `finding-${index}`, title: 'Repeated issue', categories: [], sourceUrl: `https://github.com/acme/app/pull/12#issuecomment-${20 + index}` }],
+      commitSha: sha, commitUrl: `https://github.com/acme/app/commit/${sha}`, createdAt: index === 0 ? '2026-11-11T09:00:00Z' : '2026-11-11T10:00:00Z',
+      url: `https://github.com/acme/app/pull/12#issuecomment-${20 + index}`,
+    }))
+    vi.mocked(importPullRequest).mockResolvedValueOnce(pr)
+    vi.mocked(compareRevisions).mockRejectedValueOnce(unauthorized())
+    await mount()
+
+    const input = host!.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = pr.url
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.trace-open')).not.toBeNull())
+    host!.querySelector<HTMLButtonElement>('.trace-open')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('[aria-label^="Compare candidate"]')).not.toBeNull())
+    host!.querySelector<HTMLButtonElement>('[aria-label^="Compare candidate"]')!.click()
 
     await vi.waitFor(() => expect(host?.querySelector('.github-sign-in')).not.toBeNull())
     expect(host?.querySelector('#pr-url')).toBeNull()

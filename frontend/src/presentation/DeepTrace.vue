@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { compareRevisions } from '../application/compareRevisions'
+import { isAuthenticationRequired } from '../application/apiError'
 import type { RevisionComparison } from '../domain/comparison'
 import { interventionPrompt, type FindingTrace } from '../domain/trace'
 
@@ -8,6 +9,7 @@ const props = defineProps<{ trace: FindingTrace; pullRequestUrl: string }>()
 const emit = defineEmits<{
   close: []
   focusRevision: [sha: string]
+  authRequired: []
 }>()
 
 const copyStatus = ref('')
@@ -52,7 +54,13 @@ async function inspectCandidate(baseSha: string, headSha: string) {
     const result = await compareRevisions(props.pullRequestUrl, baseSha, headSha)
     if (request === comparisonRequest.value) comparison.value = result
   } catch (error) {
-    if (request === comparisonRequest.value) comparisonError.value = error instanceof Error ? error.message : 'Could not compare these revisions.'
+    if (request === comparisonRequest.value) {
+      if (isAuthenticationRequired(error)) {
+        emit('authRequired')
+        return
+      }
+      comparisonError.value = error instanceof Error ? error.message : 'Could not compare these revisions.'
+    }
   } finally {
     if (request === comparisonRequest.value) comparisonLoading.value = false
   }
@@ -134,6 +142,7 @@ async function inspectCandidate(baseSha: string, headSha: string) {
                 <section v-else-if="comparisonTarget?.baseSha === span.fromRevision?.sha && comparisonTarget?.headSha === revision.sha && comparison" class="candidate-comparison" aria-label="Candidate revision comparison">
                   <p class="comparison-boundary">CANDIDATE DIFF · {{ comparison.baseSha.slice(0, 7) }} → {{ comparison.headSha.slice(0, 7) }}. This shows changed files between revisions; it does not prove a finding was addressed.</p>
                   <p class="comparison-summary">{{ comparison.totalCommits }} commits · {{ comparison.files.length }} changed file{{ comparison.files.length === 1 ? '' : 's' }} returned by GitHub <a :href="comparison.compareUrl" target="_blank" rel="noreferrer">OPEN FULL COMPARISON ↗</a></p>
+                  <p v-if="comparison.filesTruncated" class="checks-note" role="status">GitHub returned the first 300 changed files. This comparison may omit additional files; open the full comparison for complete details.</p>
                   <ul v-if="comparison.files.length" class="comparison-files"><li v-for="file in comparison.files" :key="file.path"><a :href="file.url" target="_blank" rel="noreferrer">{{ file.path }} ↗</a><span>{{ file.status }} · +{{ file.additions }} −{{ file.deletions }}</span></li></ul>
                   <p v-else class="checks-note">GitHub returned no changed file entries for this revision pair.</p>
                 </section>
