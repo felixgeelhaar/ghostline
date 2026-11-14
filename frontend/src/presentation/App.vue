@@ -9,7 +9,7 @@ import { checkOutcome, checkSummaryPreview, headCommitLabel, orderChecks, summar
 import { findRecurringFindings, qodoHeadCoverage, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import type { QodoStructuredReview } from '../domain/qodoReviewSession'
 import { buildFindingTrace } from '../domain/trace'
-import { validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
+import { isSamePullRequest, validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import ReviewCard from './ReviewCard.vue'
 import DeepTrace from './DeepTrace.vue'
 import StructuredQodoReview from './StructuredQodoReview.vue'
@@ -63,11 +63,43 @@ async function loadPR() {
     loading.value = false
     return
   }
-  loading.value = true; pr.value = undefined; selectedRevision.value = ''; selectedTraceId.value = ''; traceTrigger = undefined; focusedChecks.value = undefined; checksError.value = ''; checksLoading.value = false; copyResult.value = undefined; copyRequest++; revisionRequest++
-  qodoRequest++; qodoApiKey.value = ''; qodoStructuredReview.value = undefined; qodoReviewError.value = ''; qodoReviewLoading.value = false
+  const keepCurrentChange = isSamePullRequest(pr.value, url.value)
+  loading.value = true
+  if (!keepCurrentChange) {
+    pr.value = undefined
+    selectedRevision.value = ''
+    selectedTraceId.value = ''
+    traceTrigger = undefined
+    focusedChecks.value = undefined
+    checksError.value = ''
+    checksLoading.value = false
+    copyResult.value = undefined
+    qodoStructuredReview.value = undefined
+    qodoReviewError.value = ''
+  }
+  copyRequest++
+  if (!keepCurrentChange) revisionRequest++
+  qodoRequest++
+  qodoApiKey.value = ''
+  qodoReviewLoading.value = false
   try {
     const importedPR = await importPullRequest(url.value)
-    if (request === importRequest) pr.value = importedPR
+    if (request === importRequest) {
+      const focusedRevisionStillExists = importedPR.commits.some((commit) => commit.sha === selectedRevision.value)
+      if (selectedRevision.value && !focusedRevisionStillExists) {
+        revisionRequest++
+        selectedRevision.value = ''
+        focusedChecks.value = undefined
+        checksError.value = ''
+        checksLoading.value = false
+      } else if (selectedRevision.value && selectedRevision.value === importedPR.checks.revisionSha) {
+        revisionRequest++
+        focusedChecks.value = importedPR.checks
+        checksError.value = ''
+        checksLoading.value = false
+      }
+      pr.value = importedPR
+    }
   } catch (e) {
     if (request === importRequest) error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
   } finally {
