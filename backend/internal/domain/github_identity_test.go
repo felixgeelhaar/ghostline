@@ -22,3 +22,17 @@ func TestGitHubAccountAllowlistRejectsInvalidIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestValidGitHubLogin(t *testing.T) {
+	for _, login := range []string{"FelixGeelhaar", "mona-cat_octo", "octo_admin", "a12345678"} {
+		if !ValidGitHubLogin(login) {
+			t.Errorf("ValidGitHubLogin(%q) = false, want true", login)
+		}
+	}
+
+	for _, login := range []string{"", "-mona", "mona-", "_octo", "mona-cat_oc", "mona-cat_123456789", "mona_cat_octo", "mona-cat_oct!"} {
+		if ValidGitHubLogin(login) {
+			t.Errorf("ValidGitHubLogin(%q) = true, want false", login)
+		}
+	}
+}

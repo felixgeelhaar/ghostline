@@ -2,9 +2,18 @@ package domain
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+var githubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?(?:_[A-Za-z0-9]{3,8})?$`)
+
+// ValidGitHubLogin accepts GitHub usernames, including Enterprise Managed User
+// usernames with the underscore and enterprise shortcode suffix.
+func ValidGitHubLogin(login string) bool {
+	return len(login) > 0 && len(login) <= 39 && githubLoginPattern.MatchString(login)
+}
 
 // GitHubAccountAllowlist contains immutable GitHub account IDs allowed to use
 // a hosted Ghostline instance. Usernames are mutable and are never authority.

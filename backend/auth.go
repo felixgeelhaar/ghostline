@@ -14,7 +14,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -33,8 +32,6 @@ const (
 	githubUserURL        = "https://api.github.com/user"
 	githubRevokeTokenURL = "https://api.github.com/applications/"
 )
-
-var githubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
 
 type authSettings struct {
 	Enabled      bool
@@ -145,7 +142,7 @@ func validateOAuthCallbackURL(raw string) error {
 }
 
 func validGitHubLogin(login string) bool {
-	return len(login) > 0 && len(login) <= 39 && githubLoginPattern.MatchString(login)
+	return domain.ValidGitHubLogin(login)
 }
 
 func newRouterWithAuth(gh *githubClient, limiter *rateLimiter, identity clientIdentity, settings authSettings) *gin.Engine {

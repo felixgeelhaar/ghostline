@@ -227,6 +227,24 @@ func TestGitHubOAuthCallbackCreatesAllowlistedSession(t *testing.T) {
 	}
 }
 
+func TestFetchGitHubIdentityAcceptsEnterpriseManagedUserLogin(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return oauthResponse(r, `{"id":6020564,"login":"mona-cat_octo"}`), nil
+	})}
+	settings := testAuthSettings()
+	settings.UserURL = "https://provider.invalid/user"
+	settings.HTTPClient = client
+	auth := githubAuth{settings: settings}
+
+	identity, err := auth.fetchGitHubIdentity(httptest.NewRequest(http.MethodGet, "/", nil), "token")
+	if err != nil {
+		t.Fatalf("fetchGitHubIdentity() error = %v, want Enterprise Managed User login accepted", err)
+	}
+	if identity.ID != 6020564 || identity.Login != "mona-cat_octo" {
+		t.Fatalf("identity = %+v, want immutable account ID and Enterprise Managed User login", identity)
+	}
+}
+
 func TestOAuthHTTPClientRejectsRedirects(t *testing.T) {
 	client := &http.Client{CheckRedirect: rejectOAuthRedirect}
 	err := client.CheckRedirect(httptest.NewRequest(http.MethodGet, "https://attacker.example/collect", nil), nil)
