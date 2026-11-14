@@ -18,7 +18,7 @@ const attention = computed(() => reviewAttentionSummary(props.review, props.head
       <p>{{ attention.detail }}</p>
       <p class="qodo-attention-next"><strong>NEXT</strong> {{ attention.nextAction }}</p>
     </aside>
-    <p v-for="warning in review.warnings ?? []" :key="warning" class="checks-note warn" role="alert"><strong>Partial Qodo response.</strong> {{ warning }}</p>
+    <p v-for="(warning, index) in review.warnings ?? []" :key="`warning:${index}`" class="checks-note warn" role="alert"><strong>Partial Qodo response.</strong> {{ warning }}</p>
     <p v-if="!review.reviewSession" class="checks-note" role="status"><strong>No review session returned.</strong> Qodo did not provide structured review-session data for this pull request.</p>
     <template v-if="review.reviewSession">
       <div class="qodo-session-status" :class="freshness">

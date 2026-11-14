@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -123,148 +124,96 @@ func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
 }
 
 func deduplicateQodoFindings(values []qodoManagedFinding) ([]qodoManagedFinding, error) {
-	indexes := make(map[string]int, len(values))
-	result := make([]qodoManagedFinding, 0, len(values))
+	findings := make([]domain.QodoReviewFinding, 0, len(values))
 	for _, value := range values {
-		if index, exists := indexes[value.ID]; exists {
-			merged, err := mergeQodoFindings(result[index], value)
-			if err != nil {
-				return nil, fmt.Errorf("Qodo returned a conflicting duplicate finding %q: %w", value.ID, err)
-			}
-			result[index] = merged
-			continue
-		}
-		indexes[value.ID] = len(result)
-		result = append(result, value)
+		findings = append(findings, findingToDomain(value))
+	}
+	merged, err := domain.MergeQodoReviewFindings(findings)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]qodoManagedFinding, 0, len(merged))
+	for _, value := range merged {
+		result = append(result, findingFromDomain(value))
 	}
 	return result, nil
 }
 
 func deduplicateQodoReviewRuns(values []qodoManagedReviewRun) ([]qodoManagedReviewRun, error) {
-	seen := make(map[string]qodoManagedReviewRun, len(values))
-	result := make([]qodoManagedReviewRun, 0, len(values))
+	runs := make([]domain.QodoReviewRun, 0, len(values))
 	for _, value := range values {
-		if prior, exists := seen[value.ID]; exists {
-			merged, err := mergeQodoReviewRuns(prior, value)
-			if err != nil {
-				return nil, fmt.Errorf("Qodo returned a conflicting duplicate review run %q: %w", value.ID, err)
-			}
-			seen[value.ID] = merged
-			for i := range result {
-				if result[i].ID == value.ID {
-					result[i] = merged
-					break
-				}
-			}
-			continue
-		}
-		seen[value.ID] = value
-		result = append(result, value)
+		runs = append(runs, domain.QodoReviewRun{ID: value.ID, Status: value.Status, CommitSHA: value.CommitSHA, StartedAt: value.StartedAt})
+	}
+	merged, err := domain.MergeQodoReviewRuns(runs)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]qodoManagedReviewRun, 0, len(merged))
+	for _, value := range merged {
+		result = append(result, qodoManagedReviewRun{ID: value.ID, Status: value.Status, CommitSHA: value.CommitSHA, StartedAt: value.StartedAt})
 	}
 	return result, nil
 }
 
-func mergeQodoFindings(left, right qodoManagedFinding) (qodoManagedFinding, error) {
-	merged := left
-	gitSHA, err := mergeFindingRevisionAliases("finding revisions", merged.GitSHA, right.GitSHA)
-	if err != nil {
-		return qodoManagedFinding{}, err
-	}
-	merged.GitSHA = gitSHA
-	mergeString := func(field string, a, b *string) error {
-		value, err := mergeFindingStringAliases(field, *a, *b)
-		if err == nil {
-			*a = value
-		}
-		return err
-	}
-	for _, item := range []struct {
-		field string
-		a, b  *string
-	}{
-		{"titles", &merged.Title, &right.Title}, {"descriptions", &merged.Description, &right.Description}, {"categories", &merged.Category, &right.Category}, {"action levels", &merged.ActionLevel, &right.ActionLevel}, {"attribution statuses", &merged.AttributionStatus, &right.AttributionStatus}, {"statuses", &merged.Status, &right.Status}, {"resolution reasons", &merged.ResolutionReason, &right.ResolutionReason}, {"review-run IDs", &merged.ReviewRunID, &right.ReviewRunID}, {"file paths", &merged.FilePath, &right.FilePath}, {"diff sides", &merged.Side, &right.Side}, {"code snippets", &merged.CodeSnippet, &right.CodeSnippet},
-	} {
-		if err := mergeString(item.field, item.a, item.b); err != nil {
-			return qodoManagedFinding{}, err
-		}
-	}
-	merged.StartLine, err = mergeFindingIntAliases("start lines", merged.StartLine, right.StartLine)
-	if err != nil {
-		return qodoManagedFinding{}, err
-	}
-	merged.EndLine, err = mergeFindingIntAliases("end lines", merged.EndLine, right.EndLine)
-	if err != nil {
-		return qodoManagedFinding{}, err
-	}
-	if right.Evidence != nil {
-		if merged.Evidence == nil {
-			merged.Evidence = right.Evidence
-		} else {
-			explanation, mergeErr := mergeFindingStringAliases("evidence explanations", merged.Evidence.Explanation, right.Evidence.Explanation)
-			if mergeErr != nil {
-				return qodoManagedFinding{}, mergeErr
-			}
-			merged.Evidence.Explanation = explanation
-			for _, citation := range right.Evidence.Citations {
-				encoded, _ := json.Marshal(citation)
-				duplicate := false
-				for _, current := range merged.Evidence.Citations {
-					currentEncoded, _ := json.Marshal(current)
-					if bytes.Equal(encoded, currentEncoded) {
-						duplicate = true
-						break
-					}
-				}
-				if !duplicate {
-					merged.Evidence.Citations = append(merged.Evidence.Citations, citation)
-				}
-			}
-		}
-	}
-	return merged, nil
-}
-
-func mergeQodoReviewRuns(left, right qodoManagedReviewRun) (qodoManagedReviewRun, error) {
-	status, err := mergeFindingStringAliases("review-run statuses", left.Status, right.Status)
-	if err != nil {
-		return qodoManagedReviewRun{}, err
-	}
-	sha, err := mergeRevisionAliases(left.CommitSHA, right.CommitSHA)
-	if err != nil {
-		return qodoManagedReviewRun{}, err
-	}
-	startedAt, err := mergeQodoTimes("review-run start times", left.StartedAt, right.StartedAt)
-	if err != nil {
-		return qodoManagedReviewRun{}, err
-	}
-	return qodoManagedReviewRun{ID: left.ID, Status: status, CommitSHA: sha, StartedAt: startedAt}, nil
-}
-
 func mergeQodoReviewSessions(preferred, fallback *qodoReviewSession) (*qodoReviewSession, error) {
-	if preferred == nil {
-		return fallback, nil
+	merged, err := domain.MergeQodoReviewSessions(domainSession(preferred), domainSession(fallback))
+	if err != nil {
+		return nil, err
 	}
-	if fallback == nil {
-		return preferred, nil
+	if merged == nil {
+		return nil, nil
 	}
+	return &qodoReviewSession{Status: merged.Status, CommitSHA: merged.CommitSHA, StartedAt: merged.StartedAt}, nil
+}
 
-	merged := *preferred
-	if merged.Status == "" {
-		merged.Status = fallback.Status
-	} else if fallback.Status != "" && !strings.EqualFold(merged.Status, fallback.Status) {
-		return nil, errors.New("Qodo returned conflicting review-session statuses")
+func domainSession(value *qodoReviewSession) *domain.QodoReviewSession {
+	if value == nil {
+		return nil
 	}
-	if merged.CommitSHA == "" {
-		merged.CommitSHA = fallback.CommitSHA
-	} else if fallback.CommitSHA != "" && !strings.EqualFold(merged.CommitSHA, fallback.CommitSHA) {
-		return nil, errors.New("Qodo returned conflicting review-session revisions")
+	return &domain.QodoReviewSession{Status: value.Status, CommitSHA: value.CommitSHA, StartedAt: value.StartedAt}
+}
+
+func findingToDomain(value qodoManagedFinding) domain.QodoReviewFinding {
+	result := domain.QodoReviewFinding{
+		ID: value.ID, Title: value.Title, Description: value.Description, Category: value.Category,
+		ActionLevel: value.ActionLevel, AttributionStatus: value.AttributionStatus, GitSHA: value.GitSHA,
+		Status: value.Status, ResolutionReason: value.ResolutionReason, ReviewRunID: value.ReviewRunID,
+		FilePath: value.FilePath, StartLine: value.StartLine, EndLine: value.EndLine, Side: value.Side,
+		CodeSnippet: value.CodeSnippet,
 	}
-	if merged.StartedAt == nil {
-		merged.StartedAt = fallback.StartedAt
-	} else if fallback.StartedAt != nil && !merged.StartedAt.Equal(*fallback.StartedAt) {
-		return nil, errors.New("Qodo returned conflicting review-session start times")
+	if value.Evidence != nil {
+		evidence := &domain.QodoFindingEvidence{Explanation: value.Evidence.Explanation}
+		for _, citation := range value.Evidence.Citations {
+			metadata := string(citation.Metadata)
+			if len(citation.Metadata) > 0 {
+				var compact bytes.Buffer
+				if json.Compact(&compact, citation.Metadata) == nil {
+					metadata = compact.String()
+				}
+			}
+			evidence.Citations = append(evidence.Citations, domain.QodoFindingCitation{SourceType: citation.SourceType, Source: citation.Source, Text: citation.Text, Context: citation.Context, Metadata: metadata})
+		}
+		result.Evidence = evidence
 	}
-	return &merged, nil
+	return result
+}
+
+func findingFromDomain(value domain.QodoReviewFinding) qodoManagedFinding {
+	result := qodoManagedFinding{
+		ID: value.ID, Title: value.Title, Description: value.Description, Category: value.Category,
+		ActionLevel: value.ActionLevel, AttributionStatus: value.AttributionStatus, GitSHA: value.GitSHA,
+		Status: value.Status, ResolutionReason: value.ResolutionReason, ReviewRunID: value.ReviewRunID,
+		FilePath: value.FilePath, StartLine: value.StartLine, EndLine: value.EndLine, Side: value.Side,
+		CodeSnippet: value.CodeSnippet,
+	}
+	if value.Evidence != nil {
+		evidence := &qodoFindingEvidence{Explanation: value.Evidence.Explanation}
+		for _, citation := range value.Evidence.Citations {
+			evidence.Citations = append(evidence.Citations, qodoFindingCitation{SourceType: citation.SourceType, Source: citation.Source, Text: citation.Text, Context: citation.Context, Metadata: json.RawMessage(citation.Metadata)})
+		}
+		result.Evidence = evidence
+	}
+	return result
 }
 
 type qodoReviewSession struct {
@@ -593,66 +542,15 @@ func (client *qodoReviewClient) fetch(ctx context.Context, apiKey, prURL string)
 	if err != nil {
 		return empty, err
 	}
-	var toolResult struct {
-		IsError           bool            `json:"isError"`
-		StructuredContent json.RawMessage `json:"structuredContent"`
-		Content           []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
+	var toolResult qodoToolResult
 	if err := json.Unmarshal(response.Result, &toolResult); err != nil {
 		return empty, errors.New("Qodo MCP returned an invalid tool result")
 	}
 	if toolResult.IsError {
 		return empty, errors.New("Qodo could not retrieve structured review data for this pull request")
 	}
-	var data qodoReviewData
-	structuredContent := bytes.TrimSpace(toolResult.StructuredContent)
-	if len(structuredContent) > 0 && !bytes.Equal(structuredContent, []byte("null")) {
-		if err := json.Unmarshal(structuredContent, &data); err != nil {
-			return empty, errors.New("Qodo returned structured review data in an unsupported format")
-		}
-	} else {
-		decoded := false
-		incompleteCandidates := false
-		var candidateValidationError error
-		for _, block := range toolResult.Content {
-			if block.Type != "text" {
-				continue
-			}
-			var candidate qodoReviewData
-			if err := json.Unmarshal([]byte(block.Text), &candidate); err != nil {
-				incompleteCandidates = true
-				continue
-			}
-			if err := validateQodoReviewData(candidate); err != nil {
-				incompleteCandidates = true
-				candidateValidationError = err
-				continue
-			}
-			if !decoded {
-				data = candidate
-				decoded = true
-				continue
-			}
-			merged, err := mergeQodoReviewData(data, candidate)
-			if err != nil {
-				return empty, errors.New("Qodo returned conflicting review data across text blocks")
-			}
-			data = merged
-		}
-		if decoded && incompleteCandidates {
-			data.Warnings = append(data.Warnings, "Qodo returned an additional text block that could not be interpreted as structured review data; the displayed review may be incomplete.")
-		}
-		if !decoded {
-			if candidateValidationError != nil {
-				return empty, candidateValidationError
-			}
-			return empty, errors.New("Qodo did not return structured review data")
-		}
-	}
-	if err := validateQodoReviewData(data); err != nil {
+	data, err := parseQodoToolResult(toolResult)
+	if err != nil {
 		return empty, err
 	}
 	data.Availability = "available"
@@ -660,8 +558,102 @@ func (client *qodoReviewClient) fetch(ctx context.Context, apiKey, prURL string)
 	return data, nil
 }
 
+type qodoToolResult struct {
+	IsError           bool              `json:"isError"`
+	StructuredContent json.RawMessage   `json:"structuredContent"`
+	Content           []qodoToolContent `json:"content"`
+}
+
+type qodoToolContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func parseQodoToolResult(toolResult qodoToolResult) (qodoReviewData, error) {
+	var empty qodoReviewData
+	var data qodoReviewData
+	decoded := false
+	incompleteCandidates := false
+	var candidateValidationError error
+	structuredContent := bytes.TrimSpace(toolResult.StructuredContent)
+	if len(structuredContent) > 0 && !bytes.Equal(structuredContent, []byte("null")) {
+		var candidate qodoReviewData
+		if err := json.Unmarshal(structuredContent, &candidate); err != nil {
+			incompleteCandidates = true
+			if json.Valid(structuredContent) && looksLikeQodoReviewObject(structuredContent) {
+				candidateValidationError = err
+			}
+		} else if err := validateQodoReviewData(candidate); err != nil {
+			incompleteCandidates = true
+			candidateValidationError = err
+		} else {
+			data = candidate
+			decoded = true
+		}
+	}
+	for _, block := range toolResult.Content {
+		if block.Type != "text" {
+			continue
+		}
+		payload := []byte(block.Text)
+		var candidate qodoReviewData
+		if err := json.Unmarshal(payload, &candidate); err != nil {
+			if json.Valid(payload) && looksLikeQodoReviewObject(payload) {
+				candidateValidationError = err
+				continue
+			}
+			incompleteCandidates = true
+			continue
+		}
+		if err := validateQodoReviewData(candidate); err != nil {
+			incompleteCandidates = true
+			candidateValidationError = err
+			continue
+		}
+		if !decoded {
+			data = candidate
+			decoded = true
+			continue
+		}
+		merged, err := mergeQodoReviewData(data, candidate)
+		if err != nil {
+			return empty, errors.New("Qodo returned conflicting review data across response forms")
+		}
+		data = merged
+	}
+	if candidateValidationError != nil && strings.Contains(candidateValidationError.Error(), "conflicting") {
+		return empty, candidateValidationError
+	}
+	if !decoded {
+		if candidateValidationError != nil {
+			return empty, candidateValidationError
+		}
+		return empty, errors.New("Qodo did not return structured review data")
+	}
+	if incompleteCandidates {
+		data.Warnings = append(data.Warnings, "Qodo returned a response representation that could not be interpreted as complete structured review data; the displayed review may be incomplete.")
+	}
+	if err := validateQodoReviewData(data); err != nil {
+		return qodoReviewData{}, err
+	}
+	return data, nil
+}
+
+func looksLikeQodoReviewObject(payload []byte) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(payload, &fields) != nil {
+		return false
+	}
+	for _, key := range []string{"review_session", "reviewSession", "findings", "review_runs", "reviewRuns"} {
+		if _, ok := fields[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func mergeQodoReviewData(first, second qodoReviewData) (qodoReviewData, error) {
-	merged := qodoReviewData{Warnings: append(append([]string(nil), first.Warnings...), second.Warnings...)}
+	merged := qodoReviewData{Warnings: deduplicateStrings(append(append([]string(nil), first.Warnings...), second.Warnings...))}
 	var err error
 	merged.ReviewSession, err = mergeQodoReviewSessions(first.ReviewSession, second.ReviewSession)
 	if err != nil {
@@ -676,6 +668,19 @@ func mergeQodoReviewData(first, second qodoReviewData) (qodoReviewData, error) {
 		return qodoReviewData{}, err
 	}
 	return merged, nil
+}
+
+func deduplicateStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func (client *qodoReviewClient) notifyInitialized(ctx context.Context, apiKey, sessionID string) error {
@@ -714,7 +719,7 @@ func (client *qodoReviewClient) post(ctx context.Context, apiKey, sessionID stri
 	}
 	contentType := response.Header.Get("Content-Type")
 	var envelope mcpEnvelope
-	if strings.Contains(contentType, "text/event-stream") {
+	if isMCPEventStream(contentType) {
 		envelope, err = decodeMCPEnvelopeStream(io.LimitReader(response.Body, maxQodoResponseBytes+1), contentType, expectedID)
 	} else {
 		var data []byte
@@ -740,7 +745,7 @@ func (client *qodoReviewClient) post(ctx context.Context, apiKey, sessionID stri
 }
 
 func decodeMCPEnvelope(data []byte, contentType string, expectedID int64) (mcpEnvelope, error) {
-	if strings.Contains(contentType, "text/event-stream") {
+	if isMCPEventStream(contentType) {
 		return decodeMCPEnvelopeStream(bytes.NewReader(data), contentType, expectedID)
 	}
 	var envelope mcpEnvelope
@@ -750,7 +755,7 @@ func decodeMCPEnvelope(data []byte, contentType string, expectedID int64) (mcpEn
 
 func decodeMCPEnvelopeStream(reader io.Reader, contentType string, expectedID int64) (mcpEnvelope, error) {
 	var empty mcpEnvelope
-	if !strings.Contains(contentType, "text/event-stream") {
+	if !isMCPEventStream(contentType) {
 		return empty, errors.New("MCP stream decoder requires an event-stream response")
 	}
 	scanner := bufio.NewScanner(reader)
@@ -783,6 +788,11 @@ func decodeMCPEnvelopeStream(reader io.Reader, contentType string, expectedID in
 	return empty, errors.New("SSE response had no matching JSON-RPC response")
 }
 
+func isMCPEventStream(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	return err == nil && strings.EqualFold(mediaType, "text/event-stream")
+}
+
 func matchingMCPEvent(eventData []string, expectedID int64) (mcpEnvelope, bool) {
 	var candidate mcpEnvelope
 	if err := decodeFirstMCPJSON([]byte(strings.Join(eventData, "\n")), &candidate); err != nil {
@@ -811,7 +821,7 @@ func decodeFirstMCPJSON(data []byte, envelope *mcpEnvelope) error {
 func validateQodoReviewData(data qodoReviewData) error {
 	snapshot := domain.QodoReviewSnapshot{}
 	if data.ReviewSession != nil {
-		snapshot.ReviewSession = &domain.QodoReviewSession{Status: data.ReviewSession.Status, CommitSHA: data.ReviewSession.CommitSHA}
+		snapshot.ReviewSession = &domain.QodoReviewSession{Status: data.ReviewSession.Status, CommitSHA: data.ReviewSession.CommitSHA, StartedAt: data.ReviewSession.StartedAt}
 	}
 	for _, finding := range data.Findings {
 		var evidence *domain.QodoFindingEvidence
@@ -820,7 +830,7 @@ func validateQodoReviewData(data qodoReviewData) error {
 			for _, citation := range finding.Evidence.Citations {
 				evidence.Citations = append(evidence.Citations, domain.QodoFindingCitation{
 					SourceType: citation.SourceType, Source: citation.Source, Text: citation.Text,
-					Context: citation.Context, HasMetadata: len(citation.Metadata) > 0,
+					Context: citation.Context, Metadata: string(citation.Metadata),
 				})
 			}
 		}

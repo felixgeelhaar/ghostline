@@ -48,22 +48,55 @@ func TestValidateQodoReviewSnapshot(t *testing.T) {
 	}
 }
 
-func TestQodoReviewEvidenceCountBelongsToDomain(t *testing.T) {
-	findings := []QodoReviewFinding{{
-		Description: "Description",
-		FilePath:    "backend/handler.go",
-		StartLine:   10,
-		EndLine:     12,
-		CodeSnippet: "return nil",
-		Evidence: &QodoFindingEvidence{
-			Explanation: "Review rationale",
-			Citations: []QodoFindingCitation{{
-				SourceType: "code", Source: "backend/handler.go", Text: "call()",
-				Context: "handler context", HasMetadata: true,
-			}},
-		},
-	}}
-	if got, want := QodoReviewEvidenceCount(findings), 12; got != want {
-		t.Fatalf("evidence count = %d, want %d", got, want)
+func TestMergeQodoReviewFindingsPreservesOrderAndEvidence(t *testing.T) {
+	values := []QodoReviewFinding{
+		{ID: "f-1", Title: "Replay safely"},
+		{ID: "f-2", Title: "Second finding"},
+		{ID: "f-1", Title: "Replay safely", GitSHA: strings.Repeat("a", 40), Evidence: &QodoFindingEvidence{
+			Citations: []QodoFindingCitation{{Source: "backend/replay.go", Text: "apply()"}},
+		}},
+	}
+	merged, err := MergeQodoReviewFindings(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged) != 2 || merged[0].ID != "f-1" || merged[1].ID != "f-2" {
+		t.Fatalf("merged findings = %+v", merged)
+	}
+	if merged[0].GitSHA != strings.Repeat("a", 40) || merged[0].Evidence == nil || len(merged[0].Evidence.Citations) != 1 {
+		t.Fatalf("merged finding lost evidence: %+v", merged[0])
+	}
+}
+
+func TestMergeQodoReviewFindingsRejectsConflictingDuplicates(t *testing.T) {
+	if _, err := MergeQodoReviewFindings([]QodoReviewFinding{{ID: "f-1", Title: "First"}, {ID: "f-1", Title: "Second"}}); err == nil {
+		t.Fatal("conflicting duplicate finding was accepted")
+	}
+}
+
+func TestMergeQodoReviewRunsCombinesMatchingIdentity(t *testing.T) {
+	merged, err := MergeQodoReviewRuns([]QodoReviewRun{
+		{ID: "r-1", Status: "completed"},
+		{ID: "r-2", Status: "completed"},
+		{ID: "r-1", Status: "completed", CommitSHA: strings.Repeat("b", 40)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged) != 2 || merged[0].ID != "r-1" || merged[1].ID != "r-2" || merged[0].CommitSHA != strings.Repeat("b", 40) {
+		t.Fatalf("merged runs = %+v", merged)
+	}
+}
+
+func TestMergeQodoReviewSessionsAcceptsStatusCaseDifferences(t *testing.T) {
+	merged, err := MergeQodoReviewSessions(
+		&QodoReviewSession{Status: "Completed"},
+		&QodoReviewSession{Status: "completed"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged == nil || merged.Status != "Completed" {
+		t.Fatalf("merged session = %+v", merged)
 	}
 }

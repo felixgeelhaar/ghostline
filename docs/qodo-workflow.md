@@ -91,6 +91,9 @@ and does not store it. Use this only on a Ghostline instance you trust. The
 structured result preserves Qodo's finding/run identifiers, statuses, source,
 revision references, locations, and citation evidence; it is shown separately
 from published comments.
+This one-request credential flow deliberately supersedes issue #41's earlier
+server-configured-key gate: the endpoint is available without a server-side
+Qodo secret, and a request can proceed only when its caller supplies a key.
 Workspace access and current availability depend on the supplied key. A result
 whose reviewed SHA differs from the imported PR head is explicitly labeled
 stale. If Qodo omits evidence, Ghostline shows that gap rather than filling it
@@ -141,6 +144,10 @@ it distinguishes the finding's old source revision from a linked run revision,
 preserves both status fields, and marks a missing finding-specific revision.
 Qodo's extended `location.code_snippet` is preserved and shown as a cited code
 excerpt in the [finding code-context screenshot](feature-evidence/qodo-code-snippet.jpg).
+Repeated source warnings remain separately readable in the
+[warning-list screenshot](feature-evidence/qodo-warning-list.jpg), captured from
+the running Ghostline UI with a prepared replay fixture. The banner identifies
+the sample as replay data, not a live Qodo response.
 When Qodo omits the session revision while the imported PR head is known, the
 [unknown-session-revision screenshot](feature-evidence/qodo-session-revision-unknown.jpg)
 shows that Ghostline names the missing Qodo revision and still surfaces an

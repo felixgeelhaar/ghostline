@@ -135,10 +135,11 @@ func TestQodoReviewDataFailedDecodeDoesNotLeakSessionIntoLaterResponse(t *testin
 }
 
 func TestMergeQodoReviewDataCombinesDuplicateFindingEvidenceAndRejectsConflicts(t *testing.T) {
-	first := qodoReviewData{Findings: []qodoManagedFinding{{ID: "f-1", Title: "Guard retries"}}, ReviewRuns: []qodoManagedReviewRun{}}
+	citation := qodoFindingCitation{Source: "backend/retry.go", Text: "retry()"}
+	first := qodoReviewData{Findings: []qodoManagedFinding{{ID: "f-1", Title: "Guard retries", Evidence: &qodoFindingEvidence{Citations: []qodoFindingCitation{citation}}}}, ReviewRuns: []qodoManagedReviewRun{}}
 	second := qodoReviewData{Findings: []qodoManagedFinding{{
 		ID: "f-1", Title: "Guard retries",
-		Evidence: &qodoFindingEvidence{Citations: []qodoFindingCitation{{Source: "backend/retry.go", Text: "retry()"}}},
+		Evidence: &qodoFindingEvidence{Citations: []qodoFindingCitation{citation, citation}},
 	}}, ReviewRuns: []qodoManagedReviewRun{}}
 	merged, err := mergeQodoReviewData(first, second)
 	if err != nil {
@@ -190,6 +191,71 @@ func TestDeduplicateQodoFindingsMergesRepeatedIDsInOriginalOrder(t *testing.T) {
 	}
 	if merged[0].Evidence == nil || merged[0].Evidence.Explanation != "first evidence" || merged[1].FilePath != "backend/second.go" {
 		t.Fatalf("duplicate details were not merged in place: %+v", merged)
+	}
+}
+
+func TestDeduplicateQodoReviewRunsMergesRepeatedIDsInOriginalOrder(t *testing.T) {
+	values := []qodoManagedReviewRun{
+		{ID: "r-1", Status: "completed"},
+		{ID: "r-2", Status: "completed"},
+		{ID: "r-1", Status: "completed", CommitSHA: strings.Repeat("a", 40)},
+	}
+	merged, err := deduplicateQodoReviewRuns(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged) != 2 || merged[0].ID != "r-1" || merged[1].ID != "r-2" || merged[0].CommitSHA != strings.Repeat("a", 40) {
+		t.Fatalf("merged runs = %+v", merged)
+	}
+}
+
+func TestMergeQodoReviewDataDeduplicatesRepeatedWarnings(t *testing.T) {
+	merged, err := mergeQodoReviewData(
+		qodoReviewData{Warnings: []string{"partial response"}},
+		qodoReviewData{Warnings: []string{"partial response", "other warning"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(merged.Warnings, "|") != "partial response|other warning" {
+		t.Fatalf("warnings = %#v", merged.Warnings)
+	}
+}
+
+func TestParseQodoToolResultKeepsValidTextWhenStructuredContentIsInvalid(t *testing.T) {
+	textBlock := `{"findings":[{"id":"f-1","title":"Keep this finding"}],"review_runs":[]}`
+	got, err := parseQodoToolResult(qodoToolResult{
+		StructuredContent: json.RawMessage(`{"findings":[`),
+		Content:           []qodoToolContent{{Type: "text", Text: textBlock}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Findings) != 1 || got.Findings[0].ID != "f-1" || len(got.Warnings) != 1 {
+		t.Fatalf("parsed result = %+v; want finding and partial-data warning", got)
+	}
+}
+
+func TestParseQodoToolResultMergesCompanionFindingsWithEmptyStructuredContent(t *testing.T) {
+	got, err := parseQodoToolResult(qodoToolResult{
+		StructuredContent: json.RawMessage(`{"review_session":null,"findings":[],"review_runs":[]}`),
+		Content:           []qodoToolContent{{Type: "text", Text: `{"findings":[{"id":"f-1","title":"Companion finding"}],"review_runs":[]}`}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Findings) != 1 || got.Findings[0].ID != "f-1" {
+		t.Fatalf("companion finding was lost: %+v", got.Findings)
+	}
+}
+
+func TestParseQodoToolResultRejectsConflictingAliasesInCompanionData(t *testing.T) {
+	got, err := parseQodoToolResult(qodoToolResult{
+		StructuredContent: json.RawMessage(`{"review_session":null,"findings":[{"id":"f-1","title":"Valid"}],"review_runs":[]}`),
+		Content:           []qodoToolContent{{Type: "text", Text: `{"findings":[{"id":"f-2","title":"Conflicting","git_sha":"` + strings.Repeat("a", 40) + `","gitSha":"` + strings.Repeat("b", 40) + `"}],"review_runs":[]}`}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "conflicting") {
+		t.Fatalf("result = %+v, error = %v; want conflicting-data error", got, err)
 	}
 }
 
@@ -570,6 +636,13 @@ func TestDecodeMCPEnvelopeSelectsMatchingSSERequestID(t *testing.T) {
 	}
 	if id != 2 || string(envelope.Result) != `{"review":"complete"}` {
 		t.Fatalf("selected event = id %d, result %s; want id 2 review result", id, envelope.Result)
+	}
+}
+
+func TestDecodeMCPEnvelopeAcceptsCaseInsensitiveEventStreamMediaType(t *testing.T) {
+	data := []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"review\":\"complete\"}}\n\n")
+	if _, err := decodeMCPEnvelope(data, "Text/Event-Stream; charset=utf-8", 2); err != nil {
+		t.Fatalf("valid event stream media type rejected: %v", err)
 	}
 }
 
