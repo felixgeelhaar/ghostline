@@ -13,7 +13,7 @@ vi.mock('../application/fetchAuthStatus', () => ({ fetchAuthStatus: vi.fn().mock
 const sha = 'a'.repeat(40)
 const commit = { sha, shortSha: 'aaaaaaa', message: 'Add retry guard', author: 'Felix', committedAt: '2026-11-04T09:00:00Z', url: `https://github.com/acme/app/commit/${sha}` }
 const pullRequest: PullRequest = {
-  repository: 'acme/app', owner: 'acme', repo: 'app', number: 7, title: 'Retry guard', state: 'open',
+  repository: 'acme/app', owner: 'acme', repo: 'app', number: 7, title: 'Retry guard', state: 'open', merged: false,
   url: 'https://github.com/acme/app/pull/7', createdAt: '2026-11-04T08:00:00Z', updatedAt: '2026-11-04T11:00:00Z',
   commits: [commit],
   checks: { availability: 'available', revisionSha: sha, revisionShortSha: 'aaaaaaa', revisionUrl: commit.url, items: [] },
@@ -22,6 +22,7 @@ const pullRequest: PullRequest = {
     summary: 'Review notes.', findings: [{ id: '21:1', title: 'Guard concurrent retries', categories: [], sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-21' }],
     commitSha: sha, commitUrl: commit.url, createdAt: '2026-11-04T09:05:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-21',
   }] },
+  referencedIssues: { availability: 'available', items: [] },
 }
 
 let mounted: ReturnType<typeof createApp> | undefined

@@ -2,19 +2,58 @@ import { z } from 'zod'
 import { RevisionChecksSchema } from './checks'
 import { QodoReviewSetSchema } from './reviews'
 
+const MAX_REFERENCED_ISSUES = 20
+
 export const PullRequestSchema = z.object({
   repository: z.string(), owner: z.string(), repo: z.string(), number: z.number(),
-  title: z.string(), state: z.string(), url: z.string().url(),
+  title: z.string(), state: z.string(), merged: z.boolean(), url: z.string().url(),
   createdAt: z.string(), updatedAt: z.string(),
   commits: z.array(z.object({ sha: z.string(), shortSha: z.string(), message: z.string(), author: z.string(), committedAt: z.string(), url: z.string().url() })),
   checks: RevisionChecksSchema,
   qodoReviews: QodoReviewSetSchema,
+  referencedIssues: z.object({
+    availability: z.enum(['available', 'unavailable']),
+    reason: z.string().optional(),
+    items: z.array(z.object({
+      number: z.number().int().positive(),
+      url: z.string().url(),
+      state: z.enum(['open', 'closed', 'unavailable']),
+    })).max(MAX_REFERENCED_ISSUES),
+  }),
 }).superRefine((pullRequest, context) => {
   if (!matchesGitHubPath(
     pullRequest.url,
     `${pullRequest.owner}/${pullRequest.repo}/pull/${pullRequest.number}`,
   )) {
     context.addIssue({ code: 'custom', path: ['url'], message: 'Pull request URL does not match its GitHub identity.' })
+  }
+
+  pullRequest.referencedIssues.items.forEach((issue, index) => {
+    if (!matchesGitHubPath(
+      issue.url,
+      `${pullRequest.owner}/${pullRequest.repo}/issues/${issue.number}`,
+    )) {
+      context.addIssue({
+        code: 'custom',
+        path: ['referencedIssues', 'items', index, 'url'],
+        message: 'Referenced issue URL does not match the imported repository and issue number.',
+      })
+    }
+    if (issue.state === 'unavailable' && pullRequest.referencedIssues.availability === 'available') {
+      context.addIssue({
+        code: 'custom',
+        path: ['referencedIssues', 'items', index, 'state'],
+        message: 'An unavailable issue state must make referenced-issue coverage unavailable.',
+      })
+    }
+  })
+
+  if (pullRequest.referencedIssues.availability === 'unavailable' && !pullRequest.referencedIssues.reason) {
+    context.addIssue({
+      code: 'custom',
+      path: ['referencedIssues', 'reason'],
+      message: 'Unavailable referenced-issue coverage must explain why.',
+    })
   }
 
   pullRequest.commits.forEach((commit, index) => {

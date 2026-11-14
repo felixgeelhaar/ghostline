@@ -160,6 +160,12 @@ func nullableJSON(value string) string {
 	return string(encoded)
 }
 
+func checkRunWithSummary(name, sha, summary string) string {
+	run := checkRun(name, sha, "completed", "success")
+	encodedSummary, _ := json.Marshal(summary)
+	return strings.TrimSuffix(run, "}") + `,"output":{"summary":` + string(encodedSummary) + `}}`
+}
+
 const noStatuses = `{"sha":"` + headSHA + `","total_count":0,"statuses":[]}`
 
 func TestImportReturnsChecksForHeadCommit(t *testing.T) {
@@ -237,6 +243,65 @@ func TestCheckRecordsPreserveGitHubNativeIdentifiers(t *testing.T) {
 	}
 	if got := pr.Checks.Items[1].ID; got != 271 {
 		t.Fatalf("commit status id = %d, want 271", got)
+	}
+}
+
+func TestImportPreservesGitHubCheckRunOutput(t *testing.T) {
+	const title = "No new alerts in code changed by this pull request"
+	const summary = "[View all branch alerts](/acme/app/security/code-scanning?query=pr%3A7+tool%3Anox+is%3Aopen)."
+	run := strings.TrimSuffix(checkRun("nox", headSHA, "completed", "success"), "}") +
+		`,"output":{"title":"` + title + `","summary":"` + summary + `"}}`
+	srv := fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(run), statuses: noStatuses}.serve(t)
+
+	code, pr := importVia(t, srv)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if len(pr.Checks.Items) != 1 || pr.Checks.Items[0].OutputTitle != title || pr.Checks.Items[0].OutputSummary != summary {
+		t.Fatalf("check output = %+v, want GitHub's title and summary preserved", pr.Checks.Items)
+	}
+}
+
+func TestImportBoundsGitHubCheckRunSummaries(t *testing.T) {
+	largeSummary := strings.Repeat("x", maxCheckSummaryRunes+100)
+	run := checkRunWithSummary("long-report", headSHA, largeSummary)
+	srv := fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(run), statuses: noStatuses}.serve(t)
+
+	code, pr := importVia(t, srv)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if len(pr.Checks.Items) != 1 {
+		t.Fatalf("checks = %+v, want one check", pr.Checks.Items)
+	}
+	got := pr.Checks.Items[0]
+	if len([]rune(got.OutputSummary)) != maxCheckSummaryRunes || !got.OutputSummaryTruncated {
+		t.Fatalf("summary length = %d runes, truncated = %t; want %d runes and truncated", len([]rune(got.OutputSummary)), got.OutputSummaryTruncated, maxCheckSummaryRunes)
+	}
+}
+
+func TestImportCapsTotalGitHubCheckRunSummaryBytes(t *testing.T) {
+	runs := make([]string, 40)
+	for i := range runs {
+		runs[i] = checkRunWithSummary("report-"+itoa(i), headSHA, strings.Repeat("x", maxCheckSummaryRunes))
+	}
+	srv := fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(runs...), statuses: noStatuses}.serve(t)
+
+	code, pr := importVia(t, srv)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	totalBytes := 0
+	truncated := false
+	for _, item := range pr.Checks.Items {
+		totalBytes += len(item.OutputSummary)
+		truncated = truncated || item.OutputSummaryTruncated
+	}
+	if totalBytes > maxCheckSummaryBytes {
+		t.Fatalf("total summary bytes = %d, want at most %d", totalBytes, maxCheckSummaryBytes)
+	}
+	if !truncated {
+		t.Fatal("expected at least one summary to be marked truncated after the response budget was reached")
 	}
 }
 

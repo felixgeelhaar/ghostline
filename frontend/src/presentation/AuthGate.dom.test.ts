@@ -18,7 +18,7 @@ const headSha = 'a'.repeat(40)
 const earlierSha = 'b'.repeat(40)
 const middleSha = 'c'.repeat(40)
 const makePR = (): PullRequest => ({
-  repository: 'acme/app', owner: 'acme', repo: 'app', number: 12, title: 'Session-bound change', state: 'open',
+  repository: 'acme/app', owner: 'acme', repo: 'app', number: 12, title: 'Session-bound change', state: 'open', merged: false,
   url: 'https://github.com/acme/app/pull/12', createdAt: '2026-11-11T09:00:00Z', updatedAt: '2026-11-11T10:00:00Z',
   commits: [
     { sha: earlierSha, shortSha: 'bbbbbbb', message: 'Add behavior', author: 'felix', committedAt: '2026-11-11T09:00:00Z', url: `https://github.com/acme/app/commit/${earlierSha}` },
@@ -27,6 +27,7 @@ const makePR = (): PullRequest => ({
   ],
   checks: { availability: 'available', revisionSha: headSha, revisionShortSha: 'aaaaaaa', revisionUrl: `https://github.com/acme/app/commit/${headSha}`, items: [] },
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] },
+  referencedIssues: { availability: 'available', items: [] },
 })
 
 function unauthorized() {

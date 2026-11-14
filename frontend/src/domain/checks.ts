@@ -8,6 +8,7 @@ export const CheckSchema = z.object({
   status: z.string(), conclusion: z.string().optional(), url: webURL.optional(),
   startedAt: z.string().datetime().optional(), completedAt: z.string().datetime().optional(),
   createdAt: z.string().datetime().optional(), updatedAt: z.string().datetime().optional(),
+  outputTitle: z.string().optional(), outputSummary: z.string().optional(), outputSummaryTruncated: z.boolean().optional(),
 })
 export type Check = z.infer<typeof CheckSchema>
 
@@ -27,6 +28,34 @@ export function checkOutcome(check: Check): { label: string; tone: CheckTone } {
   const conclusion = check.conclusion ?? 'unknown'
   const tone: CheckTone = passing.has(conclusion) ? 'pass' : failing.has(conclusion) ? 'fail' : 'neutral'
   return { label: conclusion.replaceAll('_', ' '), tone }
+}
+
+const checkSummaryPreviewLimit = 280
+
+// GitHub check summaries are Markdown. Show a bounded text preview while the
+// native check-run link remains the source for the complete report.
+export function checkSummaryPreview(summary: string): { text: string; truncated: boolean } {
+  const text = summary
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s*>\s?/gm, '')
+    .replace(/^\s*[-+*]\s+/gm, '')
+    .replace(/^\s*\d+[.)]\s+/gm, '')
+    .replace(/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/gm, '')
+    .replace(/^\s*\|/gm, '')
+    .replace(/\|\s*$/gm, '')
+    .replace(/\s*\|\s*/g, ' · ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/[*_~]{1,3}/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\s*\n+\s*/g, ' · ')
+    .replace(/(?:\s*·\s*){2,}/g, ' · ')
+    .trim()
+
+  const characters = Array.from(text)
+  if (characters.length <= checkSummaryPreviewLimit) return { text, truncated: false }
+  return { text: `${characters.slice(0, checkSummaryPreviewLimit - 1).join('').trimEnd()}…`, truncated: true }
 }
 
 export function isHeadCommit(checks: RevisionChecks, sha: string): boolean {
