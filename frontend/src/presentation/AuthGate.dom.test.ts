@@ -50,6 +50,7 @@ afterEach(() => {
   app = undefined
   host?.remove()
   host = undefined
+  window.history.replaceState({}, '', '/')
   vi.clearAllMocks()
 })
 
@@ -62,6 +63,16 @@ describe('hosted GitHub sign-in gate', () => {
     expect(host?.querySelector<HTMLAnchorElement>('.github-sign-in')?.getAttribute('href')).toBe('/auth/github/login')
     expect(host?.querySelector('#pr-url')).toBeNull()
     expect(host?.textContent).toContain('does not request repository access')
+  })
+
+  it('shows a fixed sign-in error and removes its callback code from the address', async () => {
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ enabled: true, login: null })
+    window.history.replaceState({}, '', '/?auth_error=not_allowed&keep=1#main-content')
+    await mount()
+
+    expect(host?.querySelector('[role="alert"]')?.textContent).toContain('not approved')
+    expect(window.location.search).toBe('?keep=1')
+    expect(window.location.hash).toBe('#main-content')
   })
 
   it('shows the change workspace and sign-out control for an approved account', async () => {

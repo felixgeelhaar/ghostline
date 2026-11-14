@@ -26,6 +26,7 @@ const selectedTraceId = ref('')
 const copyResult = ref<CopyResult>()
 const authStatus = ref<AuthStatus>()
 const authError = ref('')
+const authNotice = ref('')
 const authLoading = ref(true)
 let traceTrigger: HTMLButtonElement | undefined
 let revisionRequest = 0
@@ -54,6 +55,20 @@ const activeTrace = computed(() => {
 const glyph: Record<CheckTone, string> = { pass: '✓', fail: '✕', running: '●', neutral: '–' }
 
 onMounted(async () => {
+  const params = new URLSearchParams(window.location.search)
+  const authErrorCode = params.get('auth_error')
+  const authMessages: Record<string, string> = {
+    state: 'Sign-in could not be verified. Please start again.',
+    cancelled: 'GitHub sign-in was cancelled.',
+    unavailable: 'GitHub sign-in could not be completed. Please try again.',
+    not_allowed: 'This GitHub account is not approved for this Ghostline instance.',
+  }
+  if (authErrorCode) {
+    authNotice.value = authMessages[authErrorCode] ?? authMessages.unavailable!
+    params.delete('auth_error')
+    const query = params.toString()
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`)
+  }
   try {
     authStatus.value = await fetchAuthStatus()
   } catch (e) {
@@ -169,7 +184,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
     <main id="main-content" tabindex="-1">
     <section v-if="authLoading" class="auth-panel" role="status"><p class="eyebrow">ACCESS CHECK</p><h1>Verifying your session.</h1><p class="lede">Ghostline is checking whether this instance requires sign-in.</p></section>
     <section v-else-if="authError" class="auth-panel auth-error" role="alert"><p class="eyebrow">ACCESS STATUS UNAVAILABLE</p><h1>Cannot verify access.</h1><p class="lede">{{ authError }}</p><button type="button" @click="reloadPage">RETRY</button></section>
-    <section v-else-if="authStatus?.enabled && !authStatus.login" class="auth-panel"><p class="eyebrow">GHOSTLINE / AUTHORIZED ACCESS</p><h1>Sign in to continue.</h1><p class="lede">This hosted instance is limited to approved GitHub accounts. Ghostline reads your public GitHub profile to verify your account; it does not request repository access.</p><a class="github-sign-in" href="/auth/github/login">CONTINUE WITH GITHUB <span aria-hidden="true">↗</span></a></section>
+    <section v-else-if="authStatus?.enabled && !authStatus.login" class="auth-panel"><p class="eyebrow">GHOSTLINE / AUTHORIZED ACCESS</p><h1>Sign in to continue.</h1><p v-if="authNotice" class="error" role="alert">{{ authNotice }}</p><p class="lede">This hosted instance is limited to approved GitHub accounts. Ghostline reads your public GitHub profile to verify your account; it does not request repository access.</p><a class="github-sign-in" href="/auth/github/login">CONTINUE WITH GITHUB <span aria-hidden="true">↗</span></a></section>
     <div v-else class="workspace">
     <section class="hero"><p class="eyebrow">CHANGE INTELLIGENCE / 001</p><h1>See the work.<br><em>Trace the decisions.</em></h1><p class="lede">Import a pull request to inspect its revision history. Commit timestamps show when commits were authored, not when they were pushed.</p></section>
     <section class="import-panel"><label for="pr-url">GITHUB PULL REQUEST</label><div class="input-row"><span class="prefix">↗</span><input id="pr-url" v-model="url" placeholder="https://github.com/owner/repo/pull/123" @keyup.enter="loadPR"><button :disabled="loading" @click="loadPR">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button></div><p v-if="error" class="error" role="alert">{{ error }}</p></section>

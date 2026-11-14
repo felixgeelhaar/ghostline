@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -29,6 +31,7 @@ const (
 	githubAuthorizeURL   = "https://github.com/login/oauth/authorize"
 	githubTokenURL       = "https://github.com/login/oauth/access_token"
 	githubUserURL        = "https://api.github.com/user"
+	githubRevokeTokenURL = "https://api.github.com/applications/"
 )
 
 var githubLoginPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
@@ -39,16 +42,18 @@ type authSettings struct {
 	ClientSecret string
 	CallbackURL  string
 	SigningKey   []byte
-	AllowedUsers domain.GitHubAccountAllowlist
+	AllowedIDs   domain.GitHubAccountAllowlist
 	CookieSecure bool
 	Now          func() time.Time
 	HTTPClient   *http.Client
 	AuthorizeURL string
 	TokenURL     string
 	UserURL      string
+	RevokeURL    string
 }
 
 type sessionClaims struct {
+	AccountID int64  `json:"account_id"`
 	Login     string `json:"login"`
 	ExpiresAt int64  `json:"expires_at"`
 }
@@ -59,6 +64,7 @@ type githubOAuthToken struct {
 }
 
 type githubOAuthUser struct {
+	ID    int64  `json:"id"`
 	Login string `json:"login"`
 }
 
@@ -81,13 +87,14 @@ func loadAuthConfig(getenv func(string) string) (authSettings, error) {
 		ClientSecret: getenv("GITHUB_OAUTH_CLIENT_SECRET"),
 		CallbackURL:  strings.TrimSpace(getenv("GITHUB_OAUTH_CALLBACK_URL")),
 		SigningKey:   []byte(getenv("GHOSTLINE_SESSION_SIGNING_KEY")),
-		AllowedUsers: make(domain.GitHubAccountAllowlist),
+		AllowedIDs:   make(domain.GitHubAccountAllowlist),
 		CookieSecure: true,
 		Now:          time.Now,
 		HTTPClient:   &http.Client{Timeout: 10 * time.Second, CheckRedirect: rejectOAuthRedirect},
 		AuthorizeURL: githubAuthorizeURL,
 		TokenURL:     githubTokenURL,
 		UserURL:      githubUserURL,
+		RevokeURL:    githubRevokeTokenURL,
 	}
 	for _, required := range []struct{ name, value string }{
 		{"GITHUB_OAUTH_CLIENT_ID", settings.ClientID},
@@ -115,19 +122,11 @@ func loadAuthConfig(getenv func(string) string) (authSettings, error) {
 		}
 		settings.CookieSecure = false
 	}
-	for _, login := range strings.Split(getenv("GHOSTLINE_ALLOWED_GITHUB_USERS"), ",") {
-		login = strings.TrimSpace(login)
-		if login == "" {
-			continue
-		}
-		if !validGitHubLogin(login) {
-			return authSettings{}, fmt.Errorf("GHOSTLINE_ALLOWED_GITHUB_USERS contains invalid GitHub login %q", login)
-		}
-		settings.AllowedUsers[strings.ToLower(login)] = struct{}{}
+	allowedIDs, err := domain.NewGitHubAccountAllowlist(strings.Split(getenv("GHOSTLINE_ALLOWED_GITHUB_IDS"), ","))
+	if err != nil {
+		return authSettings{}, fmt.Errorf("GHOSTLINE_ALLOWED_GITHUB_IDS: %w", err)
 	}
-	if len(settings.AllowedUsers) == 0 {
-		return authSettings{}, errors.New("GHOSTLINE_ALLOWED_GITHUB_USERS must list at least one GitHub login when GitHub sign-in is enabled")
-	}
+	settings.AllowedIDs = allowedIDs
 	return settings, nil
 }
 
@@ -182,7 +181,7 @@ type githubAuth struct{ settings authSettings }
 
 func (a githubAuth) status(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
-	login := a.currentLogin(c.Request)
+	login := a.currentIdentity(c.Request).Login
 	c.JSON(http.StatusOK, gin.H{"enabled": a.settings.Enabled, "login": nullableLogin(login)})
 }
 
@@ -199,29 +198,50 @@ func (a githubAuth) middleware() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		login := a.currentLogin(c.Request)
-		if login == "" {
+		identity := a.currentIdentity(c.Request)
+		if identity.AccountID == 0 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Sign in with GitHub to continue."})
 			return
 		}
-		c.Set("authenticatedGitHubLogin", strings.ToLower(login))
+		c.Set("authenticatedGitHubAccountID", strconv.FormatInt(identity.AccountID, 10))
 		c.Next()
 	}
 }
 
-func (a githubAuth) currentLogin(r *http.Request) string {
+func (a githubAuth) currentIdentity(r *http.Request) sessionClaims {
 	if !a.settings.Enabled {
-		return ""
+		return sessionClaims{}
 	}
-	cookie, err := r.Cookie(sessionCookieName)
+	cookie, err := r.Cookie(a.sessionCookieName())
 	if err != nil {
-		return ""
+		return sessionClaims{}
 	}
-	login := verifySession(a.settings, cookie.Value)
-	if !a.settings.AllowedUsers.Allows(login) {
-		return ""
+	identity, ok := verifySession(a.settings, cookie.Value)
+	if !ok || !a.settings.AllowedIDs.Allows(identity.AccountID) {
+		return sessionClaims{}
 	}
-	return login
+	return identity
+}
+
+func (a githubAuth) sessionCookieName() string {
+	if a.settings.CookieSecure {
+		return "__Host-" + sessionCookieName
+	}
+	return sessionCookieName
+}
+
+func (a githubAuth) stateCookiePath() string {
+	if a.settings.CookieSecure {
+		return "/"
+	}
+	return "/auth/github/callback"
+}
+
+func (a githubAuth) stateCookieName() string {
+	if a.settings.CookieSecure {
+		return "__Host-" + oauthStateCookieName
+	}
+	return oauthStateCookieName
 }
 
 func (a githubAuth) login(c *gin.Context) {
@@ -235,7 +255,7 @@ func (a githubAuth) login(c *gin.Context) {
 		return
 	}
 	state := base64.RawURLEncoding.EncodeToString(stateBytes)
-	setCookie(c, &http.Cookie{Name: oauthStateCookieName, Value: state, Path: "/auth/github/callback", MaxAge: int(oauthStateLifetime.Seconds()), HttpOnly: true, Secure: a.settings.CookieSecure, SameSite: http.SameSiteLaxMode})
+	setCookie(c, &http.Cookie{Name: a.stateCookieName(), Value: state, Path: a.stateCookiePath(), MaxAge: int(oauthStateLifetime.Seconds()), HttpOnly: true, Secure: a.settings.CookieSecure, SameSite: http.SameSiteLaxMode})
 	target, err := url.Parse(a.settings.AuthorizeURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "GitHub sign-in is not configured correctly."})
@@ -255,45 +275,57 @@ func (a githubAuth) callback(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "GitHub sign-in is not enabled."})
 		return
 	}
-	stateCookie, err := c.Request.Cookie(oauthStateCookieName)
+	stateCookie, err := c.Request.Cookie(a.stateCookieName())
 	state := c.Query("state")
 	if err != nil || state == "" || len(state) > 128 || subtle.ConstantTimeCompare([]byte(stateCookie.Value), []byte(state)) != 1 {
-		clearCookie(c, oauthStateCookieName, "/auth/github/callback", a.settings.CookieSecure)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "GitHub sign-in state did not match. Start sign-in again."})
+		clearCookie(c, a.stateCookieName(), a.stateCookiePath(), a.settings.CookieSecure)
+		a.redirectAuthError(c, "state")
 		return
 	}
-	clearCookie(c, oauthStateCookieName, "/auth/github/callback", a.settings.CookieSecure)
+	clearCookie(c, a.stateCookieName(), a.stateCookiePath(), a.settings.CookieSecure)
 	if c.Query("error") != "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "GitHub sign-in was cancelled."})
+		a.redirectAuthError(c, "cancelled")
 		return
 	}
 	code := c.Query("code")
 	if code == "" || len(code) > 2048 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "GitHub did not return a valid sign-in code."})
+		a.redirectAuthError(c, "unavailable")
 		return
 	}
 	token, err := a.exchangeCode(c.Request, code)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Could not complete GitHub sign-in. Try again."})
+		a.redirectAuthError(c, "unavailable")
 		return
 	}
-	login, err := a.fetchGitHubLogin(c.Request, token)
+	identity, identityErr := a.fetchGitHubIdentity(c.Request, token)
+	revokeErr := a.revokeOAuthToken(c.Request, token)
+	if revokeErr != nil {
+		a.redirectAuthError(c, "unavailable")
+		return
+	}
+	if identityErr != nil {
+		a.redirectAuthError(c, "unavailable")
+		return
+	}
+	if !a.settings.AllowedIDs.Allows(identity.ID) {
+		a.redirectAuthError(c, "not_allowed")
+		return
+	}
+	session, err := signSession(a.settings, identity)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "Could not verify the GitHub account. Try again."})
+		a.redirectAuthError(c, "unavailable")
 		return
 	}
-	if !a.settings.AllowedUsers.Allows(login) {
-		clearCookie(c, sessionCookieName, "/", a.settings.CookieSecure)
-		c.JSON(http.StatusForbidden, gin.H{"error": "This GitHub account is not on this Ghostline instance’s access list."})
-		return
-	}
-	session, err := signSession(a.settings, login)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not create a Ghostline session."})
-		return
-	}
-	setCookie(c, &http.Cookie{Name: sessionCookieName, Value: session, Path: "/", MaxAge: int(sessionLifetime.Seconds()), HttpOnly: true, Secure: a.settings.CookieSecure, SameSite: http.SameSiteLaxMode})
+	setCookie(c, &http.Cookie{Name: a.sessionCookieName(), Value: session, Path: "/", MaxAge: int(sessionLifetime.Seconds()), HttpOnly: true, Secure: a.settings.CookieSecure, SameSite: http.SameSiteLaxMode})
 	c.Redirect(http.StatusSeeOther, "/")
+}
+
+func (a githubAuth) redirectAuthError(c *gin.Context, code string) {
+	clearCookie(c, a.stateCookieName(), a.stateCookiePath(), a.settings.CookieSecure)
+	if code == "not_allowed" {
+		clearCookie(c, a.sessionCookieName(), "/", a.settings.CookieSecure)
+	}
+	c.Redirect(http.StatusSeeOther, "/?auth_error="+url.QueryEscape(code))
 }
 
 func (a githubAuth) exchangeCode(r *http.Request, code string) (string, error) {
@@ -322,30 +354,59 @@ func (a githubAuth) exchangeCode(r *http.Request, code string) (string, error) {
 	return token.AccessToken, nil
 }
 
-func (a githubAuth) fetchGitHubLogin(r *http.Request, token string) (string, error) {
+func (a githubAuth) fetchGitHubIdentity(r *http.Request, token string) (githubOAuthUser, error) {
 	request, err := http.NewRequestWithContext(r.Context(), http.MethodGet, a.settings.UserURL, nil)
 	if err != nil {
-		return "", err
+		return githubOAuthUser{}, err
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	response, err := a.httpClient().Do(request)
 	if err != nil {
-		return "", err
+		return githubOAuthUser{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", fmt.Errorf("GitHub user endpoint returned %d", response.StatusCode)
+		return githubOAuthUser{}, fmt.Errorf("GitHub user endpoint returned %d", response.StatusCode)
 	}
 	var user githubOAuthUser
 	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&user); err != nil {
-		return "", err
+		return githubOAuthUser{}, err
 	}
-	if !validGitHubLogin(user.Login) {
-		return "", errors.New("GitHub returned an invalid user login")
+	if user.ID <= 0 || !validGitHubLogin(user.Login) {
+		return githubOAuthUser{}, errors.New("GitHub returned an invalid account identity")
 	}
-	return user.Login, nil
+	return user, nil
+}
+
+func (a githubAuth) revokeOAuthToken(r *http.Request, token string) error {
+	payload, err := json.Marshal(struct {
+		AccessToken string `json:"access_token"`
+	}{AccessToken: token})
+	if err != nil {
+		return err
+	}
+	endpoint := strings.TrimRight(a.settings.RevokeURL, "/") + "/" + url.PathEscape(a.settings.ClientID) + "/token"
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	request.SetBasicAuth(a.settings.ClientID, a.settings.ClientSecret)
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	response, err := a.httpClient().Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("GitHub token-revocation endpoint returned %d", response.StatusCode)
+	}
+	return nil
 }
 
 func (a githubAuth) httpClient() *http.Client {
@@ -356,16 +417,43 @@ func (a githubAuth) httpClient() *http.Client {
 }
 
 func (a githubAuth) logout(c *gin.Context) {
-	clearCookie(c, sessionCookieName, "/", a.settings.CookieSecure)
+	if !a.sameOriginRequest(c.Request) {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "Sign-out request origin did not match this Ghostline instance."})
+		return
+	}
+	clearCookie(c, a.sessionCookieName(), "/", a.settings.CookieSecure)
 	c.Redirect(http.StatusSeeOther, "/")
 }
 
-func signSession(settings authSettings, login string) (string, error) {
+func (a githubAuth) sameOriginRequest(request *http.Request) bool {
+	origin := request.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	parsedOrigin, err := url.Parse(origin)
+	if err != nil || parsedOrigin.Scheme == "" || parsedOrigin.Host == "" || parsedOrigin.User != nil || parsedOrigin.Path != "" || parsedOrigin.RawQuery != "" || parsedOrigin.Fragment != "" {
+		return false
+	}
+	callback, err := url.Parse(a.settings.CallbackURL)
+	if err != nil || callback.Host == "" {
+		return false
+	}
+	if strings.EqualFold(parsedOrigin.Scheme, callback.Scheme) && strings.EqualFold(parsedOrigin.Host, callback.Host) {
+		return true
+	}
+	return isLocalHTTPOrigin(parsedOrigin) && isLocalHTTPOrigin(callback) && strings.EqualFold(parsedOrigin.Hostname(), callback.Hostname())
+}
+
+func isLocalHTTPOrigin(origin *url.URL) bool {
+	return origin.Scheme == "http" && (origin.Hostname() == "localhost" || origin.Hostname() == "127.0.0.1")
+}
+
+func signSession(settings authSettings, identity githubOAuthUser) (string, error) {
 	now := time.Now
 	if settings.Now != nil {
 		now = settings.Now
 	}
-	encoded, err := json.Marshal(sessionClaims{Login: login, ExpiresAt: now().Add(sessionLifetime).Unix()})
+	encoded, err := json.Marshal(sessionClaims{AccountID: identity.ID, Login: identity.Login, ExpiresAt: now().Add(sessionLifetime).Unix()})
 	if err != nil {
 		return "", err
 	}
@@ -376,39 +464,39 @@ func signSession(settings authSettings, login string) (string, error) {
 	return payload + "." + signature, nil
 }
 
-func verifySession(settings authSettings, token string) string {
+func verifySession(settings authSettings, token string) (sessionClaims, bool) {
 	if len(settings.SigningKey) < 32 || len(token) > 2048 {
-		return ""
+		return sessionClaims{}, false
 	}
 	payload, signature, ok := strings.Cut(token, ".")
 	if !ok || payload == "" || signature == "" || strings.Contains(signature, ".") {
-		return ""
+		return sessionClaims{}, false
 	}
 	provided, err := base64.RawURLEncoding.DecodeString(signature)
 	if err != nil {
-		return ""
+		return sessionClaims{}, false
 	}
 	mac := hmac.New(sha256.New, settings.SigningKey)
 	_, _ = mac.Write([]byte(payload))
 	if !hmac.Equal(provided, mac.Sum(nil)) {
-		return ""
+		return sessionClaims{}, false
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(payload)
 	if err != nil {
-		return ""
+		return sessionClaims{}, false
 	}
 	var claims sessionClaims
-	if err := json.Unmarshal(decoded, &claims); err != nil || !validGitHubLogin(claims.Login) {
-		return ""
+	if err := json.Unmarshal(decoded, &claims); err != nil || claims.AccountID <= 0 || !validGitHubLogin(claims.Login) {
+		return sessionClaims{}, false
 	}
 	now := time.Now
 	if settings.Now != nil {
 		now = settings.Now
 	}
 	if claims.ExpiresAt <= now().Unix() || claims.ExpiresAt > now().Add(sessionLifetime+time.Minute).Unix() {
-		return ""
+		return sessionClaims{}, false
 	}
-	return claims.Login
+	return claims, true
 }
 
 func setCookie(c *gin.Context, cookie *http.Cookie) {
@@ -420,14 +508,20 @@ func clearCookie(c *gin.Context, name, path string, secure bool) {
 }
 
 func authenticatedRateLimitMiddleware(limiter *rateLimiter, identity clientIdentity) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		key := c.GetString("authenticatedGitHubLogin")
+	return keyedRateLimitMiddleware(limiter, func(c *gin.Context) string {
+		key := c.GetString("authenticatedGitHubAccountID")
 		if key == "" {
 			key = clientKey(c.Request, identity)
 		} else {
-			key = "github:" + key
+			key = "github-id:" + key
 		}
-		allowed, retryAfter := limiter.allow(key)
+		return key
+	})
+}
+
+func keyedRateLimitMiddleware(limiter *rateLimiter, key func(*gin.Context) string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		allowed, retryAfter := limiter.allow(key(c))
 		if allowed {
 			c.Next()
 			return

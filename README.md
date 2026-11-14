@@ -63,7 +63,9 @@ For a local frontend development server, keep using `go run ./backend` and `cd f
 
 ### GitHub sign-in for a hosted instance
 
-Ghostline supports an identity-only GitHub OAuth gate for hosted instances. The operator must register a GitHub OAuth App with callback URL `https://<host>/auth/github/callback`, provide OAuth credentials and a random session signing key, and explicitly list allowed GitHub logins. The app requests only `read:user`; it does not ask GitHub for repository access, and the short-lived access token is used only to verify the account and is not stored. The backend protects `/api/import`, `/api/checks`, and `/api/compare`; health and authentication status remain public.
+Ghostline supports an identity-only GitHub OAuth gate for hosted instances. The operator must register a GitHub OAuth App with callback URL `https://<host>/auth/github/callback`, provide OAuth credentials and a random session signing key, and explicitly list allowed immutable GitHub account IDs. The app requests only `read:user`; it does not ask GitHub for repository access. After identity is checked, Ghostline revokes the OAuth access token before issuing a session and fails sign-in if revocation fails. The backend protects `/api/import`, `/api/checks`, and `/api/compare`; health and authentication status remain public.
+
+Existing deployments must replace `GHOSTLINE_ALLOWED_GITHUB_USERS` with `GHOSTLINE_ALLOWED_GITHUB_IDS` before updating; username entries are no longer accepted because GitHub usernames can be reassigned. Find an account's numeric ID from its public GitHub profile API response (`https://api.github.com/users/<login>`).
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
@@ -73,7 +75,7 @@ Ghostline supports an identity-only GitHub OAuth gate for hosted instances. The 
 | `GITHUB_OAUTH_CLIENT_SECRET` | Yes | OAuth App client secret. |
 | `GITHUB_OAUTH_CALLBACK_URL` | Yes | Exact HTTPS callback URL ending `/auth/github/callback`. |
 | `GHOSTLINE_SESSION_SIGNING_KEY` | Yes | Random secret of at least 32 bytes; rotate it to revoke all sessions. |
-| `GHOSTLINE_ALLOWED_GITHUB_USERS` | Yes | Comma-separated GitHub logins allowed to sign in. |
+| `GHOSTLINE_ALLOWED_GITHUB_IDS` | Yes | Comma-separated immutable numeric GitHub account IDs allowed to sign in. |
 | `GHOSTLINE_SESSION_COOKIE_SECURE` | No | Defaults to `true`; `false` is accepted only for an HTTP localhost development callback. |
 
 The browser receives an eight-hour, HttpOnly, SameSite=Lax signed session cookie. Removing an account from the allowlist blocks its existing session; signing-key rotation invalidates every session. OAuth callback codes and state values are excluded from request logs. Configure secrets through the hosting provider's secret manager, never in a committed `.env` file.

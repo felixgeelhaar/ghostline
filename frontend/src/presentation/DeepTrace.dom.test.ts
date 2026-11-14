@@ -239,6 +239,18 @@ describe('Deep Trace browser interactions', () => {
     await vi.waitFor(() => expect(authRequired).toBe(true))
   })
 
+  it('shows an expired-session message when the sign-in status did not require authentication', async () => {
+    vi.mocked(compareRevisions).mockRejectedValueOnce(new ApiResponseError('Sign in with GitHub to continue.', 401))
+    const current = findingTrace('one', 'Finding one')
+    mounted = createApp(DeepTrace, { trace: current, pullRequestUrl: pullRequest.url })
+    host = document.createElement('div')
+    document.body.append(host)
+    mounted.mount(host)
+
+    host.querySelector<HTMLButtonElement>('[aria-label="Compare candidate ccccccc with earlier review revision aaaaaaa"]')!.click()
+    await vi.waitFor(() => expect(host?.querySelector('.comparison-error')?.textContent).toContain('Sign in with GitHub'))
+  })
+
   it('ignores an earlier comparison if a newer candidate comparison resolves first', async () => {
     let resolveOld!: (value: Awaited<ReturnType<typeof compareRevisions>>) => void
     let resolveNew!: (value: Awaited<ReturnType<typeof compareRevisions>>) => void

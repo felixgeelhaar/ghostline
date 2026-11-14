@@ -56,6 +56,7 @@ async function inspectCandidate(baseSha: string, headSha: string) {
   } catch (error) {
     if (request === comparisonRequest.value) {
       if (isAuthenticationRequired(error)) {
+        comparisonError.value = error instanceof Error ? error.message : 'Your sign-in session may have expired. Sign in again to continue.'
         emit('authRequired')
         return
       }

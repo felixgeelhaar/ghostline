@@ -183,17 +183,5 @@ func peerAddr(remote string) netip.Addr {
 }
 
 func rateLimitMiddleware(l *rateLimiter, identity clientIdentity) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		allowed, retryAfter := l.allow(clientKey(c.Request, identity))
-		if allowed {
-			c.Next()
-			return
-		}
-		seconds := int((retryAfter + time.Second - 1) / time.Second)
-		if seconds < 1 {
-			seconds = 1
-		}
-		c.Header("Retry-After", strconv.Itoa(seconds))
-		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": fmt.Sprintf("Too many requests from this client. Try again in %d seconds.", seconds)})
-	}
+	return keyedRateLimitMiddleware(l, func(c *gin.Context) string { return clientKey(c.Request, identity) })
 }

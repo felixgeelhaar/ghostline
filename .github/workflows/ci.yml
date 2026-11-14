@@ -68,7 +68,7 @@ jobs:
       GITHUB_OAUTH_CLIENT_SECRET: ci-placeholder-secret
       GITHUB_OAUTH_CALLBACK_URL: https://ghostline.example/auth/github/callback
       GHOSTLINE_SESSION_SIGNING_KEY: ci-only-session-signing-key-at-least-32-bytes
-      GHOSTLINE_ALLOWED_GITHUB_USERS: ghostline-ci
+      GHOSTLINE_ALLOWED_GITHUB_IDS: 1
       RATE_LIMIT_CLIENT_IP_HEADER: X-Ghostline-Client-IP
       RATE_LIMIT_TRUSTED_PROXIES: 127.0.0.1/32
       GHOSTLINE_PORT: 18080

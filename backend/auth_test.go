@@ -47,14 +47,14 @@ func TestLoadAuthConfigRejectsInvalidCookieSecuritySetting(t *testing.T) {
 	}
 }
 
-func TestLoadAuthConfigRequiresSecureHostedCookiesAndAllowedUsers(t *testing.T) {
+func TestLoadAuthConfigRequiresSecureHostedCookiesAndAllowedIDs(t *testing.T) {
 	values := map[string]string{
 		"GHOSTLINE_AUTH_MODE":             "github",
 		"GITHUB_OAUTH_CLIENT_ID":          "client-id",
 		"GITHUB_OAUTH_CLIENT_SECRET":      "client-secret",
 		"GITHUB_OAUTH_CALLBACK_URL":       "https://ghostline.example/auth/github/callback",
 		"GHOSTLINE_SESSION_SIGNING_KEY":   strings.Repeat("k", 32),
-		"GHOSTLINE_ALLOWED_GITHUB_USERS":  "FelixGeelhaar",
+		"GHOSTLINE_ALLOWED_GITHUB_IDS":    "6020564",
 		"GHOSTLINE_SESSION_COOKIE_SECURE": "false",
 	}
 	_, err := loadAuthConfig(func(key string) string { return values[key] })
@@ -62,10 +62,23 @@ func TestLoadAuthConfigRequiresSecureHostedCookiesAndAllowedUsers(t *testing.T) 
 		t.Fatalf("error = %v, want secure-cookie configuration error", err)
 	}
 	delete(values, "GHOSTLINE_SESSION_COOKIE_SECURE")
-	delete(values, "GHOSTLINE_ALLOWED_GITHUB_USERS")
+	delete(values, "GHOSTLINE_ALLOWED_GITHUB_IDS")
 	_, err = loadAuthConfig(func(key string) string { return values[key] })
-	if err == nil || !strings.Contains(err.Error(), "GHOSTLINE_ALLOWED_GITHUB_USERS") {
+	if err == nil || !strings.Contains(err.Error(), "GHOSTLINE_ALLOWED_GITHUB_IDS") {
 		t.Fatalf("error = %v, want allowlist configuration error", err)
+	}
+	values["GHOSTLINE_ALLOWED_GITHUB_IDS"] = "FelixGeelhaar"
+	if _, err := loadAuthConfig(func(key string) string { return values[key] }); err == nil || !strings.Contains(err.Error(), "invalid GitHub account ID") {
+		t.Fatalf("error = %v, want invalid immutable account ID error", err)
+	}
+}
+
+func TestLocalhostOAuthUsesUnprefixedScopedCookies(t *testing.T) {
+	settings := testAuthSettings()
+	settings.CookieSecure = false
+	auth := githubAuth{settings: settings}
+	if auth.sessionCookieName() != sessionCookieName || auth.stateCookieName() != oauthStateCookieName || auth.stateCookiePath() != "/auth/github/callback" {
+		t.Fatalf("localhost cookie policy = %q %q %q", auth.sessionCookieName(), auth.stateCookieName(), auth.stateCookiePath())
 	}
 }
 
@@ -101,6 +114,28 @@ func TestAuthStatusAndProtectedAPI(t *testing.T) {
 	}
 }
 
+func TestLogoutRejectsCrossOriginRequests(t *testing.T) {
+	settings := testAuthSettings()
+	settings.CallbackURL = "https://ghostline.example/auth/github/callback"
+	router := newRouterWithAuth(&githubClient{}, newRateLimiter(30, time.Minute, time.Now), clientIdentity{}, settings)
+
+	request := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	request.Header.Set("Origin", "https://attacker.example")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || len(response.Result().Cookies()) != 0 {
+		t.Fatalf("cross-origin logout = %d, cookies=%v, want 403 without cookie changes", response.Code, response.Result().Cookies())
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	request.Header.Set("Origin", "https://ghostline.example")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusSeeOther {
+		t.Fatalf("same-origin logout = %d, want redirect", response.Code)
+	}
+}
+
 func TestGitHubOAuthCallbackCreatesAllowlistedSession(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		switch r.URL.Path {
@@ -115,7 +150,23 @@ func TestGitHubOAuthCallbackCreatesAllowlistedSession(t *testing.T) {
 			if r.Header.Get("Authorization") != "Bearer ephemeral-token" {
 				t.Errorf("authorization = %q", r.Header.Get("Authorization"))
 			}
-			return oauthResponse(r, `{"login":"FelixGeelhaar"}`), nil
+			return oauthResponse(r, `{"id":6020564,"login":"FelixGeelhaar"}`), nil
+		case "/applications/client-id/token":
+			if r.Method != http.MethodDelete {
+				t.Errorf("token revocation method = %s", r.Method)
+			}
+			username, password, ok := r.BasicAuth()
+			if !ok || username != "client-id" || password != "client-secret" {
+				t.Errorf("token revocation basic auth = %q, %q, %v", username, password, ok)
+			}
+			body, err := io.ReadAll(r.Body)
+			var request struct {
+				AccessToken string `json:"access_token"`
+			}
+			if err != nil || json.Unmarshal(body, &request) != nil || request.AccessToken != "ephemeral-token" {
+				t.Errorf("token revocation body = %s, read error = %v", body, err)
+			}
+			return &http.Response{StatusCode: http.StatusNoContent, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header), Request: r}, nil
 		default:
 			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found")), Header: make(http.Header), Request: r}, nil
 		}
@@ -126,6 +177,7 @@ func TestGitHubOAuthCallbackCreatesAllowlistedSession(t *testing.T) {
 	settings.AuthorizeURL = "https://provider.invalid/login/oauth/authorize"
 	settings.TokenURL = "https://provider.invalid/login/oauth/access_token"
 	settings.UserURL = "https://provider.invalid/user"
+	settings.RevokeURL = "https://provider.invalid/applications"
 	settings.HTTPClient = client
 	router := newRouterWithAuth(&githubClient{}, newRateLimiter(30, time.Minute, time.Now), clientIdentity{}, settings)
 
@@ -134,7 +186,10 @@ func TestGitHubOAuthCallbackCreatesAllowlistedSession(t *testing.T) {
 	if login.Code != http.StatusFound {
 		t.Fatalf("login status = %d, body = %s", login.Code, login.Body.String())
 	}
-	stateCookie := cookieNamed(t, login.Result().Cookies(), oauthStateCookieName)
+	stateCookie := cookieNamed(t, login.Result().Cookies(), "__Host-"+oauthStateCookieName)
+	if !stateCookie.Secure || stateCookie.Path != "/" {
+		t.Fatalf("hosted OAuth state cookie has unsafe scope: %+v", stateCookie)
+	}
 	authorizeURL, err := url.Parse(login.Header().Get("Location"))
 	if err != nil {
 		t.Fatal(err)
@@ -151,8 +206,8 @@ func TestGitHubOAuthCallbackCreatesAllowlistedSession(t *testing.T) {
 	if result.Code != http.StatusSeeOther || result.Header().Get("Location") != "/" {
 		t.Fatalf("callback = %d %q, body = %s", result.Code, result.Header().Get("Location"), result.Body.String())
 	}
-	sessionCookie := cookieNamed(t, result.Result().Cookies(), sessionCookieName)
-	if sessionCookie.Value == "" || !sessionCookie.HttpOnly || !sessionCookie.Secure {
+	sessionCookie := cookieNamed(t, result.Result().Cookies(), "__Host-"+sessionCookieName)
+	if sessionCookie.Value == "" || !sessionCookie.HttpOnly || !sessionCookie.Secure || sessionCookie.Path != "/" {
 		t.Fatalf("session cookie is missing or insecure: %+v", sessionCookie)
 	}
 
@@ -201,12 +256,16 @@ func TestGitHubOAuthRejectsWrongStateAndNonAllowlistedUser(t *testing.T) {
 		if r.URL.Path == "/token" {
 			return oauthResponse(r, `{"access_token":"ephemeral-token"}`), nil
 		}
-		return oauthResponse(r, `{"login":"someone-else"}`), nil
+		if r.Method == http.MethodDelete {
+			return &http.Response{StatusCode: http.StatusNoContent, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header), Request: r}, nil
+		}
+		return oauthResponse(r, `{"id":7,"login":"felixgeelhaar"}`), nil
 	})}
 	settings := testAuthSettings()
 	settings.AuthorizeURL = "https://provider.invalid/authorize"
 	settings.TokenURL = "https://provider.invalid/token"
 	settings.UserURL = "https://provider.invalid/user"
+	settings.RevokeURL = "https://provider.invalid/applications"
 	settings.HTTPClient = client
 	router := newRouterWithAuth(&githubClient{}, newRateLimiter(30, time.Minute, time.Now), clientIdentity{}, settings)
 
@@ -214,19 +273,19 @@ func TestGitHubOAuthRejectsWrongStateAndNonAllowlistedUser(t *testing.T) {
 	badState.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: "victim"})
 	badStateResult := httptest.NewRecorder()
 	router.ServeHTTP(badStateResult, badState)
-	if badStateResult.Code != http.StatusBadRequest {
-		t.Fatalf("wrong-state callback status = %d, want 400", badStateResult.Code)
+	if badStateResult.Code != http.StatusSeeOther || badStateResult.Header().Get("Location") != "/?auth_error=state" {
+		t.Fatalf("wrong-state callback = %d %q, want UI redirect", badStateResult.Code, badStateResult.Header().Get("Location"))
 	}
 
 	callback := httptest.NewRequest(http.MethodGet, "/auth/github/callback?code=oauth-code&state=valid-state", nil)
-	callback.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: "valid-state"})
+	callback.AddCookie(&http.Cookie{Name: "__Host-" + oauthStateCookieName, Value: "valid-state", Path: "/", Secure: true})
 	result := httptest.NewRecorder()
 	router.ServeHTTP(result, callback)
-	if result.Code != http.StatusForbidden {
-		t.Fatalf("non-allowlisted callback status = %d, want 403", result.Code)
+	if result.Code != http.StatusSeeOther || result.Header().Get("Location") != "/?auth_error=not_allowed" {
+		t.Fatalf("non-allowlisted callback = %d %q, want UI redirect", result.Code, result.Header().Get("Location"))
 	}
 	for _, cookie := range result.Result().Cookies() {
-		if cookie.Name == sessionCookieName && cookie.MaxAge > 0 {
+		if cookie.Name == "__Host-"+sessionCookieName && cookie.MaxAge > 0 {
 			t.Fatalf("non-allowlisted user received a live session cookie: %+v", cookie)
 		}
 	}
@@ -244,19 +303,53 @@ func TestSessionSignatureAndExpiry(t *testing.T) {
 	settings := testAuthSettings()
 	now := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
 	settings.Now = func() time.Time { return now }
-	token, err := signSession(settings, "FelixGeelhaar")
+	identity := githubOAuthUser{ID: 6020564, Login: "FelixGeelhaar"}
+	token, err := signSession(settings, identity)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if user := verifySession(settings, token); user != "FelixGeelhaar" {
-		t.Fatalf("verified login = %q", user)
+	if claims, ok := verifySession(settings, token); !ok || claims.Login != "FelixGeelhaar" || claims.AccountID != 6020564 {
+		t.Fatalf("verified claims = %+v, ok=%v", claims, ok)
 	}
-	if user := verifySession(settings, token+"x"); user != "" {
-		t.Fatalf("tampered session accepted for %q", user)
+	if claims, ok := verifySession(settings, token+"x"); ok {
+		t.Fatalf("tampered session accepted for %+v", claims)
 	}
 	now = now.Add(sessionLifetime + time.Second)
-	if user := verifySession(settings, token); user != "" {
-		t.Fatalf("expired session accepted for %q", user)
+	if claims, ok := verifySession(settings, token); ok {
+		t.Fatalf("expired session accepted for %+v", claims)
+	}
+}
+
+func TestOAuthCallbackDoesNotCreateSessionWhenTokenRevocationFails(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/token":
+			return oauthResponse(r, `{"access_token":"ephemeral-token"}`), nil
+		case "/user":
+			return oauthResponse(r, `{"id":6020564,"login":"FelixGeelhaar"}`), nil
+		case "/applications/client-id/token":
+			return &http.Response{StatusCode: http.StatusInternalServerError, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header), Request: r}, nil
+		default:
+			return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found")), Header: make(http.Header), Request: r}, nil
+		}
+	})}
+	settings := testAuthSettings()
+	settings.TokenURL = "https://provider.invalid/token"
+	settings.UserURL = "https://provider.invalid/user"
+	settings.RevokeURL = "https://provider.invalid/applications"
+	settings.HTTPClient = client
+	router := newRouterWithAuth(&githubClient{}, newRateLimiter(30, time.Minute, time.Now), clientIdentity{}, settings)
+	callback := httptest.NewRequest(http.MethodGet, "/auth/github/callback?code=oauth-code&state=valid-state", nil)
+	callback.AddCookie(&http.Cookie{Name: "__Host-" + oauthStateCookieName, Value: "valid-state", Path: "/", Secure: true})
+	result := httptest.NewRecorder()
+	router.ServeHTTP(result, callback)
+	if result.Code != http.StatusSeeOther || result.Header().Get("Location") != "/?auth_error=unavailable" {
+		t.Fatalf("callback = %d %q, want UI redirect when revocation fails", result.Code, result.Header().Get("Location"))
+	}
+	for _, cookie := range result.Result().Cookies() {
+		if cookie.Name == "__Host-"+sessionCookieName && cookie.MaxAge > 0 {
+			t.Fatalf("session issued while provider token remains valid: %+v", cookie)
+		}
 	}
 }
 
@@ -267,25 +360,34 @@ func testAuthSettings() authSettings {
 		ClientSecret: "client-secret",
 		CallbackURL:  "http://localhost/auth/github/callback",
 		SigningKey:   []byte(strings.Repeat("k", 32)),
-		AllowedUsers: domain.NewGitHubAccountAllowlist([]string{"felixgeelhaar"}),
+		AllowedIDs:   mustAllowIDs("6020564"),
 		CookieSecure: true,
 		Now:          time.Now,
 		HTTPClient:   &http.Client{Timeout: 10 * time.Second, CheckRedirect: rejectOAuthRedirect},
 		AuthorizeURL: "https://github.com/login/oauth/authorize",
 		TokenURL:     "https://github.com/login/oauth/access_token",
 		UserURL:      "https://api.github.com/user",
+		RevokeURL:    githubRevokeTokenURL,
 	}
 }
 
 func validGitHubAuthEnvironment() map[string]string {
 	return map[string]string{
-		"GHOSTLINE_AUTH_MODE":            "github",
-		"GITHUB_OAUTH_CLIENT_ID":         "client-id",
-		"GITHUB_OAUTH_CLIENT_SECRET":     "client-secret",
-		"GITHUB_OAUTH_CALLBACK_URL":      "https://ghostline.example/auth/github/callback",
-		"GHOSTLINE_SESSION_SIGNING_KEY":  strings.Repeat("k", 32),
-		"GHOSTLINE_ALLOWED_GITHUB_USERS": "FelixGeelhaar",
+		"GHOSTLINE_AUTH_MODE":           "github",
+		"GITHUB_OAUTH_CLIENT_ID":        "client-id",
+		"GITHUB_OAUTH_CLIENT_SECRET":    "client-secret",
+		"GITHUB_OAUTH_CALLBACK_URL":     "https://ghostline.example/auth/github/callback",
+		"GHOSTLINE_SESSION_SIGNING_KEY": strings.Repeat("k", 32),
+		"GHOSTLINE_ALLOWED_GITHUB_IDS":  "6020564",
 	}
+}
+
+func mustAllowIDs(values ...string) domain.GitHubAccountAllowlist {
+	allowed, err := domain.NewGitHubAccountAllowlist(values)
+	if err != nil {
+		panic(err)
+	}
+	return allowed
 }
 
 func cookieNamed(t *testing.T, cookies []*http.Cookie, name string) *http.Cookie {
