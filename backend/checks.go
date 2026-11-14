@@ -35,6 +35,7 @@ type revisionChecks struct {
 }
 
 type check struct {
+	ID         int64  `json:"id,omitempty"`
 	Name       string `json:"name"`
 	Kind       string `json:"kind"`
 	Source     string `json:"source,omitempty"`
@@ -46,6 +47,7 @@ type check struct {
 type githubCheckRuns struct {
 	TotalCount int `json:"total_count"`
 	CheckRuns  []struct {
+		ID         int64   `json:"id"`
 		Name       string  `json:"name"`
 		HeadSHA    string  `json:"head_sha"`
 		Status     string  `json:"status"`
@@ -108,7 +110,7 @@ func fetchCheckRuns(ctx context.Context, gh *githubClient, commitPath, sha strin
 			if run.HeadSHA != sha {
 				return nil, errRevisionMismatch
 			}
-			item := check{Name: run.Name, Kind: kindCheckRun, Status: run.Status, URL: safeURL(run.HTMLURL)}
+			item := check{ID: run.ID, Name: run.Name, Kind: kindCheckRun, Status: run.Status, URL: safeURL(run.HTMLURL)}
 			if run.Conclusion != nil {
 				item.Conclusion = *run.Conclusion
 			}
@@ -163,7 +165,7 @@ func checksUnavailableReason(err error) string {
 	case errors.Is(err, errRevisionMismatch):
 		return "GitHub returned checks for a different commit than the pull request's head, so they are not shown."
 	case errors.Is(err, errRateLimit):
-		return "GitHub’s API rate limit was reached before checks could be loaded. Try again later or configure GITHUB_TOKEN."
+		return "GitHub’s public API rate limit was reached before checks could be loaded. Try again later."
 	case errors.Is(err, errNotFound):
 		return "GitHub did not return checks for the head commit."
 	case errors.As(err, &statusErr) && statusErr.code == http.StatusForbidden:

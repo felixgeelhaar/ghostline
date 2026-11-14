@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestParsePRURL(t *testing.T) {
@@ -32,6 +34,79 @@ func TestParsePRURL(t *testing.T) {
 				t.Fatalf("got %s/%s#%d", owner, repo, number)
 			}
 		})
+	}
+}
+
+func TestAuthenticatedAPIRejectsPrivateRepository(t *testing.T) {
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.Path)
+		if r.URL.Path != "/repos/acme/app" {
+			t.Errorf("private repository request escaped visibility check: %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"private":true}`))
+	}))
+	defer srv.Close()
+
+	gin.SetMode(gin.TestMode)
+	router := newRouter(&githubClient{baseURL: srv.URL, token: "test-token", http: srv.Client()})
+	for _, endpoint := range []struct {
+		path string
+		body string
+	}{
+		{path: "/api/import", body: `{"url":"https://github.com/acme/app/pull/7"}`},
+		{path: "/api/checks", body: `{"url":"https://github.com/acme/app/pull/7","sha":"` + strings.Repeat("a", 40) + `"}`},
+	} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, endpoint.path, strings.NewReader(endpoint.body))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusNotFound {
+			t.Errorf("%s status = %d, want 404: %s", endpoint.path, recorder.Code, recorder.Body.String())
+		}
+	}
+	if len(requests) != 2 {
+		t.Fatalf("GitHub requests = %v, want only visibility checks", requests)
+	}
+}
+
+func TestImportDoesNotUseVisibilityTokenForPullRequestData(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch r.URL.Path {
+		case "/repos/acme/app":
+			if r.Header.Get("Authorization") != "Bearer visibility-token" {
+				t.Errorf("visibility request Authorization = %q", r.Header.Get("Authorization"))
+			}
+			_, _ = w.Write([]byte(`{"private":false}`))
+		case "/repos/acme/app/pulls/7":
+			if got := r.Header.Get("Authorization"); got != "" {
+				t.Errorf("pull request data request unexpectedly used server token: %q", got)
+			}
+			// Simulate a public repository becoming private after visibility was checked.
+			http.NotFound(w, r)
+		default:
+			t.Errorf("unexpected GitHub request: %s", r.URL.RequestURI())
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	gin.SetMode(gin.TestMode)
+	router := newRouter(&githubClient{baseURL: server.URL, token: "visibility-token", http: server.Client()})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNotFound || strings.Contains(recorder.Body.String(), "private pull request title") {
+		t.Fatalf("status/body = %d/%s, want no data after repository became private", recorder.Code, recorder.Body.String())
+	}
+	if len(requests) != 2 || requests[0] != "GET /repos/acme/app" || requests[1] != "GET /repos/acme/app/pulls/7" {
+		t.Fatalf("GitHub requests = %v", requests)
 	}
 }
 

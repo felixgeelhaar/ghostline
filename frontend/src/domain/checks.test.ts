@@ -5,12 +5,12 @@ const head = 'a'.repeat(40)
 const checks: RevisionChecks = { revisionSha: head, revisionShortSha: 'aaaaaaa', revisionUrl: `https://github.com/acme/app/commit/${head}`, availability: 'available', items: [] }
 
 describe('checkOutcome', () => {
-  it('uses the conclusion of a completed check', () => expect(checkOutcome({ name: 'go', kind: 'check_run', status: 'completed', conclusion: 'success' })).toEqual({ label: 'success', tone: 'pass' }))
+  it('uses the conclusion of a completed check', () => expect(checkOutcome({ id: 1, name: 'go', kind: 'check_run', status: 'completed', conclusion: 'success' })).toEqual({ label: 'success', tone: 'pass' }))
   it('marks failing conclusions', () => {
-    for (const conclusion of ['failure', 'error', 'timed_out', 'action_required', 'cancelled', 'startup_failure', 'stale']) expect(checkOutcome({ name: 'x', kind: 'check_run', status: 'completed', conclusion }).tone).toBe('fail')
+    for (const conclusion of ['failure', 'error', 'timed_out', 'action_required', 'cancelled', 'startup_failure', 'stale']) expect(checkOutcome({ id: 1, name: 'x', kind: 'check_run', status: 'completed', conclusion }).tone).toBe('fail')
   })
-  it('treats skipped and neutral results as neutral', () => expect(checkOutcome({ name: 'x', kind: 'check_run', status: 'completed', conclusion: 'skipped' }).tone).toBe('neutral'))
-  it('shows unfinished checks as running', () => expect(checkOutcome({ name: 'x', kind: 'check_run', status: 'in_progress' })).toEqual({ label: 'in progress', tone: 'running' }))
+  it('treats skipped and neutral results as neutral', () => expect(checkOutcome({ id: 1, name: 'x', kind: 'check_run', status: 'completed', conclusion: 'skipped' }).tone).toBe('neutral'))
+  it('shows unfinished checks as running', () => expect(checkOutcome({ id: 1, name: 'x', kind: 'check_run', status: 'in_progress' })).toEqual({ label: 'in progress', tone: 'running' }))
 })
 
 describe('isHeadCommit', () => {
@@ -28,7 +28,7 @@ describe('RevisionChecksSchema', () => {
   it('accepts unavailable checks without a revision when explained', () => expect(RevisionChecksSchema.safeParse({ revisionSha: '', revisionShortSha: '', revisionUrl: '', availability: 'unavailable', reason: 'No revision.', items: [] }).success).toBe(true))
 })
 
-const run = (name: string, status: string, conclusion?: string): Check => ({ name, kind: 'check_run', status, conclusion })
+const run = (name: string, status: string, conclusion?: string): Check => ({ id: 1, name, kind: 'check_run', status, conclusion })
 
 describe('summarizeChecks', () => {
   it('reports all passing', () => expect(summarizeChecks([run('a', 'completed', 'success'), run('b', 'completed', 'success')])).toEqual({ tone: 'pass', label: '2 of 2 passing' }))

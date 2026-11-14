@@ -2,8 +2,10 @@
 import { computed, nextTick, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
+import { fetchCheckAnnotations } from '../application/fetchCheckAnnotations'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
-import { checkOutcome, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
+import { checkOutcome, headCommitLabel, orderChecks, summarizeChecks, type Check, type CheckTone } from '../domain/checks'
+import type { CheckAnnotationPage } from '../domain/checkAnnotations'
 import { findRecurringFindings, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import { buildFindingTrace } from '../domain/trace'
 import { validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
@@ -20,9 +22,16 @@ const checksLoading = ref(false)
 const checksError = ref('')
 const selectedTraceId = ref('')
 const copyResult = ref<CopyResult>()
+const annotationPages = ref<Record<string, CheckAnnotationPage>>({})
+const annotationOpen = ref('')
+const annotationLoading = ref<Record<string, boolean>>({})
+const annotationErrors = ref<Record<string, string>>({})
+const annotationPageNumbers = ref<Record<string, number>>({})
 let traceTrigger: HTMLButtonElement | undefined
 let revisionRequest = 0
 let importRequest = 0
+let annotationGeneration = 0
+const annotationRequests = new Map<string, number>()
 const activeChecks = computed(() => selectedRevision.value ? focusedChecks.value : pr.value?.checks)
 const orderedChecks = computed(() => orderChecks(activeChecks.value?.availability === 'available' ? activeChecks.value.items : []))
 const checksSummary = computed(() => summarizeChecks(orderedChecks.value))
@@ -43,7 +52,7 @@ async function loadPR() {
     loading.value = false
     return
   }
-  loading.value = true; pr.value = undefined; selectedRevision.value = ''; selectedTraceId.value = ''; traceTrigger = undefined; focusedChecks.value = undefined; checksError.value = ''; checksLoading.value = false; copyResult.value = undefined; copyRequest++; revisionRequest++
+  loading.value = true; pr.value = undefined; selectedRevision.value = ''; selectedTraceId.value = ''; traceTrigger = undefined; focusedChecks.value = undefined; checksError.value = ''; checksLoading.value = false; copyResult.value = undefined; copyRequest++; revisionRequest++; annotationGeneration++; annotationPages.value = {}; annotationOpen.value = ''; annotationLoading.value = {}; annotationErrors.value = {}; annotationRequests.clear()
   try {
     const importedPR = await importPullRequest(url.value)
     if (request === importRequest) pr.value = importedPR
@@ -52,6 +61,60 @@ async function loadPR() {
   } finally {
     if (request === importRequest) loading.value = false
   }
+}
+function annotationKey(sha: string, checkRunId: number, page: number) { return `${sha}:${checkRunId}:${page}` }
+function annotationPanelKey(sha: string, checkRunId: number) { return `${sha}:${checkRunId}` }
+function currentAnnotationPage(sha: string, checkRunId: number) { return annotationPageNumbers.value[annotationPanelKey(sha, checkRunId)] ?? 1 }
+function annotationsFor(sha: string, checkRunId: number) { return annotationPages.value[annotationKey(sha, checkRunId, currentAnnotationPage(sha, checkRunId))] }
+function annotationLoadingFor(sha: string, checkRunId: number) { return annotationLoading.value[annotationKey(sha, checkRunId, currentAnnotationPage(sha, checkRunId))] }
+function annotationErrorFor(sha: string, checkRunId: number) { return annotationErrors.value[annotationKey(sha, checkRunId, currentAnnotationPage(sha, checkRunId))] }
+async function loadAnnotations(check: Check, sha: string, page: number) {
+  if (check.kind !== 'check_run') return
+  const importedPR = pr.value
+  if (!importedPR) return
+  const key = annotationKey(sha, check.id, page)
+  const generation = annotationGeneration
+  const request = (annotationRequests.get(key) ?? 0) + 1
+  annotationRequests.set(key, request)
+  annotationLoading.value = { ...annotationLoading.value, [key]: true }
+  annotationErrors.value = { ...annotationErrors.value, [key]: '' }
+  try {
+    const result = await fetchCheckAnnotations(importedPR.url, sha, check.id, page)
+    if (generation === annotationGeneration && annotationRequests.get(key) === request && pr.value === importedPR && activeChecks.value?.revisionSha === sha && annotationOpen.value === `${sha}:${check.id}`) {
+      annotationPages.value = { ...annotationPages.value, [key]: result }
+    }
+  } catch (e) {
+    if (generation === annotationGeneration && annotationRequests.get(key) === request && pr.value === importedPR && activeChecks.value?.revisionSha === sha && annotationOpen.value === `${sha}:${check.id}`) {
+      annotationErrors.value = { ...annotationErrors.value, [key]: e instanceof Error ? e.message : 'Could not load GitHub annotations for this check.' }
+    }
+  } finally {
+    if (generation === annotationGeneration && annotationRequests.get(key) === request) annotationLoading.value = { ...annotationLoading.value, [key]: false }
+  }
+}
+function toggleAnnotations(check: Check) {
+  if (check.kind !== 'check_run') return
+  const sha = activeChecks.value?.revisionSha
+  if (!sha) return
+  const panelKey = `${sha}:${check.id}`
+  if (annotationOpen.value === panelKey) {
+    annotationOpen.value = ''
+    return
+  }
+  annotationOpen.value = panelKey
+  annotationPageNumbers.value = { ...annotationPageNumbers.value, [panelKey]: 1 }
+  const key = annotationKey(sha, check.id, 1)
+  if (!annotationPages.value[key] && !annotationLoading.value[key]) void loadAnnotations(check, sha, 1)
+}
+function showAnnotationPage(check: Check, page: number) {
+  const sha = activeChecks.value?.revisionSha
+  if (!sha || check.kind !== 'check_run') return
+  annotationPageNumbers.value = { ...annotationPageNumbers.value, [annotationPanelKey(sha, check.id)]: page }
+  const key = annotationKey(sha, check.id, page)
+  if (annotationPages.value[key]) {
+    annotationErrors.value = { ...annotationErrors.value, [key]: '' }
+    return
+  }
+  if (!annotationLoading.value[key]) void loadAnnotations(check, sha, page)
 }
 async function focusRevision(sha: string) {
   const importedPR = pr.value
@@ -129,7 +192,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         <template v-else-if="activeChecks">
           <p v-if="activeChecks.availability === 'unavailable'" class="checks-note warn" role="status"><strong>Checks unavailable.</strong> {{ activeChecks.reason }}</p>
           <p v-else-if="activeChecks.items.length === 0" class="checks-note" role="status"><strong>No checks reported.</strong> GitHub returned no check runs or commit statuses for revision {{ activeChecks.revisionShortSha }}.</p>
-          <template v-else><p class="checks-summary" :class="checksSummary.tone" role="status"><span aria-hidden="true">{{ glyph[checksSummary.tone] }}</span>{{ checksSummary.label }}</p><ul class="check-list"><li v-for="(check, i) in orderedChecks" :key="`${check.kind}:${check.name}:${i}`"><span class="check-state" :class="checkOutcome(check).tone"><span aria-hidden="true">{{ glyph[checkOutcome(check).tone] }}</span>{{ checkOutcome(check).label }}</span><span class="check-name"><a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">{{ check.name }} <span aria-hidden="true">↗</span><span class="sr-only">(opens on GitHub)</span></a><span v-else>{{ check.name }}</span><small>{{ [check.source, check.url ? '' : 'no GitHub link reported'].filter(Boolean).join(' · ') }}</small></span></li></ul></template>
+          <template v-else><p class="checks-summary" :class="checksSummary.tone" role="status"><span aria-hidden="true">{{ glyph[checksSummary.tone] }}</span>{{ checksSummary.label }}</p><ul class="check-list"><li v-for="(check, i) in orderedChecks" :key="`${check.kind}:${check.name}:${i}`"><span class="check-state" :class="checkOutcome(check).tone"><span aria-hidden="true">{{ glyph[checkOutcome(check).tone] }}</span>{{ checkOutcome(check).label }}</span><div class="check-name"><a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">{{ check.name }} <span aria-hidden="true">↗</span><span class="sr-only">(opens on GitHub)</span></a><span v-else>{{ check.name }}</span><small>{{ [check.source, check.url ? '' : 'no GitHub link reported'].filter(Boolean).join(' · ') }}</small><button v-if="check.kind === 'check_run' && check.id > 0" type="button" class="annotation-toggle" :aria-expanded="annotationOpen === `${activeChecks?.revisionSha}:${check.id}`" @click="toggleAnnotations(check)">INSPECT GITHUB ANNOTATIONS</button><section v-if="check.kind === 'check_run' && annotationOpen === `${activeChecks?.revisionSha}:${check.id}`" class="annotation-panel" :aria-label="`GitHub annotations for ${check.name} on revision ${activeChecks?.revisionShortSha}`"><p class="annotation-boundary">GitHub check annotations · revision {{ activeChecks?.revisionShortSha }} · <a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">check run source ↗</a></p><p v-if="annotationLoadingFor(activeChecks?.revisionSha ?? '', check.id)" role="status">Loading annotations from GitHub…</p><p v-else-if="annotationErrorFor(activeChecks?.revisionSha ?? '', check.id)" class="checks-note warn" role="status">{{ annotationErrorFor(activeChecks?.revisionSha ?? '', check.id) }}</p><p v-else-if="annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.items.length === 0" role="status">GitHub reported no line annotations for this check run and revision.</p><ul v-else class="annotation-list"><li v-for="(annotation, j) in annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.items" :key="`${annotation.path}:${annotation.startLine}:${j}`"><strong>{{ annotation.level.toUpperCase() }}<template v-if="annotation.title"> · {{ annotation.title }}</template></strong><p>{{ annotation.message }}</p><details v-if="annotation.details" class="annotation-details"><summary>RAW DETAILS</summary><pre>{{ annotation.details }}</pre></details><small>{{ annotation.path }}:{{ annotation.startLine }}<template v-if="annotation.endLine !== annotation.startLine">–{{ annotation.endLine }}</template></small><a v-if="annotation.sourceUrl" :href="annotation.sourceUrl" target="_blank" rel="noreferrer">VIEW SOURCE LINES ↗</a></li></ul><div v-if="annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.hasMore" class="annotation-pagination"><button type="button" :disabled="annotationLoadingFor(activeChecks?.revisionSha ?? '', check.id)" @click="showAnnotationPage(check, currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) + 1)">LOAD NEXT PAGE</button></div><div v-if="currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) > 1" class="annotation-pagination"><button type="button" @click="showAnnotationPage(check, currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) - 1)">PREVIOUS PAGE</button><span>PAGE {{ currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) }}</span></div></section></div></li></ul></template>
         </template>
         <p class="footnote">GitHub reported these checks for revision {{ activeChecks?.revisionShortSha || selectedRevision.slice(0, 7) }} at fetch time. Results apply only to that revision. Re-import to refresh PR head checks.</p>
       </section>

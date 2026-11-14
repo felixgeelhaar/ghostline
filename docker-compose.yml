@@ -6,6 +6,7 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 8080
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       # Only the frontend proxy can reach the backend (it is not published), and that
       # proxy overwrites this header with each browser's address.
       RATE_LIMIT_CLIENT_IP_HEADER: X-Ghostline-Client-IP
