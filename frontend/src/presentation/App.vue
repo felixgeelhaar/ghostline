@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
@@ -13,6 +13,7 @@ import { isSamePullRequest, validatePullRequestURL, type PullRequest } from '../
 import ReviewCard from './ReviewCard.vue'
 import DeepTrace from './DeepTrace.vue'
 import StructuredQodoReview from './StructuredQodoReview.vue'
+import { useGhostlineSession } from './useGhostlineSession'
 
 const url = ref('')
 const pr = ref<PullRequest>()
@@ -29,6 +30,7 @@ const qodoStructuredReview = ref<QodoStructuredReview>()
 const qodoReviewError = ref('')
 const qodoReviewLoading = ref(false)
 const qodoKeyTransportSecure = computed(() => globalThis.isSecureContext === true)
+const { ghostlineSession, sessionLoading, sessionError, refreshGhostlineSession } = useGhostlineSession()
 let traceTrigger: HTMLButtonElement | undefined
 let revisionRequest = 0
 let importRequest = 0
@@ -55,6 +57,19 @@ const activeTrace = computed(() => {
   return finding ? buildFindingTrace(finding, pr.value?.commits ?? []) : undefined
 })
 const glyph: Record<CheckTone, string> = { pass: '✓', fail: '✕', running: '●', neutral: '–' }
+
+onMounted(refreshGhostlineSession)
+
+async function logout() {
+  try {
+    const response = await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' })
+    if (!response.ok) throw new Error()
+    ghostlineSession.value = { authRequired: true, authenticated: false }
+    sessionError.value = ''
+  } catch {
+    sessionError.value = 'Ghostline could not end this session. Try again.'
+  }
+}
 
 async function loadPR() {
   const request = ++importRequest
@@ -185,8 +200,13 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
 <template>
   <div class="shell">
     <a class="skip-link" href="#main-content">Skip to main content</a>
-    <header class="topbar"><a class="brand" href="#"><span class="brand-mark">G</span><span>GHOSTLINE<small>ENGINEERING CONTROL ROOM</small></span></a><span class="live"><i></i> SYSTEM READY</span></header>
+    <header class="topbar"><a class="brand" href="#"><span class="brand-mark">G</span><span>GHOSTLINE<small>ENGINEERING CONTROL ROOM</small></span></a><span v-if="ghostlineSession?.authenticated && ghostlineSession.login" class="account"><span>{{ ghostlineSession.login }}</span><button type="button" @click="logout">SIGN OUT</button></span><span v-else class="live"><i></i> SYSTEM READY</span></header>
     <main id="main-content" tabindex="-1">
+    <section v-if="sessionLoading && !ghostlineSession" class="auth-message" role="status"><p class="eyebrow">ACCESS CHECK</p><h1>Checking sign-in…</h1></section>
+    <section v-else-if="sessionError && !ghostlineSession" class="auth-message" role="alert"><p class="eyebrow">CONNECTION REQUIRED</p><h1>Can’t verify access.</h1><p>{{ sessionError }}</p><button type="button" @click="refreshGhostlineSession">TRY AGAIN</button></section>
+    <section v-else-if="ghostlineSession?.authRequired && !ghostlineSession.authenticated" class="auth-message"><p class="eyebrow">GHOSTLINE ACCESS</p><h1>Sign in to your control room.</h1><p>Use the GitHub account invited to this Ghostline instance. Only your account name is kept in the session; the OAuth access token is discarded after sign-in.</p><a class="github-sign-in" href="/auth/login">SIGN IN WITH GITHUB <span aria-hidden="true">↗</span></a></section>
+    <div v-else-if="ghostlineSession && (!ghostlineSession.authRequired || ghostlineSession.authenticated)" class="workspace-content">
+    <p v-if="sessionError && ghostlineSession.authenticated" class="session-error" role="alert">{{ sessionError }}</p>
     <section class="hero"><p class="eyebrow">CHANGE INTELLIGENCE / 001</p><h1>See the work.<br><em>Trace the decisions.</em></h1><p class="lede">Import a pull request to inspect its revision history. Commit timestamps show when commits were authored, not when they were pushed.</p></section>
     <section class="import-panel"><label for="pr-url">GITHUB PULL REQUEST</label><div class="input-row"><span class="prefix">↗</span><input id="pr-url" v-model="url" placeholder="https://github.com/owner/repo/pull/123" @keyup.enter="loadPR"><button :disabled="loading" @click="loadPR">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button></div><p v-if="error" class="error" role="alert">{{ error }}</p></section>
     <section v-if="pr" class="change-card">
@@ -288,6 +308,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         <StructuredQodoReview v-if="qodoStructuredReview && pr" :review="qodoStructuredReview" :pull-request-url="pr.url" :head-sha="pr.checks.revisionSha" />
       </section>
     </section>
+    </div>
     </main>
     <footer><span>GHOSTLINE // DAY 01</span><span>EVERY SIGNAL HAS A SOURCE.</span></footer>
   </div>
