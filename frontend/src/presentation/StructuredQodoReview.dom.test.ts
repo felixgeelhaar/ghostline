@@ -103,7 +103,7 @@ describe('structured Qodo review presentation', () => {
     expect(host.textContent).toContain(otherRepoSource)
   })
 
-  it('surfaces malformed companion blocks as incomplete Qodo evidence', async () => {
+  it('surfaces malformed companion blocks without replacing review guidance', async () => {
     host = document.createElement('div')
     document.body.append(host)
     app = createApp(StructuredQodoReview, {
@@ -114,9 +114,9 @@ describe('structured Qodo review presentation', () => {
     app.mount(host)
     await nextTick()
 
-    expect(host.textContent).toContain('Qodo response may be incomplete')
+    expect(host.textContent).toContain('Review needs a refresh')
     expect(host.textContent).toContain('An additional response block could not be interpreted.')
-    expect(host.textContent).toContain('Refresh the Qodo review before relying on this result.')
+    expect(host.textContent).not.toContain('Refresh the Qodo review before relying on this result.')
     expect(host.querySelector('[role="alert"]')?.textContent).toContain('Partial Qodo response.')
   })
 

@@ -446,6 +446,21 @@ describe('structured Qodo review evidence', () => {
     expect(summary.detail).toContain('not independently verify')
   })
 
+  it('keeps source warnings visible without replacing useful review guidance', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: [{ id: 'finding-1', title: 'Guard duplicate requests', status: 'open', gitSha: shaA }],
+      reviewRuns: [], warnings: ['An additional response block could not be interpreted.'],
+    })
+
+    const summary = reviewAttentionSummary(review, shaA)
+    expect(summary).toMatchObject({ kind: 'attention', title: '1 finding reported open', openFindingCount: 1 })
+    expect(summary.nextAction).toContain('Inspect the open findings below')
+    expect(summary.detail).toContain('Qodo reports 1 finding as open')
+    expect(summary.detail).toContain('An additional response block could not be interpreted.')
+  })
+
   it('keeps findings visible as next steps when Qodo returns no session', () => {
     const review = QodoStructuredReviewSchema.parse({
       availability: 'available', source: 'Qodo', reviewSession: null,

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -33,6 +34,7 @@ type qodoReviewSource interface {
 type qodoReviewClient struct {
 	endpoint string
 	http     *http.Client
+	logger   *slog.Logger
 }
 
 type qodoReviewData struct {
@@ -443,6 +445,7 @@ type mcpEnvelope struct {
 func newQodoReviewClient() *qodoReviewClient {
 	return &qodoReviewClient{
 		endpoint: qodoMCPURL,
+		logger:   slog.Default(),
 		http: &http.Client{
 			Timeout: 20 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -452,7 +455,7 @@ func newQodoReviewClient() *qodoReviewClient {
 	}
 }
 
-func (client *qodoReviewClient) fetch(ctx context.Context, apiKey, prURL string) (result qodoReviewData, fetchErr error) {
+func (client *qodoReviewClient) fetch(ctx context.Context, apiKey, prURL string) (qodoReviewData, error) {
 	var empty qodoReviewData
 	if client == nil || client.http == nil || client.endpoint == "" {
 		return empty, errors.New("Qodo review source is not configured")
@@ -487,8 +490,12 @@ func (client *qodoReviewClient) fetch(ctx context.Context, apiKey, prURL string)
 		defer func() {
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 			defer cancel()
-			if cleanupErr := client.closeSession(cleanupCtx, apiKey, sessionID); cleanupErr != nil && fetchErr == nil {
-				result.Warnings = append(result.Warnings, "Qodo review data was retrieved, but its MCP session could not be closed cleanly.")
+			if cleanupErr := client.closeSession(cleanupCtx, apiKey, sessionID); cleanupErr != nil {
+				logger := client.logger
+				if logger == nil {
+					logger = slog.Default()
+				}
+				logger.Warn("Qodo MCP session cleanup failed", "cause", cleanupErr)
 			}
 		}()
 	}
@@ -542,7 +549,7 @@ func (client *qodoReviewClient) closeSession(ctx context.Context, apiKey, sessio
 		return errors.New("could not close Qodo MCP session")
 	}
 	defer response.Body.Close()
-	if response.StatusCode == http.StatusMethodNotAllowed || response.StatusCode >= 200 && response.StatusCode < 300 {
+	if response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusMethodNotAllowed || response.StatusCode >= 200 && response.StatusCode < 300 {
 		return nil
 	}
 	return fmt.Errorf("Qodo MCP session cleanup returned HTTP %d", response.StatusCode)

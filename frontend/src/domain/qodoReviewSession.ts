@@ -181,7 +181,7 @@ function freshnessNextAction(
   return `Inspect the ${findings.join(' and ')} below, then ${nextStep[0]!.toLowerCase()}${nextStep.slice(1)}`
 }
 
-export function reviewAttentionSummary(review: QodoStructuredReview, headSha: string): ReviewAttentionSummary {
+function baseReviewAttentionSummary(review: QodoStructuredReview, headSha: string): ReviewAttentionSummary {
   const statuses = review.findings.map(findingLifecycleStatus)
   const openStatuses = new Set(['open', ...openAttributionStatuses])
   const closedStatuses = new Set(['implemented', 'dismissed', ...closedAttributionStatuses])
@@ -205,16 +205,6 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
     dismissedFindingCount,
     staleFindingCount,
     unknownFindingRevisionCount,
-  }
-
-  if (review.warnings?.length) {
-    return {
-      kind: 'incomplete',
-      title: 'Qodo response may be incomplete',
-      detail: review.warnings.join(' '),
-      nextAction: 'Refresh the Qodo review before relying on this result.',
-      ...counts,
-    }
   }
 
   if (!review.reviewSession) {
@@ -364,6 +354,16 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
     title: 'Qodo reports no findings marked open',
     detail: `${reportedStatuses}. These Qodo statuses do not independently verify correctness.`,
     nextAction: 'Inspect the source findings and revision links before deciding whether to ship.',
+  }
+}
+
+export function reviewAttentionSummary(review: QodoStructuredReview, headSha: string): ReviewAttentionSummary {
+  const summary = baseReviewAttentionSummary(review, headSha)
+  if (!review.warnings?.length) return summary
+
+  return {
+    ...summary,
+    detail: `${summary.detail} Qodo also reported a response warning: ${review.warnings.join(' ')}`,
   }
 }
 

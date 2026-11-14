@@ -18,6 +18,7 @@ import (
 func TestQodoReviewClientReadsStructuredReviewThroughMCP(t *testing.T) {
 	const prURL = "https://github.com/acme/payments/pull/42"
 	var requests []string
+	var cleanupLogs bytes.Buffer
 	cleanupStatus := http.StatusNoContent
 	server := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
@@ -101,7 +102,7 @@ func TestQodoReviewClientReadsStructuredReviewThroughMCP(t *testing.T) {
 		recorder := httptest.NewRecorder()
 		server.ServeHTTP(recorder, r)
 		return recorder.Result(), nil
-	})}}
+	})}, logger: slog.New(slog.NewTextHandler(&cleanupLogs, nil))}
 	result, err := client.fetch(context.Background(), "qodo-secret", prURL)
 	if err != nil {
 		t.Fatal(err)
@@ -126,10 +127,29 @@ func TestQodoReviewClientReadsStructuredReviewThroughMCP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session cleanup failure discarded valid review data: %v", err)
 	}
-	if len(secondResult.Warnings) != 2 || !strings.Contains(secondResult.Warnings[1], "session could not be closed") {
-		t.Fatalf("session cleanup failure was not surfaced as a warning: %+v", secondResult.Warnings)
+	if len(secondResult.Warnings) != 1 || !strings.Contains(secondResult.Warnings[0], "may be incomplete") {
+		t.Fatalf("session cleanup failure changed review completeness warnings: %+v", secondResult.Warnings)
 	}
-	if strings.Join(requests, ",") != "POST /v1/tools/mcp/,POST /v1/tools/mcp/,POST /v1/tools/mcp/,DELETE /v1/tools/mcp/,POST /v1/tools/mcp/,POST /v1/tools/mcp/,POST /v1/tools/mcp/,DELETE /v1/tools/mcp/" {
+	if !strings.Contains(cleanupLogs.String(), "Qodo MCP session cleanup failed") || !strings.Contains(cleanupLogs.String(), "HTTP 500") {
+		t.Fatalf("cleanup failure was not recorded in server logs: %s", cleanupLogs.String())
+	}
+	if strings.Contains(cleanupLogs.String(), "qodo-secret") || strings.Contains(cleanupLogs.String(), "test-session") {
+		t.Fatalf("cleanup log exposed a credential or session identifier: %s", cleanupLogs.String())
+	}
+	logsBeforeNotFound := cleanupLogs.String()
+
+	cleanupStatus = http.StatusNotFound
+	thirdResult, err := client.fetch(context.Background(), "qodo-secret", prURL)
+	if err != nil {
+		t.Fatalf("already-closed session discarded valid review data: %v", err)
+	}
+	if len(thirdResult.Warnings) != 1 || !strings.Contains(thirdResult.Warnings[0], "may be incomplete") {
+		t.Fatalf("already-closed session changed review completeness warnings: %+v", thirdResult.Warnings)
+	}
+	if cleanupLogs.String() != logsBeforeNotFound {
+		t.Fatalf("already-closed session was logged as a cleanup failure: %s", cleanupLogs.String())
+	}
+	if strings.Join(requests, ",") != "POST /v1/tools/mcp/,POST /v1/tools/mcp/,POST /v1/tools/mcp/,DELETE /v1/tools/mcp/,POST /v1/tools/mcp/,POST /v1/tools/mcp/,POST /v1/tools/mcp/,DELETE /v1/tools/mcp/,POST /v1/tools/mcp/,POST /v1/tools/mcp/,POST /v1/tools/mcp/,DELETE /v1/tools/mcp/" {
 		t.Fatalf("MCP exchange = %v", requests)
 	}
 }
