@@ -4,8 +4,8 @@ import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
 import { buildChangeActivity, countReviewsWithUnavailableDetails, describeCheckActivity } from '../domain/changeActivity'
-import { checkOutcome, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
-import { findRecurringFindings, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
+import { checkOutcome, checkSummaryPreview, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
+import { findRecurringFindings, qodoHeadCoverage, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import { buildFindingTrace } from '../domain/trace'
 import { validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import ReviewCard from './ReviewCard.vue'
@@ -37,6 +37,7 @@ const checkActivityNotice = computed(() => describeCheckActivity({
   error: checksError.value || undefined,
   revisionSha: selectedRevision.value,
 }))
+const headCoverage = computed(() => pr.value ? qodoHeadCoverage(pr.value.qodoReviews, pr.value.checks.revisionSha || undefined, pr.value.commits) : undefined)
 const visibleCommits = computed(() => pr.value?.commits.filter((commit) => !selectedRevision.value || commit.sha === selectedRevision.value) ?? [])
 const selectedReviews = computed(() => reviewsForRevision(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
 const reviewCount = computed(() => reviewCountSummary(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
@@ -139,7 +140,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         <template v-else-if="activeChecks">
           <p v-if="activeChecks.availability === 'unavailable'" class="checks-note warn" role="status"><strong>Checks unavailable.</strong> {{ activeChecks.reason }}</p>
           <p v-else-if="activeChecks.items.length === 0" class="checks-note" role="status"><strong>No checks reported.</strong> GitHub returned no check runs or commit statuses for revision {{ activeChecks.revisionShortSha }}.</p>
-          <template v-else><p class="checks-summary" :class="checksSummary.tone" role="status"><span aria-hidden="true">{{ glyph[checksSummary.tone] }}</span>{{ checksSummary.label }}</p><ul class="check-list"><li v-for="(check, i) in orderedChecks" :key="`${check.kind}:${check.name}:${i}`"><span class="check-state" :class="checkOutcome(check).tone"><span aria-hidden="true">{{ glyph[checkOutcome(check).tone] }}</span>{{ checkOutcome(check).label }}</span><span class="check-name"><a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">{{ check.name }} <span aria-hidden="true">↗</span><span class="sr-only">(opens on GitHub)</span></a><span v-else>{{ check.name }}</span><small>{{ [check.source, check.url ? '' : 'no GitHub link reported'].filter(Boolean).join(' · ') }}</small></span></li></ul></template>
+          <template v-else><p class="checks-summary" :class="checksSummary.tone" role="status"><span aria-hidden="true">{{ glyph[checksSummary.tone] }}</span>{{ checksSummary.label }}</p><ul class="check-list"><li v-for="(check, i) in orderedChecks" :key="`${check.kind}:${check.name}:${i}`"><span class="check-state" :class="checkOutcome(check).tone"><span aria-hidden="true">{{ glyph[checkOutcome(check).tone] }}</span>{{ checkOutcome(check).label }}</span><span class="check-name"><a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">{{ check.name }} <span aria-hidden="true">↗</span><span class="sr-only">(opens on GitHub)</span></a><span v-else>{{ check.name }}</span><small>{{ [check.source, check.url ? '' : 'no GitHub link reported'].filter(Boolean).join(' · ') }}</small><small v-if="check.outputTitle || check.outputSummary || check.outputSummaryTruncated" class="check-output"><strong v-if="check.outputTitle">{{ check.outputTitle }}</strong><span v-if="check.outputSummary">{{ checkSummaryPreview(check.outputSummary).text }}</span><span v-if="check.outputSummaryTruncated || checkSummaryPreview(check.outputSummary || '').truncated" class="check-output-note">Preview shortened · open the linked check for full output.</span></small></span></li></ul></template>
         </template>
         <p class="footnote">GitHub reported these checks for revision {{ activeChecks?.revisionShortSha || selectedRevision.slice(0, 7) }} at fetch time. Results apply only to that revision. Re-import to refresh PR head checks.</p>
       </section>
@@ -176,6 +177,19 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
 
       <section class="qodo-reviews" aria-labelledby="qodo-reviews-title">
         <h3 id="qodo-reviews-title" class="section-title"><span>QODO REVIEW EVIDENCE <span v-if="selectedRevision">· MATCHED REVISION</span></span><span v-if="pr.qodoReviews.availability === 'available'">{{ reviewCount }}</span></h3>
+        <div v-if="headCoverage" class="review-coverage" :class="headCoverage.state" role="status" aria-live="polite">
+          <strong v-if="headCoverage.state === 'outside_history'">PUBLISHED COMMENT · MARKER OUTSIDE IMPORTED HISTORY</strong>
+          <strong v-else-if="headCoverage.state === 'current' || headCoverage.state === 'stale'">PUBLISHED COMMENT · PR HEAD {{ headCoverage.state.toUpperCase() }}</strong>
+          <strong v-else>QODO REVIEW COVERAGE · {{ headCoverage.state.toUpperCase() }}</strong>
+          <p>{{ headCoverage.detail }}</p>
+          <p v-if="headCoverage.state === 'current' || headCoverage.state === 'stale' || headCoverage.state === 'outside_history'" class="review-coverage-sources">
+            <a v-if="headCoverage.revisionUrl" :href="headCoverage.revisionUrl" target="_blank" rel="noreferrer">MARKED REVISION {{ headCoverage.revisionSha.slice(0, 7) }} ↗</a>
+            <a :href="headCoverage.sourceUrl" target="_blank" rel="noreferrer">SOURCE COMMENT ↗</a>
+          </p>
+          <p v-if="headCoverage.state === 'current' || headCoverage.state === 'stale' || headCoverage.state === 'outside_history'" class="review-coverage-caveat">A comment matched to the PR head does not establish the latest complete Qodo review.</p>
+          <p v-if="headCoverage.state === 'stale'" class="review-coverage-next">Inspect the current PR head in Qodo before treating these comments as feedback on the version you intend to ship.</p>
+          <p v-else-if="headCoverage.state === 'unknown'" class="review-coverage-next">Open the source comments and confirm which revision Qodo reviewed.</p>
+        </div>
         <p v-if="pr.qodoReviews.availability === 'unavailable'" class="checks-note warn" role="status"><strong>Qodo review unavailable.</strong> {{ pr.qodoReviews.reason }}</p>
         <p v-else-if="pr.qodoReviews.items.length === 0 && pr.qodoReviews.unrecognizedCommentCount > 0" class="checks-note warn" role="status"><strong>{{ pr.qodoReviews.unrecognizedCommentCount }} Qodo comment{{ pr.qodoReviews.unrecognizedCommentCount === 1 ? '' : 's' }} not parsed as review output.</strong> Ghostline recognized only the published summary and code-review formats. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect the pull request on GitHub ↗</a></p>
         <p v-else-if="pr.qodoReviews.items.length === 0" class="checks-note" role="status"><strong>No recognized Qodo review comment found.</strong> Ghostline found no published Qodo summary or code-review comment in the GitHub issue-comment feed.</p>
@@ -191,3 +205,31 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
     <footer><span>GHOSTLINE // DAY 01</span><span>EVERY SIGNAL HAS A SOURCE.</span></footer>
   </div>
 </template>
+
+<style scoped>
+.check-name .check-output {
+  max-width: 760px;
+  margin-top: 8px;
+  line-height: 1.55;
+  letter-spacing: .015em;
+  overflow-wrap: anywhere;
+}
+
+.check-output strong {
+  display: block;
+  color: #c6cbdb;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.check-output span {
+  display: block;
+  color: #8a91a7;
+}
+
+.check-output .check-output-note {
+  margin-top: 4px;
+  color: #c6cbdb;
+  font-style: italic;
+}
+</style>
