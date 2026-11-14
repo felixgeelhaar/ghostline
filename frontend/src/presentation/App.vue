@@ -27,7 +27,7 @@ const activeChecks = computed(() => selectedRevision.value ? focusedChecks.value
 const orderedChecks = computed(() => orderChecks(activeChecks.value?.availability === 'available' ? activeChecks.value.items : []))
 const checksSummary = computed(() => summarizeChecks(orderedChecks.value))
 const recurringFindings = computed(() => findRecurringFindings(pr.value?.qodoReviews.items ?? []))
-const headCoverage = computed(() => pr.value ? qodoHeadCoverage(pr.value.qodoReviews, pr.value.checks.revisionSha || undefined) : undefined)
+const headCoverage = computed(() => pr.value ? qodoHeadCoverage(pr.value.qodoReviews, pr.value.checks.revisionSha || undefined, pr.value.commits) : undefined)
 const visibleCommits = computed(() => pr.value?.commits.filter((commit) => !selectedRevision.value || commit.sha === selectedRevision.value) ?? [])
 const selectedReviews = computed(() => reviewsForRevision(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
 const reviewCount = computed(() => reviewCountSummary(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
@@ -144,12 +144,14 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
       <section class="qodo-reviews" aria-labelledby="qodo-reviews-title">
         <h3 id="qodo-reviews-title" class="section-title"><span>QODO REVIEW EVIDENCE <span v-if="selectedRevision">· MATCHED REVISION</span></span><span v-if="pr.qodoReviews.availability === 'available'">{{ reviewCount }}</span></h3>
         <div v-if="headCoverage" class="review-coverage" :class="headCoverage.state" role="status" aria-live="polite">
-          <strong>PUBLISHED COMMENT · PR HEAD {{ headCoverage.state.toUpperCase() }}</strong>
+          <strong v-if="headCoverage.state === 'outside_history'">PUBLISHED COMMENT · MARKER OUTSIDE IMPORTED HISTORY</strong>
+          <strong v-else>PUBLISHED COMMENT · PR HEAD {{ headCoverage.state.toUpperCase() }}</strong>
           <p>{{ headCoverage.detail }}</p>
-          <p v-if="headCoverage.state === 'current' || headCoverage.state === 'stale'" class="review-coverage-sources">
+          <p v-if="headCoverage.state === 'current' || headCoverage.state === 'stale' || headCoverage.state === 'outside_history'" class="review-coverage-sources">
             <a v-if="headCoverage.revisionUrl" :href="headCoverage.revisionUrl" target="_blank" rel="noreferrer">MARKED REVISION {{ headCoverage.revisionSha.slice(0, 7) }} ↗</a>
             <a :href="headCoverage.sourceUrl" target="_blank" rel="noreferrer">SOURCE COMMENT ↗</a>
           </p>
+          <p class="review-coverage-caveat">A comment matched to the PR head does not establish the latest complete Qodo review.</p>
           <p v-if="headCoverage.state === 'stale'" class="review-coverage-next">Inspect the current PR head in Qodo before treating these comments as feedback on the version you intend to ship.</p>
           <p v-else-if="headCoverage.state === 'unknown'" class="review-coverage-next">Open the source comments and confirm which revision Qodo reviewed.</p>
         </div>

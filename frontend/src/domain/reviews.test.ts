@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { QodoReviewSetSchema, findRecurringFindings, laterRevisionsToInspect, noOpenFindingsNote, qodoHeadCoverage, qodoReviewState, reviewCountSummary, reviewsForRevision } from './reviews'
 
 const sha = 'a'.repeat(40)
+const oldSha = 'b'.repeat(40)
+const importedRevisions = [{ sha }, { sha: oldSha }]
 
 describe('Qodo review evidence', () => {
   it('reports current-head coverage only when a published comment marks the PR head', () => {
@@ -11,7 +13,7 @@ describe('Qodo review evidence', () => {
       items: [{ id: 17, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [], commitSha: sha, commitUrl: `https://github.com/acme/app/commit/${sha}`, createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-17' }],
     })
 
-    expect(qodoHeadCoverage(reviews, sha)).toEqual({
+    expect(qodoHeadCoverage(reviews, sha, importedRevisions)).toEqual({
       state: 'current',
       detail: 'A published Qodo comment explicitly marks the current pull request head revision.',
       revisionSha: sha,
@@ -27,24 +29,41 @@ describe('Qodo review evidence', () => {
       items: [{ id: 17, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [], commitSha: 'b'.repeat(40), commitUrl: `https://github.com/acme/app/commit/${'b'.repeat(40)}`, createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-17' }],
     })
 
-    expect(qodoHeadCoverage(reviews, sha)).toMatchObject({ state: 'stale', revisionSha: 'b'.repeat(40) })
+    expect(qodoHeadCoverage(reviews, sha, importedRevisions)).toMatchObject({ state: 'stale', revisionSha: oldSha })
+  })
+
+  it('does not call a marker outside the imported PR history an earlier PR revision', () => {
+    const outsideSha = 'c'.repeat(40)
+    const reviews = QodoReviewSetSchema.parse({
+      availability: 'available',
+      unrecognizedCommentCount: 0,
+      items: [{ id: 18, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [], commitSha: outsideSha, commitUrl: `https://github.com/acme/app/commit/${outsideSha}`, createdAt: '2026-11-04T10:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-18' }],
+    })
+
+    expect(qodoHeadCoverage(reviews, sha, importedRevisions)).toMatchObject({
+      state: 'outside_history',
+      detail: 'A published Qodo comment marks a revision outside the imported pull request history; Ghostline cannot determine how it relates to this change.',
+      revisionSha: outsideSha,
+      revisionUrl: `https://github.com/acme/app/commit/${outsideSha}`,
+      sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-18',
+    })
   })
 
   it('reports unknown coverage when revision markers are missing or comment parsing is partial', () => {
     const unmarked = QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 0, items: [{ id: 17, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [], createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-17' }] })
     const partial = QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 1, items: [{ id: 17, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [], commitSha: 'b'.repeat(40), commitUrl: `https://github.com/acme/app/commit/${'b'.repeat(40)}`, createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-17' }] })
 
-    expect(qodoHeadCoverage(unmarked, sha).state).toBe('unknown')
-    expect(qodoHeadCoverage(partial, sha).state).toBe('unknown')
-    expect(qodoHeadCoverage(unmarked, undefined).state).toBe('unknown')
+    expect(qodoHeadCoverage(unmarked, sha, importedRevisions).state).toBe('unknown')
+    expect(qodoHeadCoverage(partial, sha, importedRevisions).state).toBe('unknown')
+    expect(qodoHeadCoverage(unmarked, undefined, importedRevisions).state).toBe('unknown')
   })
 
   it('distinguishes missing comments from unavailable Qodo evidence', () => {
     const missing = QodoReviewSetSchema.parse({ availability: 'available', unrecognizedCommentCount: 0, items: [] })
     const unavailable = QodoReviewSetSchema.parse({ availability: 'unavailable', reason: 'GitHub denied the request.', unrecognizedCommentCount: 0, items: [] })
 
-    expect(qodoHeadCoverage(missing, sha)).toMatchObject({ state: 'missing' })
-    expect(qodoHeadCoverage(unavailable, sha)).toMatchObject({ state: 'unavailable', detail: 'GitHub denied the request.' })
+    expect(qodoHeadCoverage(missing, sha, importedRevisions)).toMatchObject({ state: 'missing' })
+    expect(qodoHeadCoverage(unavailable, sha, importedRevisions)).toMatchObject({ state: 'unavailable', detail: 'GitHub denied the request.' })
   })
 
   it('accepts source-linked findings tied to the reviewed commit', () => {

@@ -36,12 +36,12 @@ export type QodoFinding = QodoReview['findings'][number]
 export type RevisionRef = { sha: string; shortSha: string; message: string; author: string; committedAt: string; url: string }
 
 export type QodoHeadCoverage =
-  | { state: 'current' | 'stale'; detail: string; revisionSha: string; revisionUrl?: string; sourceUrl: string }
+  | { state: 'current' | 'stale' | 'outside_history'; detail: string; revisionSha: string; revisionUrl?: string; sourceUrl: string }
   | { state: 'unknown' | 'missing' | 'unavailable'; detail: string }
 
 // This describes whether published comments contain an explicit marker for
 // the supplied PR head. It does not establish the latest complete review run.
-export function qodoHeadCoverage(reviews: QodoReviewSet, headSha?: string): QodoHeadCoverage {
+export function qodoHeadCoverage(reviews: QodoReviewSet, headSha?: string, prCommits: Pick<RevisionRef, 'sha'>[] = []): QodoHeadCoverage {
   if (reviews.availability === 'unavailable') return { state: 'unavailable', detail: reviews.reason }
   if (!headSha) return { state: 'unknown', detail: 'GitHub did not identify the current PR head revision, so Qodo comment coverage cannot be compared.' }
   if (reviews.items.length === 0) {
@@ -68,9 +68,12 @@ export function qodoHeadCoverage(reviews: QodoReviewSet, headSha?: string): Qodo
 
   const newestMarked = newestFirst.find((review) => review.commitSha)
   if (newestMarked?.commitSha) {
+    const markerIsInPullRequest = prCommits.some((commit) => commit.sha.toLowerCase() === newestMarked.commitSha?.toLowerCase())
     return {
-      state: 'stale',
-      detail: 'Recognized Qodo comments mark earlier revisions only; none marks the current pull request head.',
+      state: markerIsInPullRequest ? 'stale' : 'outside_history',
+      detail: markerIsInPullRequest
+        ? 'Recognized Qodo comments mark earlier revisions in the imported pull request history only; none marks the current pull request head.'
+        : 'A published Qodo comment marks a revision outside the imported pull request history; Ghostline cannot determine how it relates to this change.',
       revisionSha: newestMarked.commitSha,
       ...(newestMarked.commitUrl ? { revisionUrl: newestMarked.commitUrl } : {}),
       sourceUrl: newestMarked.url,
