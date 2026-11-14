@@ -391,6 +391,31 @@ func TestLogoutExpiresSessionAndPendingOAuthState(t *testing.T) {
 	}
 }
 
+func TestLogoutRevokesCopiedSignedSession(t *testing.T) {
+	auth := newAuthManager(testAuthConfig(), nil)
+	router := newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(20, time.Minute, time.Now), clientIdentity{}, nil, auth)
+	session, err := auth.newSessionCookie(testIdentity(), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logout := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	logout.Header.Set("Origin", "https://ghostline.example")
+	logout.AddCookie(session)
+	logoutResponse := httptest.NewRecorder()
+	router.ServeHTTP(logoutResponse, logout)
+	if logoutResponse.Code != http.StatusNoContent {
+		t.Fatalf("logout status=%d, want 204", logoutResponse.Code)
+	}
+	protected := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(`{"url":"invalid"}`))
+	protected.Header.Set("Content-Type", "application/json")
+	protected.AddCookie(session)
+	protectedResponse := httptest.NewRecorder()
+	router.ServeHTTP(protectedResponse, protected)
+	if protectedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("copied signed session status=%d, want 401; body=%s", protectedResponse.Code, protectedResponse.Body.String())
+	}
+}
+
 func TestSameOriginNormalizesDefaultHTTPSPort(t *testing.T) {
 	cfg := testAuthConfig()
 	cfg.CallbackURL = "https://ghostline.example:443/auth/callback"
