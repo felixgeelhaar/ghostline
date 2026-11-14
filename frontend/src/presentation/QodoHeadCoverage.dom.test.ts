@@ -17,7 +17,7 @@ const pullRequest: PullRequest = {
     { sha: oldSha, shortSha: oldSha.slice(0, 7), message: 'Earlier revision', author: 'A', committedAt: '2026-11-04T09:00:00Z', url: `https://github.com/acme/app/commit/${oldSha}` },
     { sha: headSha, shortSha: headSha.slice(0, 7), message: 'Current head', author: 'A', committedAt: '2026-11-04T10:00:00Z', url: `https://github.com/acme/app/commit/${headSha}` },
   ],
-  checks: { availability: 'available', revisionSha: headSha, revisionShortSha: headSha.slice(0, 7), revisionUrl: `https://github.com/acme/app/commit/${headSha}`, items: [] },
+  checks: { availability: 'available', revisionSha: headSha, revisionShortSha: headSha.slice(0, 7), revisionUrl: `https://github.com/acme/app/commit/${headSha}`, items: [{ name: 'nox', kind: 'check_run', source: 'nox', status: 'completed', conclusion: 'success', url: 'https://github.com/acme/app/runs/1', outputTitle: 'No new alerts in code changed by this pull request', outputSummary: '[View all branch alerts](/acme/app/security/code-scanning?query=pr%3A7+tool%3Anox+is%3Aopen).' }] },
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [{ id: 17, provider: 'Qodo', sourceType: 'github_issue_comment', sourceAuthor: 'qodo-code-review[bot]', kind: 'findings', findings: [], commitSha: oldSha, commitUrl: `https://github.com/acme/app/commit/${oldSha}`, createdAt: '2026-11-04T09:00:00Z', url: 'https://github.com/acme/app/pull/7#issuecomment-17' }] },
 }
 
@@ -47,6 +47,27 @@ afterEach(() => {
 })
 
 describe('Qodo PR-head coverage status', () => {
+  it('shows the Nox check-run summary while preserving its GitHub evidence link', async () => {
+    await showPullRequest()
+    const check = host!.querySelector('.check-list li')!
+    expect(check.textContent).toContain('No new alerts in code changed by this pull request')
+    expect(check.textContent).toContain('View all branch alerts')
+    expect(check.querySelector('a[href="https://github.com/acme/app/runs/1"]')).not.toBeNull()
+  })
+
+  it('labels a shortened check summary and points to the full GitHub run', async () => {
+    await showPullRequest({
+      ...pullRequest,
+      checks: {
+        ...pullRequest.checks,
+        items: [{ ...pullRequest.checks.items[0], outputSummary: 'First part of a longer report.', outputSummaryTruncated: true }],
+      },
+    })
+    const check = host!.querySelector('.check-list li')!
+    expect(check.textContent).toContain('Preview shortened')
+    expect(check.querySelector('a[href="https://github.com/acme/app/runs/1"]')).not.toBeNull()
+  })
+
   it('shows stale revision evidence, source links, and the next action', async () => {
     await showPullRequest()
     const status = host!.querySelector<HTMLElement>('.review-coverage')!
