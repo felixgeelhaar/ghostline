@@ -28,7 +28,7 @@ Open the URL printed by Vite. Public GitHub API requests work without a token; s
 
 ## Request rate limit
 
-`POST /api/import` and `POST /api/checks` share one per-client budget so a single caller cannot use up the GitHub API quota for everyone else. The limiter is in-memory and fixed-window: the window starts at a client's first request, and the count and any recorded clients are lost when the backend restarts or if you run more than one instance. A request over the limit receives HTTP 429, a `Retry-After` header in seconds, and a JSON `{"error": "..."}` body; the UI shows when to retry. `GET /api/health` is not limited.
+`POST /api/import`, `POST /api/checks`, and `POST /api/compare` share one per-client budget so a single caller cannot use up the GitHub API quota for everyone else. The limiter is in-memory and fixed-window: the window starts at a client's first request, and the count and any recorded clients are lost when the backend restarts or if you run more than one instance. A request over the limit receives HTTP 429, a `Retry-After` header in seconds, and a JSON `{"error": "..."}` body; the UI shows when to retry. `GET /api/health` is not limited.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -63,7 +63,7 @@ For a local frontend development server, keep using `go run ./backend` and `cd f
 
 ### GitHub sign-in for a hosted instance
 
-Ghostline supports an identity-only GitHub OAuth gate for hosted instances. The operator must register a GitHub OAuth App with callback URL `https://<host>/auth/github/callback`, provide OAuth credentials and a random session signing key, and explicitly list allowed GitHub logins. The app requests only `read:user`; it does not ask GitHub for repository access, and the short-lived access token is used only to verify the account and is not stored. The backend protects `/api/import` and `/api/checks`; health and authentication status remain public.
+Ghostline supports an identity-only GitHub OAuth gate for hosted instances. The operator must register a GitHub OAuth App with callback URL `https://<host>/auth/github/callback`, provide OAuth credentials and a random session signing key, and explicitly list allowed GitHub logins. The app requests only `read:user`; it does not ask GitHub for repository access, and the short-lived access token is used only to verify the account and is not stored. The backend protects `/api/import`, `/api/checks`, and `/api/compare`; health and authentication status remain public.
 
 | Variable | Required | Meaning |
 | --- | --- | --- |

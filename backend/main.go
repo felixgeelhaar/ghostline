@@ -207,6 +207,54 @@ func (a api) loadRevisionChecks(c *gin.Context) {
 	c.JSON(http.StatusOK, fetchRevisionChecks(c.Request.Context(), a.gh, owner, repo, body.SHA))
 }
 
+func (a api) compareRevisions(c *gin.Context) {
+	var body struct {
+		URL     string `json:"url"`
+		BaseSHA string `json:"baseSha"`
+		HeadSHA string `json:"headSha"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Provide a GitHub pull request URL and two full commit SHAs."})
+		return
+	}
+	owner, repo, _, err := parsePRURL(body.URL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !domain.IsFullRevisionSHA(body.BaseSHA) || !domain.IsFullRevisionSHA(body.HeadSHA) || strings.EqualFold(body.BaseSHA, body.HeadSHA) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Choose two different full 40-character commit SHAs."})
+		return
+	}
+	path := fmt.Sprintf("/repos/%s/%s/compare/%s...%s?per_page=100", url.PathEscape(owner), url.PathEscape(repo), strings.ToLower(body.BaseSHA), strings.ToLower(body.HeadSHA))
+	var raw domain.RevisionComparisonSource
+	if err := a.gh.get(c.Request.Context(), path, &raw); err != nil {
+		if errors.Is(err, errNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "GitHub could not find one of the requested revisions for this comparison."})
+			return
+		}
+		respondGitHubError(c, err)
+		return
+	}
+	comparison, err := domain.NewRevisionComparison(owner, repo, body.BaseSHA, body.HeadSHA, raw)
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrComparisonRevisionsNotAncestor):
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+		case errors.Is(err, domain.ErrUnrecognizedComparisonStatus):
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		case errors.Is(err, domain.ErrInvalidComparisonCounts), errors.Is(err, domain.ErrInvalidChangedFileDetails):
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		case errors.Is(err, domain.ErrInvalidComparisonSourceLink), errors.Is(err, domain.ErrInvalidChangedFileSourceLink):
+			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned invalid revision comparison evidence. Please retry."})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, comparison)
+}
+
 func respondGitHubError(c *gin.Context, err error) {
 	var statusErr statusError
 	switch {

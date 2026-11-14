@@ -2,12 +2,15 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/felixgeelhaar/ghostline/backend/internal/domain"
 )
 
 func TestProductionRouterServesFrontendAndKeepsAPIAvailable(t *testing.T) {
@@ -80,6 +83,241 @@ func TestParsePRURL(t *testing.T) {
 				t.Fatalf("got %s/%s#%d", owner, repo, number)
 			}
 		})
+	}
+}
+
+func TestCompareRevisionsReturnsSourceLinkedFileSummaryForRequestedSHAs(t *testing.T) {
+	baseSHA := strings.Repeat("a", 40)
+	headSHA := strings.Repeat("b", 40)
+	var requestedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.RequestURI()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ahead", "ahead_by": 1, "behind_by": 0, "total_commits": 1,
+			"html_url": "https://github.com/acme/app/compare/" + baseSHA + "..." + headSHA,
+			// The compare endpoint's documented response does not include head_commit.
+			"base_commit": map[string]string{"sha": baseSHA},
+			"files":       []map[string]any{{"filename": "backend/retry.go", "status": "modified", "additions": 4, "deletions": 1, "changes": 5, "blob_url": "https://github.com/acme/app/blob/" + headSHA + "/backend/retry.go"}},
+		})
+	}))
+	defer srv.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/compare", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7","baseSha":"`+baseSHA+`","headSha":"`+headSHA+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	newRouter(&githubClient{baseURL: srv.URL, http: srv.Client()}).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(requestedPath, "/repos/acme/app/compare/"+baseSHA+"..."+headSHA) {
+		t.Fatalf("GitHub path = %q, want requested revision pair", requestedPath)
+	}
+	var result domain.RevisionComparison
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.BaseSHA != baseSHA || result.HeadSHA != headSHA || result.CompareURL == "" || len(result.Files) != 1 || result.Files[0].Path != "backend/retry.go" || result.Files[0].URL == "" {
+		t.Fatalf("comparison response lost revision or source identity: %+v", result)
+	}
+}
+
+func TestCompareRevisionsAcceptsUppercaseAndNormalizesRequestedSHAs(t *testing.T) {
+	baseSHA := strings.Repeat("a", 40)
+	headSHA := strings.Repeat("b", 40)
+	requestedBase := strings.ToUpper(baseSHA)
+	requestedHead := strings.ToUpper(headSHA[:20]) + headSHA[20:]
+	var requestedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.RequestURI()
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ahead", "ahead_by": 1, "behind_by": 0, "total_commits": 1,
+			"html_url":    "https://github.com/acme/app/compare/" + baseSHA + "..." + headSHA,
+			"base_commit": map[string]string{"sha": baseSHA},
+			"files":       []map[string]any{{"filename": "backend/retry.go", "status": "modified", "additions": 1, "deletions": 0, "changes": 1, "blob_url": "https://github.com/acme/app/blob/" + headSHA + "/backend/retry.go"}},
+		})
+	}))
+	defer srv.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/compare", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7","baseSha":"`+requestedBase+`","headSha":"`+requestedHead+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	newRouter(&githubClient{baseURL: srv.URL, http: srv.Client()}).ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(requestedPath, "/repos/acme/app/compare/"+baseSHA+"..."+headSHA) {
+		t.Fatalf("GitHub path = %q, want normalized revision pair", requestedPath)
+	}
+	var result domain.RevisionComparison
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.BaseSHA != baseSHA || result.HeadSHA != headSHA {
+		t.Fatalf("comparison revisions = %q...%q, want normalized %q...%q", result.BaseSHA, result.HeadSHA, baseSHA, headSHA)
+	}
+}
+
+func TestCompareRevisionsFlagsGitHubChangedFileLimit(t *testing.T) {
+	baseSHA := strings.Repeat("a", 40)
+	headSHA := strings.Repeat("b", 40)
+	files := make([]map[string]any, 300)
+	for i := range files {
+		files[i] = map[string]any{"filename": fmt.Sprintf("file-%d.go", i), "status": "modified", "additions": 1, "deletions": 0, "changes": 1, "blob_url": "https://github.com/acme/app/blob/" + headSHA + fmt.Sprintf("/file-%d.go", i)}
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ahead", "ahead_by": 1, "behind_by": 0, "total_commits": 1,
+			"html_url":    "https://github.com/acme/app/compare/" + baseSHA + "..." + headSHA,
+			"base_commit": map[string]string{"sha": baseSHA}, "files": files,
+		})
+	}))
+	defer srv.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/compare", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7","baseSha":"`+baseSHA+`","headSha":"`+headSHA+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	newRouter(&githubClient{baseURL: srv.URL, http: srv.Client()}).ServeHTTP(response, request)
+	var result domain.RevisionComparison
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || len(result.Files) != 300 || !result.FilesTruncated {
+		t.Fatalf("comparison = status %d, files %d, truncated %t", response.Code, len(result.Files), result.FilesTruncated)
+	}
+}
+
+func TestCompareRevisionsReportsInvalidChangedFileDetails(t *testing.T) {
+	baseSHA := strings.Repeat("a", 40)
+	headSHA := strings.Repeat("b", 40)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ahead", "ahead_by": 1, "behind_by": 0, "total_commits": 1,
+			"html_url":    "https://github.com/acme/app/compare/" + baseSHA + "..." + headSHA,
+			"base_commit": map[string]string{"sha": baseSHA},
+			"files":       []map[string]any{{"filename": "backend/retry.go", "status": "modified", "additions": -1, "deletions": 0, "changes": 1, "blob_url": "https://github.com/acme/app/blob/" + headSHA + "/backend/retry.go"}},
+		})
+	}))
+	defer srv.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/compare", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7","baseSha":"`+baseSHA+`","headSha":"`+headSHA+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	newRouter(&githubClient{baseURL: srv.URL, http: srv.Client()}).ServeHTTP(response, request)
+	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "invalid changed-file details") {
+		t.Fatalf("comparison error = status %d, body %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCompareRevisionsRejectsNonlinearRevisionPair(t *testing.T) {
+	baseSHA := strings.Repeat("a", 40)
+	headSHA := strings.Repeat("b", 40)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "diverged", "ahead_by": 2, "behind_by": 1, "total_commits": 2,
+			"html_url":    "https://github.com/acme/app/compare/" + baseSHA + "..." + headSHA,
+			"base_commit": map[string]string{"sha": baseSHA},
+			"files":       []map[string]any{{"filename": "backend/retry.go", "status": "modified", "additions": 4, "deletions": 1, "changes": 5, "blob_url": "https://github.com/acme/app/blob/" + headSHA + "/backend/retry.go"}},
+		})
+	}))
+	defer srv.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/compare", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7","baseSha":"`+baseSHA+`","headSha":"`+headSHA+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	newRouter(&githubClient{baseURL: srv.URL, http: srv.Client()}).ServeHTTP(response, request)
+	if response.Code != http.StatusUnprocessableEntity || !strings.Contains(response.Body.String(), "ancestor") {
+		t.Fatalf("comparison error = status %d, body %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCompareRevisionsRejectsChangedFileLinkForDifferentRevision(t *testing.T) {
+	baseSHA := strings.Repeat("a", 40)
+	headSHA := strings.Repeat("b", 40)
+	otherSHA := strings.Repeat("c", 40)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ahead", "ahead_by": 1, "behind_by": 0, "total_commits": 1,
+			"html_url":    "https://github.com/acme/app/compare/" + baseSHA + "..." + headSHA,
+			"base_commit": map[string]string{"sha": baseSHA},
+			"files":       []map[string]any{{"filename": "backend/retry.go", "status": "modified", "additions": 4, "deletions": 1, "changes": 5, "blob_url": "https://github.com/acme/app/blob/" + otherSHA + "/backend/retry.go"}},
+		})
+	}))
+	defer srv.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/compare", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7","baseSha":"`+baseSHA+`","headSha":"`+headSHA+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	newRouter(&githubClient{baseURL: srv.URL, http: srv.Client()}).ServeHTTP(response, request)
+	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "invalid changed-file source link") {
+		t.Fatalf("comparison error = status %d, body %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCompareRevisionsRejectsChangedFileLinkForDifferentPath(t *testing.T) {
+	baseSHA := strings.Repeat("a", 40)
+	headSHA := strings.Repeat("b", 40)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ahead", "ahead_by": 1, "behind_by": 0, "total_commits": 1,
+			"html_url":    "https://github.com/acme/app/compare/" + baseSHA + "..." + headSHA,
+			"base_commit": map[string]string{"sha": baseSHA},
+			"files":       []map[string]any{{"filename": "backend/retry.go", "status": "modified", "additions": 4, "deletions": 1, "changes": 5, "blob_url": "https://github.com/acme/app/blob/" + headSHA + "/backend/other.go"}},
+		})
+	}))
+	defer srv.Close()
+	request := httptest.NewRequest(http.MethodPost, "/api/compare", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7","baseSha":"`+baseSHA+`","headSha":"`+headSHA+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	newRouter(&githubClient{baseURL: srv.URL, http: srv.Client()}).ServeHTTP(response, request)
+	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "invalid changed-file source link") {
+		t.Fatalf("comparison error = status %d, body %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCompareRevisionsGivesSpecificErrorForMissingRevision(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	baseSHA := strings.Repeat("a", 40)
+	headSHA := strings.Repeat("b", 40)
+	request := httptest.NewRequest(http.MethodPost, "/api/compare", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7","baseSha":"`+baseSHA+`","headSha":"`+headSHA+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	newRouter(&githubClient{baseURL: srv.URL, http: srv.Client()}).ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), "requested revisions") || strings.Contains(response.Body.String(), "Pull request not found") {
+		t.Fatalf("comparison error = status %d, body %s", response.Code, response.Body.String())
+	}
+}
+
+func TestCompareRevisionsRejectsInvalidOrMismatchedSHAs(t *testing.T) {
+	baseSHA := strings.Repeat("a", 40)
+	headSHA := strings.Repeat("b", 40)
+	serverCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverCalls++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ahead", "html_url": "https://github.com/acme/app/compare/" + baseSHA + "..." + headSHA,
+			"base_commit": map[string]string{"sha": baseSHA}, "head_commit": map[string]string{"sha": strings.Repeat("c", 40)},
+		})
+	}))
+	defer srv.Close()
+	router := newRouter(&githubClient{baseURL: srv.URL, http: srv.Client()})
+	for _, body := range []string{
+		`{"url":"https://github.com/acme/app/pull/7","baseSha":"short","headSha":"` + headSHA + `"}`,
+		`{"url":"https://github.com/acme/app/pull/7","baseSha":"` + baseSHA + `","headSha":"` + baseSHA + `"}`,
+	} {
+		request := httptest.NewRequest(http.MethodPost, "/api/compare", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid comparison status = %d, body = %s", response.Code, response.Body.String())
+		}
+	}
+	if serverCalls != 0 {
+		t.Fatalf("GitHub called %d times for invalid comparisons", serverCalls)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/compare", strings.NewReader(`{"url":"https://github.com/acme/app/pull/7","baseSha":"`+baseSHA+`","headSha":"`+headSHA+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("mismatched GitHub comparison status = %d, body = %s", response.Code, response.Body.String())
 	}
 }
 

@@ -15,9 +15,9 @@ Ghostline is a small Go API and Vue single-page application. It has no database 
 ```text
 Browser (Vue 3 + TypeScript)
   presentation: App.vue, ReviewCard.vue, DeepTrace.vue
-  application: auth status, importPullRequest, fetchRevisionChecks
-  domain: pullRequest, checks, reviews, trace
-          │ /api/import, /api/checks
+  application: auth status, importPullRequest, fetchRevisionChecks, compareRevisions
+  domain: pullRequest, checks, reviews, trace, comparison
+          │ /api/import, /api/checks, /api/compare
           ▼
 Go + Gin API
   optional GitHub identity gate and signed session cookie
@@ -33,6 +33,14 @@ The frontend validates API payloads with Zod at the boundary in `frontend/src/do
 For code changes, preserve these domain boundaries and use test-driven development: write or update a focused failing test for the behavior first, then implement the smallest change that makes it pass.
 
 The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, normalize the response, and render the activity index and review evidence. The activity index orders commit metadata times, check-run start/completion/update times, commit-status creation/update times, and Qodo comment times while preserving each source's timestamp label and native check/status ID. Check entries are GitHub's latest records for the focused revision at fetch time, not a complete check-run history. The timeline does not treat sequence as causation. `POST /api/checks` fetches checks for a focused full commit SHA. Checks are always labeled with the revision GitHub returned and shown in a revision-scoped section.
+
+`POST /api/compare` accepts the imported PR URL and two distinct full commit SHAs. The backend asks GitHub to compare that exact pair and accepts only an `ahead` result with no commits behind, so the earlier revision is an ancestor of the candidate revision. It validates the returned base SHA, repository-scoped comparison link, and every changed-file link against the exact path and revision (head for added/modified/renamed files, base for removed files). GitHub's documented compare response does not include `head_commit`; the request path and returned comparison link identify the requested head SHA. Missing revisions receive a specific not-found response. When a response contains 300 files, Ghostline marks the list as potentially truncated and links to GitHub's full comparison. Deep Trace offers this for commits between two marked Qodo finding comments. The comparison is candidate diff context only: it does not show that a commit attempted or completed a repair. The UI binds each request to the PR and SHA pair that initiated it, and discards stale responses when the user changes the selected trace or comparison.
+
+### Revision-comparison evidence
+
+![Ghostline Deep Trace candidate comparison prepared replay](feature-evidence/revision-comparison-prepared-replay.jpg)
+
+This screenshot shows the changed comparison panel using a prepared synthetic fixture. The Deep Trace component and comparison rendering are real; the PR, Qodo comments, revisions, and GitHub response shown here are fixture data, not a live review record.
 
 When `GHOSTLINE_AUTH_MODE=github`, `/auth/github/login` starts an OAuth identity check and `/auth/github/callback` verifies the GitHub login against `GHOSTLINE_ALLOWED_GITHUB_USERS`, then issues a stateless signed eight-hour cookie. The token used to call GitHub's `/user` endpoint is not persisted. The auth status endpoint is public so the Vue app can render the right gate; imports and check lookups require a valid session. In production, set `GHOSTLINE_ENV=production`, which makes startup reject auth-off configuration. The local default remains unauthenticated for development.
 

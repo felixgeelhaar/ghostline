@@ -93,6 +93,12 @@ func TestAuthStatusAndProtectedAPI(t *testing.T) {
 	if protected.Code != http.StatusUnauthorized {
 		t.Fatalf("protected API status = %d, want 401", protected.Code)
 	}
+	comparison := httptest.NewRecorder()
+	comparisonRequest := httptest.NewRequest(http.MethodPost, "/api/compare", strings.NewReader(`{"url":"https://github.com/acme/repo/pull/1","baseSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","headSha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`))
+	router.ServeHTTP(comparison, comparisonRequest)
+	if comparison.Code != http.StatusUnauthorized {
+		t.Fatalf("protected comparison status = %d, want 401", comparison.Code)
+	}
 }
 
 func TestGitHubOAuthCallbackCreatesAllowlistedSession(t *testing.T) {
