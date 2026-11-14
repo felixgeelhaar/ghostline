@@ -121,9 +121,9 @@ async function loadPR() {
       pr.value = importedPR
     }
   } catch (e) {
+    handleUnauthorized(e)
     if (request === importRequest) {
       error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
-      handleUnauthorized(e)
     }
   } finally {
     if (request === importRequest) loading.value = false
@@ -142,9 +142,9 @@ async function loadStructuredQodoReview() {
     const result = await fetchQodoReviewSession(requestedPRURL, apiKey)
     if (request === qodoRequest && pr.value?.url === requestedPRURL) qodoStructuredReview.value = result
   } catch (e) {
+    handleUnauthorized(e)
     if (request === qodoRequest && pr.value?.url === requestedPRURL) {
       qodoReviewError.value = e instanceof Error ? e.message : 'Could not load structured Qodo review data.'
-      handleUnauthorized(e)
     }
   } finally {
     if (request === qodoRequest) qodoReviewLoading.value = false
@@ -167,9 +167,9 @@ async function focusRevision(sha: string) {
     const checks = await fetchRevisionChecks(importedPR.url, sha)
     if (request === revisionRequest && selectedRevision.value === sha) focusedChecks.value = checks
   } catch (e) {
+    handleUnauthorized(e)
     if (request === revisionRequest && selectedRevision.value === sha) {
       checksError.value = e instanceof Error ? e.message : 'Could not load checks for this revision.'
-      handleUnauthorized(e)
     }
   } finally {
     if (request === revisionRequest) checksLoading.value = false

@@ -3,11 +3,13 @@ import { createApp, nextTick } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchGhostlineSession } from '../application/fetchGhostlineSession'
 import { importPullRequest } from '../application/importPullRequest'
+import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { GhostlineApiError } from '../application/apiError'
 import App from './App.vue'
 
 vi.mock('../application/fetchGhostlineSession', () => ({ fetchGhostlineSession: vi.fn() }))
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
+vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
 
 let app: ReturnType<typeof createApp> | undefined
 let host: HTMLDivElement | undefined
@@ -23,8 +25,9 @@ async function mount() {
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((res) => { resolve = res })
-  return { promise, resolve }
+  let reject!: (reason: Error) => void
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+  return { promise, resolve, reject }
 }
 
 afterEach(() => {
@@ -112,5 +115,42 @@ describe('hosted GitHub sign-in presentation', () => {
     await vi.waitFor(() => expect(host?.querySelector('form[action="/auth/login"]')).not.toBeNull())
     expect(host?.querySelector('#pr-url')).toBeNull()
     expect(host?.textContent).toContain('Sign in to your control room')
+  })
+
+  it('hides the workspace when a stale revision check reports an expired session', async () => {
+    const delayedChecks = deferred<never>()
+    vi.mocked(fetchGhostlineSession)
+      .mockResolvedValueOnce({ authRequired: true, authenticated: true, login: 'Felix-Dev' })
+      .mockResolvedValueOnce({ authRequired: true, authenticated: false })
+    const importedPR = {
+      repository: 'acme/app', owner: 'acme', repo: 'app', number: 7, title: 'Auth expiry', state: 'open', merged: false,
+      url: 'https://github.com/acme/app/pull/7', createdAt: '2026-11-10T09:00:00Z', updatedAt: '2026-11-10T10:00:00Z',
+      commits: ['a', 'b'].map((prefix) => {
+        const sha = prefix.repeat(40)
+        return { sha, shortSha: sha.slice(0, 7), message: 'Commit', author: 'Felix', committedAt: '2026-11-10T09:30:00Z', url: `https://github.com/acme/app/commit/${sha}` }
+      }),
+      checks: { revisionSha: 'c'.repeat(40), revisionShortSha: 'ccccccc', revisionUrl: `https://github.com/acme/app/commit/${'c'.repeat(40)}`, availability: 'unavailable', reason: 'No checks', items: [] },
+      qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] },
+      referencedIssues: { availability: 'available', items: [] },
+    }
+    vi.mocked(importPullRequest).mockResolvedValue(importedPR as never)
+    vi.mocked(fetchRevisionChecks).mockReturnValue(delayedChecks.promise)
+    await mount()
+
+    const input = host?.querySelector<HTMLInputElement>('#pr-url')
+    if (!input) throw new Error('PR import field was not rendered')
+    input.value = importedPR.url
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    host?.querySelector<HTMLButtonElement>('.import-panel button')?.click()
+    await vi.waitFor(() => expect(host?.querySelector('.timeline')).not.toBeNull())
+
+    host?.querySelector<HTMLButtonElement>('[aria-label="Focus history on revision aaaaaaa"]')?.click()
+    await nextTick()
+    expect(fetchRevisionChecks).toHaveBeenCalledTimes(1)
+    host?.querySelector<HTMLButtonElement>('.clear-focus')?.click()
+    delayedChecks.reject(new GhostlineApiError(401, 'Your Ghostline session expired.', 'AUTH_REQUIRED'))
+
+    await vi.waitFor(() => expect(host?.querySelector('form[action="/auth/login"]')).not.toBeNull())
+    expect(host?.querySelector('#pr-url')).toBeNull()
   })
 })

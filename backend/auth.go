@@ -391,7 +391,24 @@ func (m *authManager) sameOrigin(origin string) bool {
 		return false
 	}
 	callback, err := url.Parse(m.cfg.CallbackURL)
-	return err == nil && strings.EqualFold(parsed.Scheme, callback.Scheme) && strings.EqualFold(parsed.Host, callback.Host)
+	if err != nil || parsed.Hostname() == "" || callback.Hostname() == "" || !strings.EqualFold(parsed.Scheme, callback.Scheme) || !strings.EqualFold(parsed.Hostname(), callback.Hostname()) {
+		return false
+	}
+	return effectivePort(parsed) == effectivePort(callback)
+}
+
+func effectivePort(parsed *url.URL) string {
+	if port := parsed.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	default:
+		return ""
+	}
 }
 
 func randomToken(source io.Reader, size int) (string, error) {

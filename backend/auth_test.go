@@ -367,6 +367,18 @@ func TestLogoutRequiresTheHostedOrigin(t *testing.T) {
 	}
 }
 
+func TestSameOriginNormalizesDefaultHTTPSPort(t *testing.T) {
+	cfg := testAuthConfig()
+	cfg.CallbackURL = "https://ghostline.example:443/auth/callback"
+	manager := newAuthManager(cfg, nil)
+	if !manager.sameOrigin("https://ghostline.example") {
+		t.Fatal("browser origin without explicit default port should match configured callback")
+	}
+	if manager.sameOrigin("https://ghostline.example:444") {
+		t.Fatal("non-default port should not match configured HTTPS origin")
+	}
+}
+
 func TestOAuthCallbackIsRateLimitedPerClient(t *testing.T) {
 	var tokenRequests int
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
