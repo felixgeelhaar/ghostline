@@ -379,6 +379,36 @@ describe('structured Qodo review evidence', () => {
     expect(summary.detail).not.toContain('findings do not describe the current head')
   })
 
+  it('shows findings when session status is missing and labels completion unknown', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { commitSha: shaB },
+      findings: [{ id: 'finding-1', title: 'Guard retries', status: 'open', gitSha: shaB }],
+      reviewRuns: [],
+    })
+
+    const summary = reviewAttentionSummary(review, shaB)
+    expect(summary).toMatchObject({ kind: 'incomplete', title: 'Qodo review is not complete', openFindingCount: 1 })
+    expect(summary.nextAction.toLowerCase()).toContain('open finding')
+  })
+
+  it('includes open and unclassified findings in stale-session next steps', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo',
+      reviewSession: { status: 'completed', commitSha: shaA },
+      findings: [
+        { id: 'finding-open', title: 'Open', status: 'open', gitSha: shaB },
+        { id: 'finding-unknown', title: 'Unknown', gitSha: shaA },
+      ],
+      reviewRuns: [],
+    })
+
+    const summary = reviewAttentionSummary(review, shaB)
+    expect(summary.kind).toBe('stale')
+    expect(summary.nextAction).toContain('1 Qodo-reported open finding')
+    expect(summary.nextAction).toContain('1 finding with no recognized status')
+  })
+
   it('keeps stale finding revisions visible while an unknown-revision session is running', () => {
     const review = QodoStructuredReviewSchema.parse({
       availability: 'available', source: 'Qodo',

@@ -77,11 +77,11 @@ func MergeQodoReviewSessions(preferred, fallback *QodoReviewSession) (*QodoRevie
 	} else if fallback.Status != "" && !strings.EqualFold(status, fallback.Status) {
 		return nil, errors.New("Qodo returned conflicting review-session statuses")
 	}
-	sha, err := mergeQodoRevisions("review-session revisions", preferred.CommitSHA, fallback.CommitSHA)
+	sha, err := MergeQodoRevisions("review-session revisions", preferred.CommitSHA, fallback.CommitSHA)
 	if err != nil {
 		return nil, err
 	}
-	startedAt, err := mergeQodoTimes("review-session start times", preferred.StartedAt, fallback.StartedAt)
+	startedAt, err := MergeQodoTimes("review-session start times", preferred.StartedAt, fallback.StartedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +130,7 @@ func MergeQodoReviewRuns(values []QodoReviewRun) ([]QodoReviewRun, error) {
 func mergeQodoFinding(left, right QodoReviewFinding) (QodoReviewFinding, error) {
 	merged := left
 	var err error
-	merged.GitSHA, err = mergeQodoRevisions("finding revisions", left.GitSHA, right.GitSHA)
+	merged.GitSHA, err = MergeQodoRevisions("finding revisions", left.GitSHA, right.GitSHA)
 	if err != nil {
 		return QodoReviewFinding{}, err
 	}
@@ -149,11 +149,11 @@ func mergeQodoFinding(left, right QodoReviewFinding) (QodoReviewFinding, error) 
 			return QodoReviewFinding{}, err
 		}
 	}
-	merged.AttributionStatus, err = mergeQodoEnumAliases("finding attribution statuses", merged.AttributionStatus, right.AttributionStatus)
+	merged.AttributionStatus, err = MergeQodoEnumAliases("finding attribution statuses", merged.AttributionStatus, right.AttributionStatus)
 	if err != nil {
 		return QodoReviewFinding{}, err
 	}
-	merged.Status, err = mergeQodoEnumAliases("finding statuses", merged.Status, right.Status)
+	merged.Status, err = MergeQodoEnumAliases("finding statuses", merged.Status, right.Status)
 	if err != nil {
 		return QodoReviewFinding{}, err
 	}
@@ -191,22 +191,22 @@ func mergeQodoFinding(left, right QodoReviewFinding) (QodoReviewFinding, error) 
 }
 
 func mergeQodoReviewRun(left, right QodoReviewRun) (QodoReviewRun, error) {
-	status, err := mergeQodoEnumAliases("review-run statuses", left.Status, right.Status)
+	status, err := MergeQodoEnumAliases("review-run statuses", left.Status, right.Status)
 	if err != nil {
 		return QodoReviewRun{}, err
 	}
-	sha, err := mergeQodoRevisions("review-run revisions", left.CommitSHA, right.CommitSHA)
+	sha, err := MergeQodoRevisions("review-run revisions", left.CommitSHA, right.CommitSHA)
 	if err != nil {
 		return QodoReviewRun{}, err
 	}
-	startedAt, err := mergeQodoTimes("review-run start times", left.StartedAt, right.StartedAt)
+	startedAt, err := MergeQodoTimes("review-run start times", left.StartedAt, right.StartedAt)
 	if err != nil {
 		return QodoReviewRun{}, err
 	}
 	return QodoReviewRun{ID: left.ID, Status: status, CommitSHA: sha, StartedAt: startedAt}, nil
 }
 
-func mergeQodoEnumAliases(field string, preferred, fallback string) (string, error) {
+func MergeQodoEnumAliases(field string, preferred, fallback string) (string, error) {
 	if preferred != "" && fallback != "" && !strings.EqualFold(preferred, fallback) {
 		return "", errors.New("Qodo returned conflicting " + field)
 	}
@@ -216,7 +216,7 @@ func mergeQodoEnumAliases(field string, preferred, fallback string) (string, err
 	return fallback, nil
 }
 
-func mergeQodoRevisions(field, preferred, fallback string) (string, error) {
+func MergeQodoRevisions(field, preferred, fallback string) (string, error) {
 	if preferred != "" && fallback != "" && !strings.EqualFold(preferred, fallback) {
 		return "", errors.New("Qodo returned conflicting " + field)
 	}
@@ -226,7 +226,7 @@ func mergeQodoRevisions(field, preferred, fallback string) (string, error) {
 	return fallback, nil
 }
 
-func mergeQodoTimes(field string, preferred, fallback *time.Time) (*time.Time, error) {
+func MergeQodoTimes(field string, preferred, fallback *time.Time) (*time.Time, error) {
 	if preferred != nil && fallback != nil && !preferred.Equal(*fallback) {
 		return nil, errors.New("Qodo returned conflicting " + field)
 	}
@@ -271,9 +271,6 @@ func MergeQodoIntAliases(field string, values ...int) (int, error) {
 // invariants for Qodo review data before it is exposed to callers.
 func ValidateQodoReviewSnapshot(snapshot QodoReviewSnapshot) error {
 	if session := snapshot.ReviewSession; session != nil {
-		if strings.TrimSpace(session.Status) == "" {
-			return errors.New("Qodo review session has no status")
-		}
 		if session.CommitSHA != "" && !fullGitSHA.MatchString(strings.ToLower(session.CommitSHA)) {
 			return errors.New("Qodo review session contained an invalid commit SHA")
 		}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 func TestQodoReviewClientReadsStructuredReviewThroughMCP(t *testing.T) {
 	const prURL = "https://github.com/acme/payments/pull/42"
 	var requests []string
+	cleanupStatus := http.StatusNoContent
 	server := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
 		if r.Header.Get("Authorization") != "Bearer qodo-secret" {
@@ -24,6 +26,13 @@ func TestQodoReviewClientReadsStructuredReviewThroughMCP(t *testing.T) {
 		}
 		if r.URL.Path != "/v1/tools/mcp/" {
 			t.Errorf("request escaped fixed Qodo MCP endpoint: %s", r.URL.Path)
+		}
+		if r.Method == http.MethodDelete {
+			if r.Header.Get("Mcp-Session-Id") != "test-session" {
+				t.Errorf("cleanup session header = %q", r.Header.Get("Mcp-Session-Id"))
+			}
+			w.WriteHeader(cleanupStatus)
+			return
 		}
 		var request struct {
 			ID     int64          `json:"id"`
@@ -112,7 +121,15 @@ func TestQodoReviewClientReadsStructuredReviewThroughMCP(t *testing.T) {
 	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "may be incomplete") && !strings.Contains(result.Warnings[0], "displayed review may be incomplete") {
 		t.Fatalf("malformed companion response was not surfaced: %+v", result.Warnings)
 	}
-	if strings.Join(requests, ",") != "POST /v1/tools/mcp/,POST /v1/tools/mcp/,POST /v1/tools/mcp/" {
+	cleanupStatus = http.StatusInternalServerError
+	secondResult, err := client.fetch(context.Background(), "qodo-secret", prURL)
+	if err != nil {
+		t.Fatalf("session cleanup failure discarded valid review data: %v", err)
+	}
+	if len(secondResult.Warnings) != 2 || !strings.Contains(secondResult.Warnings[1], "session could not be closed") {
+		t.Fatalf("session cleanup failure was not surfaced as a warning: %+v", secondResult.Warnings)
+	}
+	if strings.Join(requests, ",") != "POST /v1/tools/mcp/,POST /v1/tools/mcp/,POST /v1/tools/mcp/,DELETE /v1/tools/mcp/,POST /v1/tools/mcp/,POST /v1/tools/mcp/,POST /v1/tools/mcp/,DELETE /v1/tools/mcp/" {
 		t.Fatalf("MCP exchange = %v", requests)
 	}
 }
@@ -404,6 +421,19 @@ func TestQodoReviewDataFallsBackToCamelFindingsWhenCanonicalArrayIsEmpty(t *test
 	}
 	if len(data.Findings) != 1 || data.Findings[0].ID != "f-2" {
 		t.Fatalf("non-empty alternate findings were dropped: %+v", data.Findings)
+	}
+}
+
+func TestParseQodoToolResultWarnsForMalformedCamelFindingsCandidate(t *testing.T) {
+	result, err := parseQodoToolResult(qodoToolResult{Content: []qodoToolContent{
+		{Type: "text", Text: `{"camelFindings":[{"id":"hidden","title":"Candidate without runs"}]}`},
+		{Type: "text", Text: `{"findings":[],"review_runs":[]}`},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatal("malformed camelFindings representation was silently ignored")
 	}
 }
 
@@ -708,6 +738,17 @@ func TestDecodeMCPEnvelopeStreamReturnsBeforeStreamCloses(t *testing.T) {
 		t.Fatal("decoder waited for the open SSE body to close")
 	}
 	_ = writer.Close()
+}
+
+func TestDecodeMCPEnvelopeStreamAcceptsCRLFEventBoundaries(t *testing.T) {
+	data := []byte("event: message\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"review\":\"complete\"}}\r\n\r\nevent: keepalive\r\n\r\n")
+	envelope, err := decodeMCPEnvelopeStream(bytes.NewReader(data), "text/event-stream", 2)
+	if err != nil {
+		t.Fatalf("valid CRLF event stream rejected: %v", err)
+	}
+	if string(envelope.Result) != `{"review":"complete"}` {
+		t.Fatalf("result = %s", envelope.Result)
+	}
 }
 
 func TestQodoReviewDataRejectsNullFindingOrRunArrays(t *testing.T) {

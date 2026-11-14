@@ -22,7 +22,7 @@ const attention = computed(() => reviewAttentionSummary(props.review, props.head
     <p v-if="!review.reviewSession" class="checks-note" role="status"><strong>No review session returned.</strong> Qodo did not provide structured review-session data for this pull request.</p>
     <template v-if="review.reviewSession">
       <div class="qodo-session-status" :class="freshness">
-        <div><span>QODO SESSION · {{ review.reviewSession.status.toUpperCase() }}</span>
+        <div><span>QODO SESSION · {{ review.reviewSession.status?.toUpperCase() || 'STATUS UNKNOWN' }}</span>
           <p v-if="review.reviewSession.commitSha">Reviewed revision <a v-if="qodoRevisionURL(pullRequestUrl, review.reviewSession.commitSha)" :href="qodoRevisionURL(pullRequestUrl, review.reviewSession.commitSha)" target="_blank" rel="noreferrer">{{ review.reviewSession.commitSha.slice(0, 7) }} ↗</a><span v-else>{{ review.reviewSession.commitSha.slice(0, 7) }} · source link unavailable</span></p>
           <p v-else>Qodo did not return the reviewed commit SHA.</p>
         </div>

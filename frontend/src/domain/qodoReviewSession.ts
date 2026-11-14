@@ -43,7 +43,7 @@ export const QodoManagedFindingSchema = z.object({
 })
 
 export const QodoReviewSessionSchema = z.object({
-  status: z.string().min(1),
+  status: z.string().min(1).optional(),
   commitSha: fullSha.optional(),
   startedAt: z.string().optional(),
 })
@@ -228,7 +228,7 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
   }
 
   const freshness = reviewSessionFreshness(review, headSha)
-  const sessionStatus = review.reviewSession.status.trim().toLowerCase()
+  const sessionStatus = review.reviewSession.status?.trim().toLowerCase() ?? ''
   const sessionStillRunning = sessionStatus === 'started' || sessionStatus === 'running'
   if (freshness === 'stale') {
     const reviewedShortSha = review.reviewSession.commitSha?.slice(0, 7) ?? 'unknown'
@@ -241,7 +241,7 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
       nextAction: sessionStillRunning
         ? 'Wait for the current Qodo review to finish, then load a fresh review for the imported PR head before relying on its findings.'
         : currentFindingCount > 0
-          ? `Inspect the ${currentFindingCount} finding${currentFindingCount === 1 ? '' : 's'} whose revision matches the imported head and follow the Qodo source links. Load a fresh Qodo review before relying on session completion.`
+          ? freshnessNextAction(openFindingCount, unclassifiedFindingCount, `inspect the ${currentFindingCount} finding${currentFindingCount === 1 ? '' : 's'} whose revision matches the imported head and follow the Qodo source links. Load a fresh Qodo review before relying on session completion.`)
           : freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'load a Qodo review for the current PR head before relying on session completion.'),
     }
   }
@@ -261,6 +261,16 @@ export function reviewAttentionSummary(review: QodoStructuredReview, headSha: st
       title: 'Review revision unconfirmed',
       detail: `Ghostline cannot compare Qodo’s reviewed revision with a known pull-request head. Findings remain source data, but their freshness is unknown.${staleFindingDetail(staleFindingCount, review, headSha)}${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
       nextAction: freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'inspect the original Qodo source and confirm which revision it reviewed.'),
+    }
+  }
+
+  if (!sessionStatus) {
+    return {
+      ...counts,
+      kind: 'incomplete',
+      title: 'Qodo review is not complete',
+      detail: `Qodo returned session metadata for the current PR head but no session status. Findings remain visible, but Ghostline cannot confirm review completion.${freshnessFindingDetail(openFindingCount, unclassifiedFindingCount)}`,
+      nextAction: freshnessNextAction(openFindingCount, unclassifiedFindingCount, 'confirm the Qodo session status from its source before relying on review completion.'),
     }
   }
 

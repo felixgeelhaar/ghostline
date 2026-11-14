@@ -239,12 +239,12 @@ func (session *qodoReviewSession) UnmarshalJSON(payload []byte) error {
 	if err := json.Unmarshal(payload, &snake); err != nil {
 		return err
 	}
-	commitSHA, err := mergeRevisionAliases(decoded.CommitSHA, snake.CommitSHA)
+	commitSHA, err := domain.MergeQodoRevisions("revision fields", decoded.CommitSHA, snake.CommitSHA)
 	if err != nil {
 		return err
 	}
 	decoded.CommitSHA = commitSHA
-	decoded.StartedAt, err = mergeQodoTimes("review-session start times", decoded.StartedAt, snake.StartedAt)
+	decoded.StartedAt, err = domain.MergeQodoTimes("review-session start times", decoded.StartedAt, snake.StartedAt)
 	if err != nil {
 		return err
 	}
@@ -252,50 +252,8 @@ func (session *qodoReviewSession) UnmarshalJSON(payload []byte) error {
 	return nil
 }
 
-func mergeQodoTimes(field string, preferred, fallback *time.Time) (*time.Time, error) {
-	if preferred != nil && fallback != nil && !preferred.Equal(*fallback) {
-		return nil, fmt.Errorf("Qodo returned conflicting %s", field)
-	}
-	if preferred != nil {
-		return preferred, nil
-	}
-	return fallback, nil
-}
-
-func mergeRevisionAliases(preferred, fallback string) (string, error) {
-	if preferred != "" && fallback != "" && !strings.EqualFold(preferred, fallback) {
-		return "", errors.New("Qodo returned conflicting revision fields")
-	}
-	if preferred != "" {
-		return preferred, nil
-	}
-	return fallback, nil
-}
-
-func mergeAttributionStatusAliases(preferred, fallback string) (string, error) {
-	if preferred != "" && fallback != "" && !strings.EqualFold(preferred, fallback) {
-		return "", errors.New("Qodo returned conflicting attribution statuses")
-	}
-	if preferred != "" {
-		return preferred, nil
-	}
-	return fallback, nil
-}
-
 func mergeFindingStringAliases(field string, values ...string) (string, error) {
 	return domain.MergeQodoStringAliases("finding "+field, values...)
-}
-
-// mergeFindingRevisionAliases treats hexadecimal SHA casing as equivalent while
-// preserving the first source value for display and provenance.
-func mergeFindingRevisionAliases(field, preferred, fallback string) (string, error) {
-	if preferred != "" && fallback != "" && !strings.EqualFold(preferred, fallback) {
-		return "", fmt.Errorf("Qodo returned conflicting %s", field)
-	}
-	if preferred != "" {
-		return preferred, nil
-	}
-	return fallback, nil
 }
 
 func mergeFindingIntAliases(field string, values ...int) (int, error) {
@@ -391,12 +349,12 @@ func (finding *qodoManagedFinding) UnmarshalJSON(payload []byte) error {
 		return err
 	}
 	finding.ActionLevel = actionLevel
-	attributionStatus, err := mergeAttributionStatusAliases(finding.AttributionStatus, snake.AttributionStatus)
+	attributionStatus, err := domain.MergeQodoEnumAliases("attribution statuses", finding.AttributionStatus, snake.AttributionStatus)
 	if err != nil {
 		return err
 	}
 	finding.AttributionStatus = attributionStatus
-	gitSHA, err := mergeRevisionAliases(finding.GitSHA, snake.GitSHA)
+	gitSHA, err := domain.MergeQodoRevisions("revision fields", finding.GitSHA, snake.GitSHA)
 	if err != nil {
 		return err
 	}
@@ -459,12 +417,12 @@ func (run *qodoManagedReviewRun) UnmarshalJSON(payload []byte) error {
 	if err := json.Unmarshal(payload, &snake); err != nil {
 		return err
 	}
-	commitSHA, err := mergeRevisionAliases(decoded.CommitSHA, snake.CommitSHA)
+	commitSHA, err := domain.MergeQodoRevisions("revision fields", decoded.CommitSHA, snake.CommitSHA)
 	if err != nil {
 		return err
 	}
 	decoded.CommitSHA = commitSHA
-	decoded.StartedAt, err = mergeQodoTimes("review-run start times", decoded.StartedAt, snake.StartedAt)
+	decoded.StartedAt, err = domain.MergeQodoTimes("review-run start times", decoded.StartedAt, snake.StartedAt)
 	if err != nil {
 		return err
 	}
@@ -494,7 +452,7 @@ func newQodoReviewClient() *qodoReviewClient {
 	}
 }
 
-func (client *qodoReviewClient) fetch(ctx context.Context, apiKey, prURL string) (qodoReviewData, error) {
+func (client *qodoReviewClient) fetch(ctx context.Context, apiKey, prURL string) (result qodoReviewData, fetchErr error) {
 	var empty qodoReviewData
 	if client == nil || client.http == nil || client.endpoint == "" {
 		return empty, errors.New("Qodo review source is not configured")
@@ -524,6 +482,15 @@ func (client *qodoReviewClient) fetch(ctx context.Context, apiKey, prURL string)
 	initResponse, sessionID, err := client.post(ctx, apiKey, "", initialize, 1, true)
 	if err != nil {
 		return empty, err
+	}
+	if sessionID != "" {
+		defer func() {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+			defer cancel()
+			if cleanupErr := client.closeSession(cleanupCtx, apiKey, sessionID); cleanupErr != nil && fetchErr == nil {
+				result.Warnings = append(result.Warnings, "Qodo review data was retrieved, but its MCP session could not be closed cleanly.")
+			}
+		}()
 	}
 	var initResult struct {
 		ProtocolVersion string `json:"protocolVersion"`
@@ -560,6 +527,25 @@ func (client *qodoReviewClient) fetch(ctx context.Context, apiKey, prURL string)
 	data.Availability = "available"
 	data.Source = "Qodo Agentic Toolbox · get-pr-review-findings"
 	return data, nil
+}
+
+func (client *qodoReviewClient) closeSession(ctx context.Context, apiKey, sessionID string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, client.endpoint, nil)
+	if err != nil {
+		return errors.New("could not prepare Qodo MCP session cleanup")
+	}
+	request.Header.Set("Authorization", "Bearer "+apiKey)
+	request.Header.Set("Mcp-Session-Id", sessionID)
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	response, err := client.http.Do(request)
+	if err != nil {
+		return errors.New("could not close Qodo MCP session")
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusMethodNotAllowed || response.StatusCode >= 200 && response.StatusCode < 300 {
+		return nil
+	}
+	return fmt.Errorf("Qodo MCP session cleanup returned HTTP %d", response.StatusCode)
 }
 
 type qodoToolResult struct {
@@ -651,7 +637,7 @@ func looksLikeQodoReviewObject(payload []byte) bool {
 	if json.Unmarshal(payload, &fields) != nil {
 		return false
 	}
-	for _, key := range []string{"review_session", "reviewSession", "findings", "review_runs", "reviewRuns"} {
+	for _, key := range []string{"review_session", "reviewSession", "findings", "camelFindings", "review_runs", "reviewRuns"} {
 		if _, ok := fields[key]; ok {
 			return true
 		}
@@ -783,7 +769,7 @@ func decodeMCPEnvelopeStream(reader io.Reader, contentType string, expectedID in
 	var eventData []string
 	var consumed int
 	for scanner.Scan() {
-		line := scanner.Text()
+		line := strings.TrimSuffix(scanner.Text(), "\r")
 		consumed += len(line) + 1
 		if consumed > maxQodoResponseBytes {
 			return empty, errors.New("Qodo review response exceeded the size limit")

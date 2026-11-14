@@ -20,7 +20,6 @@ func TestValidateQodoReviewSnapshot(t *testing.T) {
 		name string
 		edit func(*QodoReviewSnapshot)
 	}{
-		{"session without status", func(snapshot *QodoReviewSnapshot) { snapshot.ReviewSession.Status = " " }},
 		{"invalid session revision", func(snapshot *QodoReviewSnapshot) { snapshot.ReviewSession.CommitSHA = "short" }},
 		{"finding without id", func(snapshot *QodoReviewSnapshot) { snapshot.Findings[0].ID = "" }},
 		{"finding with blank id", func(snapshot *QodoReviewSnapshot) { snapshot.Findings[0].ID = " \t " }},
@@ -45,6 +44,17 @@ func TestValidateQodoReviewSnapshot(t *testing.T) {
 				t.Fatal("invalid Qodo snapshot was accepted")
 			}
 		})
+	}
+}
+
+func TestValidateQodoReviewSnapshotAllowsSessionWithoutStatus(t *testing.T) {
+	snapshot := QodoReviewSnapshot{
+		ReviewSession: &QodoReviewSession{CommitSHA: strings.Repeat("a", 40)},
+		Findings:      []QodoReviewFinding{{ID: "finding-1", Title: "Guard retries"}},
+		ReviewRuns:    []QodoReviewRun{},
+	}
+	if err := ValidateQodoReviewSnapshot(snapshot); err != nil {
+		t.Fatalf("session metadata without status hid otherwise useful findings: %v", err)
 	}
 }
 
