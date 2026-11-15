@@ -198,6 +198,28 @@ describe('structured Qodo review request binding', () => {
     expect(host?.textContent).toContain('GitHub is temporarily unavailable.')
   })
 
+  it('keeps the stale snapshot notice visible after an invalid URL is submitted', async () => {
+    vi.mocked(importPullRequest)
+      .mockResolvedValueOnce(makePR(7))
+      .mockRejectedValueOnce(new Error('GitHub is temporarily unavailable.'))
+    await mount()
+
+    await setValue('#pr-url', 'https://github.com/acme/app/pull/7')
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await settle()
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await settle()
+    expect(host?.textContent).toContain('Showing the last imported snapshot for acme/app#7.')
+
+    await setValue('#pr-url', 'not a GitHub pull request URL')
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await settle()
+
+    expect(host?.textContent).toContain('Enter a valid GitHub pull request URL.')
+    expect(host?.textContent).toContain('Showing the last imported snapshot for acme/app#7.')
+    expect(host?.textContent).toContain('Change 7')
+  })
+
   it('keeps a pending structured review alive during a failed same-PR refresh', async () => {
     vi.stubGlobal('isSecureContext', true)
     vi.mocked(importPullRequest)

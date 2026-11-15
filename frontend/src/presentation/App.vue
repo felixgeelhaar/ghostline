@@ -126,11 +126,11 @@ async function loadPR() {
   const request = ++importRequest
   const requestedURL = url.value
   error.value = validatePullRequestURL(requestedURL) ?? ''
-  showingPreviousSnapshot.value = false
   if (error.value) {
     loading.value = false
     return
   }
+  showingPreviousSnapshot.value = false
   const keepCurrentChange = isSamePullRequest(pr.value, requestedURL)
   loading.value = true
   if (!keepCurrentChange) {
