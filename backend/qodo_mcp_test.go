@@ -199,6 +199,42 @@ func TestQodoReviewDataRejectsRepeatedJSONFields(t *testing.T) {
 	}
 }
 
+func TestQodoReviewDataRejectsCaseInsensitiveRepeatedFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "findings",
+			payload: `{"findings":[{"id":"visible","title":"Visible finding"}],"Findings":[],"review_runs":[]}`,
+		},
+		{
+			name:    "truncation flag",
+			payload: `{"findings":[],"review_runs":[],"qar_operation_result_truncated":true,"QAR_OPERATION_RESULT_TRUNCATED":false}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var data qodoReviewData
+			if err := json.Unmarshal([]byte(test.payload), &data); err == nil || !strings.Contains(err.Error(), "ambiguous JSON object keys") {
+				t.Fatalf("decode error = %v; want ambiguous JSON object keys", err)
+			}
+		})
+	}
+}
+
+func TestQodoReviewDataPreservesCaseSensitiveCitationMetadataKeys(t *testing.T) {
+	payload := `{"findings":[{"id":"f-1","title":"Keep metadata","evidence":{"citations":[{"metadata":{"key":1,"Key":2}}]}}],"review_runs":[]}`
+	var data qodoReviewData
+	if err := json.Unmarshal([]byte(payload), &data); err != nil {
+		t.Fatalf("case-sensitive citation metadata keys were rejected: %v", err)
+	}
+	metadata := string(data.Findings[0].Evidence.Citations[0].Metadata)
+	if !strings.Contains(metadata, `"key":1`) || !strings.Contains(metadata, `"Key":2`) {
+		t.Fatalf("citation metadata keys were not preserved: %s", metadata)
+	}
+}
+
 func TestQodoReviewClientAcceptsIntegerValuedDecimalResponseID(t *testing.T) {
 	client := qodoReviewClient{
 		endpoint: "https://qodo.test/v1/tools/mcp/",

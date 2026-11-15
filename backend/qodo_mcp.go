@@ -83,6 +83,9 @@ func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
 	if fields == nil {
 		return errors.New("Qodo review response must be an object")
 	}
+	if err := rejectAmbiguousQodoWireFields(fields); err != nil {
+		return err
+	}
 	knownFields := []string{"review_session", "reviewSession", "findings", "camelFindings", "review_runs", "reviewRuns"}
 	recognized := false
 	for _, name := range knownFields {
@@ -148,6 +151,30 @@ func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
 		return err
 	}
 	*data = normalized
+	return nil
+}
+
+func rejectAmbiguousQodoWireFields(fields map[string]json.RawMessage) error {
+	// encoding/json matches struct field names case-insensitively. Restrict this
+	// check to top-level wire fields so arbitrary citation metadata can retain
+	// distinct keys such as "key" and "Key".
+	knownFields := []string{
+		"review_session", "reviewSession", "findings", "camelFindings",
+		"review_runs", "reviewRuns", "warnings", "qar_operation_result_truncated",
+	}
+	seen := make(map[string]string, len(knownFields))
+	for name := range fields {
+		for _, known := range knownFields {
+			if !strings.EqualFold(name, known) {
+				continue
+			}
+			if previous, exists := seen[known]; exists && previous != name {
+				return errors.New("Qodo response contains ambiguous JSON object keys")
+			}
+			seen[known] = name
+			break
+		}
+	}
 	return nil
 }
 
