@@ -81,6 +81,7 @@ func loadAuthConfig(getenv func(string) string) (authConfig, error) {
 }
 
 type authSession struct {
+	ID        string                `json:"id"`
 	Identity  domain.GitHubIdentity `json:"identity"`
 	ExpiresAt int64                 `json:"expires_at"`
 }
@@ -169,7 +170,8 @@ func (m *authManager) login(c *gin.Context) {
 		return
 	}
 	m.registerOAuthState(state, expiresAt)
-	http.SetCookie(c.Writer, &http.Cookie{Name: oauthCookieName, Value: value, Path: "/", MaxAge: int(oauthStateLifetime.Seconds()), HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
+	cookieName := oauthCookieNameForState(state)
+	http.SetCookie(c.Writer, &http.Cookie{Name: cookieName, Value: value, Path: "/", MaxAge: int(oauthStateLifetime.Seconds()), HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})
 	c.Redirect(http.StatusFound, target)
 }
 
@@ -178,23 +180,29 @@ func (m *authManager) callback(c *gin.Context) {
 		c.String(http.StatusUnauthorized, "GitHub sign-in was not completed. Return to Ghostline and try again.")
 		return
 	}
-	stateCookie, err := c.Request.Cookie(oauthCookieName)
+	queryState := c.Query("state")
+	if !validOAuthState(queryState) {
+		c.String(http.StatusUnauthorized, "GitHub sign-in could not be verified. Return to Ghostline and try again.")
+		return
+	}
+	cookieName := oauthCookieNameForState(queryState)
+	stateCookie, err := c.Request.Cookie(cookieName)
 	if err != nil {
 		c.String(http.StatusUnauthorized, "GitHub sign-in expired. Return to Ghostline and try again.")
 		return
 	}
 	var pending oauthState
-	if !m.verify(stateCookie.Value, "oauth-state", &pending) || pending.ExpiresAt <= m.now().Unix() || !constantEqual(c.Query("state"), pending.State) {
+	if !m.verify(stateCookie.Value, "oauth-state", &pending) || pending.ExpiresAt <= m.now().Unix() || !constantEqual(queryState, pending.State) {
 		c.String(http.StatusUnauthorized, "GitHub sign-in could not be verified. Return to Ghostline and try again.")
 		return
 	}
 	if !m.beginOAuthCallback(pending.State) {
-		http.SetCookie(c.Writer, expiredCookie(oauthCookieName))
+		http.SetCookie(c.Writer, expiredCookie(cookieName))
 		c.String(http.StatusUnauthorized, "GitHub sign-in expired. Return to Ghostline and try again.")
 		return
 	}
 	defer m.finishOAuthCallback(pending.State)
-	http.SetCookie(c.Writer, expiredCookie(oauthCookieName))
+	http.SetCookie(c.Writer, expiredCookie(cookieName))
 	if c.Query("error") != "" {
 		c.String(http.StatusUnauthorized, "GitHub sign-in was not completed. Return to Ghostline and try again.")
 		return
@@ -220,7 +228,7 @@ func (m *authManager) callback(c *gin.Context) {
 		c.String(http.StatusForbidden, "This GitHub account is not on the Ghostline access list.")
 		return
 	}
-	session, err := m.sign("session", authSession{Identity: identity, ExpiresAt: m.now().Add(defaultSessionLifetime).Unix()})
+	session, err := m.newSessionValue(identity, m.now().Add(defaultSessionLifetime))
 	if err != nil {
 		c.String(http.StatusInternalServerError, "Ghostline could not create a sign-in session.")
 		return
@@ -250,17 +258,20 @@ func (m *authManager) logout(c *gin.Context) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
-	if cookie, err := c.Request.Cookie(oauthCookieName); err == nil {
+	for _, cookie := range c.Request.Cookies() {
+		if !strings.HasPrefix(cookie.Name, oauthCookiePrefix) {
+			continue
+		}
 		var pending oauthState
-		if m.verify(cookie.Value, "oauth-state", &pending) {
+		if m.verify(cookie.Value, "oauth-state", &pending) && cookie.Name == oauthCookieNameForState(pending.State) {
 			m.cancelOAuthState(pending.State)
 		}
+		http.SetCookie(c.Writer, expiredCookie(cookie.Name))
 	}
 	if cookie, err := c.Request.Cookie(sessionCookieName); err == nil {
 		m.revokeSession(cookie.Value)
 	}
 	http.SetCookie(c.Writer, expiredCookie(sessionCookieName))
-	http.SetCookie(c.Writer, expiredCookie(oauthCookieName))
 	c.Status(http.StatusNoContent)
 }
 
@@ -417,16 +428,24 @@ func decodeLimitedJSON(body io.Reader, target any) error {
 }
 
 func (m *authManager) newSessionCookie(identity domain.GitHubIdentity, expiry time.Time) (*http.Cookie, error) {
-	value, err := m.sign("session", authSession{Identity: identity, ExpiresAt: expiry.Unix()})
+	value, err := m.newSessionValue(identity, expiry)
 	if err != nil {
 		return nil, err
 	}
 	return &http.Cookie{Name: sessionCookieName, Value: value, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode}, nil
 }
 
+func (m *authManager) newSessionValue(identity domain.GitHubIdentity, expiry time.Time) (string, error) {
+	id, err := randomToken(m.random, 32)
+	if err != nil {
+		return "", err
+	}
+	return m.sign("session", authSession{ID: id, Identity: identity, ExpiresAt: expiry.Unix()})
+}
+
 func (m *authManager) sessionFromCookie(value string) (authSession, bool) {
 	var session authSession
-	if !m.verify(value, "session", &session) || session.ExpiresAt <= m.now().Unix() {
+	if !m.verify(value, "session", &session) || session.ID == "" || session.ExpiresAt <= m.now().Unix() {
 		return authSession{}, false
 	}
 	if m.isSessionRevoked(value) {
@@ -442,7 +461,7 @@ func (m *authManager) sessionFromCookie(value string) (authSession, bool) {
 
 func (m *authManager) revokeSession(value string) {
 	var session authSession
-	if !m.verify(value, "session", &session) || session.ExpiresAt <= m.now().Unix() || !domain.GitHubIdentityAllowed(session.Identity.ID, m.cfg.AllowedIDs) {
+	if !m.verify(value, "session", &session) || session.ID == "" || session.ExpiresAt <= m.now().Unix() || !domain.GitHubIdentityAllowed(session.Identity.ID, m.cfg.AllowedIDs) {
 		return
 	}
 	digest := sha256.Sum256([]byte(value))
@@ -550,9 +569,23 @@ func constantEqual(left, right string) bool {
 }
 
 const (
-	oauthCookieName   = "__Host-ghostline_oauth"
+	oauthCookiePrefix = "__Host-ghostline_oauth_"
 	sessionCookieName = "__Host-ghostline_session"
 )
+
+func oauthCookieNameForState(state string) string { return oauthCookiePrefix + state }
+
+func validOAuthState(state string) bool {
+	if len(state) != 43 {
+		return false
+	}
+	for _, char := range state {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '-' || char == '_') {
+			return false
+		}
+	}
+	return true
+}
 
 func expiredCookie(name string) *http.Cookie {
 	return &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode}

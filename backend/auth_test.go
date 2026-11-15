@@ -123,6 +123,22 @@ func TestSignedSessionRejectsTamperingAndExpiry(t *testing.T) {
 	}
 }
 
+func TestSessionCookiesAreUniqueForTheSameIdentityAndExpiry(t *testing.T) {
+	manager := newAuthManager(testAuthConfig(), nil)
+	expiry := manager.now().Add(timeHour)
+	first, err := manager.newSessionCookie(testIdentity(), expiry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.newSessionCookie(testIdentity(), expiry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Value == second.Value {
+		t.Fatal("separate sign-in sessions received the same signed cookie")
+	}
+}
+
 const timeHour = time.Hour
 
 func testAuthConfig() authConfig {
@@ -264,15 +280,74 @@ func TestGitHubOAuthCallbackIssuesAllowlistedSessionAndDiscardsToken(t *testing.
 	}
 }
 
+func TestSignInCanCompleteFromTwoTabs(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Host == "github.com" {
+			return oauthResponse(http.StatusOK, `{"access_token":"temporary-token","token_type":"bearer"}`), nil
+		}
+		return oauthResponse(http.StatusOK, `{"id":42,"login":"Felix-Dev"}`), nil
+	})}
+	auth := newAuthManager(testAuthConfig(), client)
+	router := newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(20, time.Minute, time.Now), clientIdentity{}, nil, auth)
+	startLogin := func(cookie *http.Cookie) (string, *http.Cookie) {
+		request := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+		request.Header.Set("Origin", "https://ghostline.example")
+		if cookie != nil {
+			request.AddCookie(cookie)
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusFound {
+			t.Fatalf("login status=%d, want 302", response.Code)
+		}
+		authorization, err := url.Parse(response.Header().Get("Location"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return authorization.Query().Get("state"), response.Result().Cookies()[0]
+	}
+	firstState, firstCookie := startLogin(nil)
+	secondState, secondCookie := startLogin(firstCookie)
+	if firstState == secondState || firstCookie.Name == secondCookie.Name {
+		t.Fatal("separate sign-in tabs did not receive independent OAuth state cookies")
+	}
+	complete := func(state string, cookie *http.Cookie) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, "/auth/callback?state="+url.QueryEscape(state)+"&code=one-time-code", nil)
+		request.AddCookie(cookie)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+	first := complete(firstState, firstCookie)
+	second := complete(secondState, secondCookie)
+	if first.Code != http.StatusSeeOther || second.Code != http.StatusSeeOther {
+		t.Fatalf("two-tab callback statuses = %d, %d; want 303 for both", first.Code, second.Code)
+	}
+	firstSession, secondSession := "", ""
+	for _, cookie := range first.Result().Cookies() {
+		if cookie.Name == sessionCookieName {
+			firstSession = cookie.Value
+		}
+	}
+	for _, cookie := range second.Result().Cookies() {
+		if cookie.Name == sessionCookieName {
+			secondSession = cookie.Value
+		}
+	}
+	if firstSession == "" || secondSession == "" || firstSession == secondSession {
+		t.Fatal("separate sign-ins did not receive distinct session cookies")
+	}
+}
+
 func TestGitHubOAuthRejectsStateMismatchAndNonAllowlistedUser(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		login string
-		state string
-		want  int
+		name     string
+		login    string
+		mismatch bool
+		want     int
 	}{
-		{name: "state mismatch", login: "Felix-Dev", state: "wrong", want: http.StatusUnauthorized},
-		{name: "user not allowlisted", login: "other-user", state: "matching", want: http.StatusForbidden},
+		{name: "state mismatch", login: "Felix-Dev", mismatch: true, want: http.StatusUnauthorized},
+		{name: "user not allowlisted", login: "other-user", want: http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -283,14 +358,22 @@ func TestGitHubOAuthRejectsStateMismatchAndNonAllowlistedUser(t *testing.T) {
 			})}
 			auth := newAuthManager(testAuthConfig(), client)
 			router := newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(20, time.Minute, time.Now), clientIdentity{}, nil, auth)
-			pending := oauthState{State: "matching", Verifier: "verifier", ExpiresAt: time.Now().Add(time.Minute).Unix()}
+			pendingState, err := randomToken(auth.random, 32)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pending := oauthState{State: pendingState, Verifier: "verifier", ExpiresAt: time.Now().Add(time.Minute).Unix()}
 			value, err := auth.sign("oauth-state", pending)
 			if err != nil {
 				t.Fatal(err)
 			}
 			auth.registerOAuthState(pending.State, time.Unix(pending.ExpiresAt, 0))
-			request := httptest.NewRequest(http.MethodGet, "/auth/callback?state="+tc.state+"&code=code", nil)
-			request.AddCookie(&http.Cookie{Name: oauthCookieName, Value: value})
+			queryState := pending.State
+			if tc.mismatch {
+				queryState = strings.Repeat("x", 43)
+			}
+			request := httptest.NewRequest(http.MethodGet, "/auth/callback?state="+queryState+"&code=code", nil)
+			request.AddCookie(&http.Cookie{Name: oauthCookieNameForState(pending.State), Value: value})
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
 			if response.Code != tc.want {
@@ -298,7 +381,7 @@ func TestGitHubOAuthRejectsStateMismatchAndNonAllowlistedUser(t *testing.T) {
 			}
 			if tc.name == "state mismatch" {
 				for _, cookie := range response.Result().Cookies() {
-					if cookie.Name == oauthCookieName && cookie.MaxAge < 0 {
+					if cookie.Name == oauthCookieNameForState(pending.State) && cookie.MaxAge < 0 {
 						t.Fatal("invalid callback cleared the pending OAuth state cookie")
 					}
 				}
@@ -328,7 +411,7 @@ func TestCrossSiteLoginCannotReplacePendingOAuthState(t *testing.T) {
 		t.Fatalf("cross-site login status = %d, want %d", response.Code, http.StatusForbidden)
 	}
 	for _, cookie := range response.Result().Cookies() {
-		if cookie.Name == oauthCookieName {
+		if strings.HasPrefix(cookie.Name, oauthCookiePrefix) {
 			t.Fatalf("cross-site login changed pending OAuth cookie: %+v", cookie)
 		}
 	}
@@ -375,6 +458,16 @@ func TestLogoutExpiresSessionAndPendingOAuthState(t *testing.T) {
 	router := newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(20, time.Minute, time.Now), clientIdentity{}, nil, auth)
 	request := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
 	request.Header.Set("Origin", "https://ghostline.example")
+	state, err := randomToken(auth.random, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateValue, err := auth.sign("oauth-state", oauthState{State: state, Verifier: "verifier", ExpiresAt: time.Now().Add(time.Minute).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth.registerOAuthState(state, time.Now().Add(time.Minute))
+	request.AddCookie(&http.Cookie{Name: oauthCookieNameForState(state), Value: stateValue})
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent {
@@ -386,7 +479,7 @@ func TestLogoutExpiresSessionAndPendingOAuthState(t *testing.T) {
 			expired[cookie.Name] = true
 		}
 	}
-	if !expired[sessionCookieName] || !expired[oauthCookieName] {
+	if !expired[sessionCookieName] || !expired[oauthCookieNameForState(state)] {
 		t.Fatalf("logout did not expire both session and pending OAuth cookies: %+v", response.Result().Cookies())
 	}
 }
@@ -437,14 +530,18 @@ func TestOAuthCallbackIsRateLimitedPerClient(t *testing.T) {
 	auth := newAuthManager(testAuthConfig(), client)
 	limiter := newRateLimiter(1, time.Minute, time.Now)
 	router := newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, limiter, clientIdentity{}, nil, auth)
-	state, err := auth.sign("oauth-state", oauthState{State: "expected", Verifier: "verifier", ExpiresAt: time.Now().Add(time.Minute).Unix()})
+	stateValue, err := randomToken(auth.random, 32)
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth.registerOAuthState("expected", time.Now().Add(time.Minute))
+	state, err := auth.sign("oauth-state", oauthState{State: stateValue, Verifier: "verifier", ExpiresAt: time.Now().Add(time.Minute).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth.registerOAuthState(stateValue, time.Now().Add(time.Minute))
 	request := func() *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodGet, "/auth/callback?state=expected&code=one-time-code", nil)
-		req.AddCookie(&http.Cookie{Name: oauthCookieName, Value: state})
+		req := httptest.NewRequest(http.MethodGet, "/auth/callback?state="+url.QueryEscape(stateValue)+"&code=one-time-code", nil)
+		req.AddCookie(&http.Cookie{Name: oauthCookieNameForState(stateValue), Value: state})
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, req)
 		return response
@@ -532,14 +629,18 @@ func TestOAuthCallbackLogsSafeFailureStage(t *testing.T) {
 		return nil, errors.New("upstream unavailable")
 	})})
 	auth.logger = slog.New(slog.NewTextHandler(&output, nil))
-	state := oauthState{State: "state-secret", Verifier: "verifier", ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	stateValue, err := randomToken(auth.random, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := oauthState{State: stateValue, Verifier: "verifier", ExpiresAt: time.Now().Add(time.Minute).Unix()}
 	value, err := auth.sign("oauth-state", state)
 	if err != nil {
 		t.Fatal(err)
 	}
 	auth.registerOAuthState(state.State, time.Unix(state.ExpiresAt, 0))
-	request := httptest.NewRequest(http.MethodGet, "/auth/callback?state=state-secret&code=code-secret", nil)
-	request.AddCookie(&http.Cookie{Name: oauthCookieName, Value: value})
+	request := httptest.NewRequest(http.MethodGet, "/auth/callback?state="+url.QueryEscape(stateValue)+"&code=code-secret", nil)
+	request.AddCookie(&http.Cookie{Name: oauthCookieNameForState(state.State), Value: value})
 	response := httptest.NewRecorder()
 	newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(10, time.Minute, time.Now), clientIdentity{}, nil, auth).ServeHTTP(response, request)
 	if response.Code != http.StatusBadGateway {
@@ -549,7 +650,7 @@ func TestOAuthCallbackLogsSafeFailureStage(t *testing.T) {
 	if !strings.Contains(logged, "token_exchange") || !strings.Contains(logged, "upstream unavailable") {
 		t.Fatalf("callback failure log omitted stage or cause: %s", logged)
 	}
-	for _, secret := range []string{"code-secret", "state-secret", "verifier", "temporary-token"} {
+	for _, secret := range []string{"code-secret", stateValue, "verifier", "temporary-token"} {
 		if strings.Contains(logged, secret) {
 			t.Fatalf("callback log contains OAuth secret %q: %s", secret, logged)
 		}
