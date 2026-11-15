@@ -279,6 +279,7 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		HTMLURL    string `json:"html_url"`
 		CreatedAt  string `json:"created_at"`
 	}
+	expiredArtifactFound := false
 	for i := range matchingRuns {
 		run := &matchingRuns[i]
 		artifactHistoryTruncated := false
@@ -292,6 +293,22 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 			for j := range response.Artifacts {
 				candidate := &response.Artifacts[j]
 				if candidate.Name != noxArtifactName || candidate.WorkflowRun.HeadSHA != sha || candidate.WorkflowRun.ID != run.ID {
+					continue
+				}
+				if candidate.Expired {
+					if !expiredArtifactFound || candidate.CreatedAt > result.CreatedAt {
+						result.RunID = run.ID
+						result.RunName = run.Name
+						result.RunConclusion = run.Conclusion
+						result.RunURL = githubRunURL(owner, repo, run.ID)
+						result.ArtifactID = candidate.ID
+						result.ArtifactURL = result.RunURL
+						result.ArtifactDigest = candidate.Digest
+						result.CreatedAt = candidate.CreatedAt
+						result.ExpiresAt = candidate.ExpiresAt
+						result.Reason = "The Nox report has expired from GitHub Actions storage."
+						expiredArtifactFound = true
+					}
 					continue
 				}
 				if artifact == nil || candidate.CreatedAt > artifact.CreatedAt {
@@ -317,6 +334,8 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 	if artifact == nil || selectedRun == nil {
 		if workflowHistoryTruncated {
 			result.Reason = noxInspectionIncompleteReason
+		} else if expiredArtifactFound {
+			return result
 		} else {
 			result.Reason = "No retained Nox report was published for this revision."
 		}

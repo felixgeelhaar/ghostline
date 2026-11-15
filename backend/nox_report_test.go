@@ -155,6 +155,46 @@ func TestLoadNoxReportUsesOnlyArtifactForExactPullRequestRevision(t *testing.T) 
 	}
 }
 
+func TestLoadNoxReportFallsBackToOlderRetainedArtifactWhenNewestExpired(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	digest := sha256.Sum256(archive)
+	var downloadedArtifactID string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/app/pulls/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+		case "/repos/acme/app/actions/workflows/nox.yml/runs":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{
+				map[string]any{"id": 22, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T14:00:00Z"},
+				map[string]any{"id": 21, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:00:00Z"},
+			}})
+		case "/repos/acme/app/actions/runs/22/artifacts":
+			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{
+				"id": 122, "name": noxArtifactName, "expired": true, "created_at": "2026-11-15T14:00:17Z",
+				"workflow_run": map[string]any{"id": 22, "head_sha": sha},
+			}}})
+		case "/repos/acme/app/actions/runs/21/artifacts":
+			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{
+				"id": 121, "name": noxArtifactName, "size_in_bytes": len(archive), "digest": "sha256:" + hex.EncodeToString(digest[:]),
+				"created_at": "2026-11-15T13:00:17Z", "expires_at": "2026-11-22T13:00:16Z",
+				"workflow_run": map[string]any{"id": 21, "head_sha": sha},
+			}}})
+		case "/repos/acme/app/actions/artifacts/121/zip":
+			downloadedArtifactID = "121"
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+	if report.Availability != noxReportAvailable || report.RunID != 21 || report.ArtifactID != 121 || downloadedArtifactID != "121" {
+		t.Fatalf("newest expired report hid the older retained report: %+v, downloaded artifact=%q", report, downloadedArtifactID)
+	}
+}
+
 func TestLoadNoxReportRejectsArtifactWithDifferentRevisionProvenance(t *testing.T) {
 	const sha = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
