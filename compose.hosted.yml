@@ -7,6 +7,7 @@ services:
       - .env.hosted
     environment:
       GHOSTLINE_SESSION_SECRET: ${GHOSTLINE_SESSION_SECRET:?Provide this value through the host secret manager}
+      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:?Provide this value through the host secret manager}
       HOST: 0.0.0.0
       PORT: 8080
       GHOSTLINE_ENV: production

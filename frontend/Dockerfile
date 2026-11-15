@@ -1,8 +1,8 @@
-FROM node:24.22.3-alpine3.23@sha256:3946fb783fdce8a2812136ea694bc95c698c4f4096f3fd18568dc27a8ac389dc
+FROM node:24.22.3-alpine3.24@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5
 LABEL maintainer="Ghostline maintainers"
 WORKDIR /app
-# Upgrade the pinned builder's Alpine package before running npm scripts.
-RUN apk add --no-cache 'zlib>=1.4-r0'
+RUN apk add --no-cache 'zlib>=1.4-r0' \
+    && apk info -W /usr/lib/libz.so.1 | grep -Fq 'zlib-1.4-r0'
 COPY --chown=node:node package*.json ./
 RUN chown node:node /app
 USER node

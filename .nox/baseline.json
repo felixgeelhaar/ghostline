@@ -38,7 +38,7 @@
       "rule_id": "VULN-001",
       "file_path": "Dockerfile",
       "severity": "medium",
-      "reason": "ALPINE-CVE-2026-4738 remains in the pinned Node 24.22.3 Alpine 3.23 and Go 1.27.4 Alpine 3.23 FROM images (zlib 1.3.2-r1; fixed in 1.4-r0). Both production build stages install zlib\u003e=1.4-r0 before project build commands, and fail if that fixed package is unavailable; Nox inventories the FROM image rather than the resulting stage. The Go runtime is scratch and the frontend build stage is not shipped. This carries forward the existing accepted base-image finding; it is not evidence the upstream images are fixed. Tracked in https://github.com/felixgeelhaar/ghostline/issues/58; remove when the pinned FROM digests contain zlib \u003e=1.4-r0.",
+      "reason": "The pinned Node 24.22.3 Alpine 3.24 and Go 1.27.4 Alpine 3.24 FROM digests contain zlib 1.3.2-r1; fixed in 1.4-r0. Production and development Dockerfiles install and assert zlib 1.4-r0 before project build/runtime commands. The hosted production image is scratch and does not ship the builder package. Nox inventories FROM metadata and cannot verify the post-RUN package state, so this baseline records that scanner limitation and is not evidence the upstream images are fixed. Tracked in https://github.com/felixgeelhaar/ghostline/issues/58; remove when Nox can verify built image contents or the pinned FROM digests contain fixed zlib.",
       "created_at": "2026-11-15T09:38:54.83305Z"
     },
     {
@@ -46,8 +46,61 @@
       "rule_id": "VULN-001",
       "file_path": "frontend/Dockerfile",
       "severity": "medium",
-      "reason": "ALPINE-CVE-2026-4738 remains in the pinned Node 24.22.3 Alpine 3.23 and Go 1.27.4 Alpine 3.23 FROM images (zlib 1.3.2-r1; fixed in 1.4-r0). Both production build stages install zlib\u003e=1.4-r0 before project build commands, and fail if that fixed package is unavailable; Nox inventories the FROM image rather than the resulting stage. The Go runtime is scratch and the frontend build stage is not shipped. This carries forward the existing accepted base-image finding; it is not evidence the upstream images are fixed. Tracked in https://github.com/felixgeelhaar/ghostline/issues/58; remove when the pinned FROM digests contain zlib \u003e=1.4-r0.",
+      "reason": "The pinned Node 24.22.3 Alpine 3.24 and Go 1.27.4 Alpine 3.24 FROM digests contain zlib 1.3.2-r1; fixed in 1.4-r0. Production and development Dockerfiles install and assert zlib 1.4-r0 before project build/runtime commands. The hosted production image is scratch and does not ship the builder package. Nox inventories FROM metadata and cannot verify the post-RUN package state, so this baseline records that scanner limitation and is not evidence the upstream images are fixed. Tracked in https://github.com/felixgeelhaar/ghostline/issues/58; remove when Nox can verify built image contents or the pinned FROM digests contain fixed zlib.",
       "created_at": "2026-11-15T09:38:54.83305Z"
+    },
+    {
+      "fingerprint": "241d7b7fe049c814c60c3966c0d00dc216a37a8276ee5554935dccb082ecb95e",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile.dev",
+      "severity": "medium",
+      "reason": "The pinned Go 1.27.4 Alpine 3.24 FROM digest contains zlib 1.3.2-r1; fixed in 1.4-r0. The development Dockerfile installs and asserts zlib 1.4-r0 before running Ghostline. Nox inventories FROM metadata and cannot verify post-RUN package state. Temporary scanner limitation tracked in https://github.com/felixgeelhaar/ghostline/issues/58; remove when Nox can verify built image contents or the pinned FROM digest contains fixed zlib.",
+      "owner": "ghostline-maintainers",
+      "created_at": "2026-11-15T10:30:12.709481Z"
+    },
+    {
+      "fingerprint": "41131eda8752e6de09401f8c4866ec55ec1e19705e88f31926584175a8567eb1",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile",
+      "severity": "medium",
+      "reason": "Second occurrence of the same zlib finding at the Go builder FROM in Dockerfile. This base digest contains zlib 1.3.2-r1; the build upgrades and asserts 1.4-r0 before compiling Ghostline. The hosted image is scratch and does not ship the builder package. Nox currently emits one fingerprint for both FROM lines, so a second documented baseline entry is required to represent both occurrences. This is not evidence the pinned upstream image is fixed. Tracked in https://github.com/felixgeelhaar/ghostline/issues/58; remove when Nox can verify built image contents or the pinned FROM digest contains fixed zlib.",
+      "created_at": "2026-11-15T09:38:54.83305Z"
+    },
+    {
+      "fingerprint": "a50f55477db5da5681fb4564764c66ab402ce8742dd7735477b735f1d4fcc88f",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile",
+      "severity": "medium",
+      "reason": "Temporary maintainer-approved release exception through 2026-11-20, tracked in https://github.com/felixgeelhaar/ghostline/issues/45. Nox identifies OpenSSL 3.5.9 in the pinned Node builder; this root Dockerfile uses Node only to build static assets, and the hosted runtime is scratch. Reachability is undetermined, so this is accepted interim risk, not a claim the advisories are fixed. Remove as soon as a supported Node release ships OpenSSL 3.5.10 or later.",
+      "owner": "ghostline-maintainers",
+      "created_at": "2026-11-15T10:32:45.199052Z"
+    },
+    {
+      "fingerprint": "af3ebc54e180f577f693164d1da656311c92035ac75c0496f1c97eeaefbcda7f",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile",
+      "severity": "medium",
+      "reason": "Temporary maintainer-approved release exception through 2026-11-20, tracked in https://github.com/felixgeelhaar/ghostline/issues/45. Nox identifies OpenSSL 3.5.9 in the pinned Node builder; this root Dockerfile uses Node only to build static assets, and the hosted runtime is scratch. Reachability is undetermined, so this is accepted interim risk, not a claim the advisories are fixed. Remove as soon as a supported Node release ships OpenSSL 3.5.10 or later.",
+      "owner": "ghostline-maintainers",
+      "created_at": "2026-11-15T10:32:45.199054Z"
+    },
+    {
+      "fingerprint": "cecabf24c03b0808fb65d01b3dda9227837a0350742ce0cbe1c3444aca4d73b6",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile",
+      "severity": "medium",
+      "reason": "Temporary maintainer-approved release exception through 2026-11-20, tracked in https://github.com/felixgeelhaar/ghostline/issues/45. Nox identifies OpenSSL 3.5.9 in the pinned Node builder; this root Dockerfile uses Node only to build static assets, and the hosted runtime is scratch. Reachability is undetermined, so this is accepted interim risk, not a claim the advisories are fixed. Remove as soon as a supported Node release ships OpenSSL 3.5.10 or later.",
+      "owner": "ghostline-maintainers",
+      "created_at": "2026-11-15T10:32:45.199055Z"
+    },
+    {
+      "fingerprint": "da757a242791bcffea46d83d8f8d7528a419d66066a43a14b665eee69636def6",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile",
+      "severity": "medium",
+      "reason": "Temporary maintainer-approved release exception through 2026-11-20, tracked in https://github.com/felixgeelhaar/ghostline/issues/45. Nox identifies OpenSSL 3.5.9 in the pinned Node builder; this root Dockerfile uses Node only to build static assets, and the hosted runtime is scratch. Reachability is undetermined, so this is accepted interim risk, not a claim the advisories are fixed. Remove as soon as a supported Node release ships OpenSSL 3.5.10 or later.",
+      "owner": "ghostline-maintainers",
+      "created_at": "2026-11-15T10:32:45.199056Z"
     }
   ]
 }
