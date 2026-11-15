@@ -9,7 +9,7 @@ import { checkOutcome, checkSummaryPreview, headCommitLabel, orderChecks, summar
 import { findRecurringFindings, qodoHeadCoverage, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import type { QodoStructuredReview } from '../domain/qodoReviewSession'
 import { buildFindingTrace } from '../domain/trace'
-import { validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
+import { isSamePullRequest, validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import ReviewCard from './ReviewCard.vue'
 import DeepTrace from './DeepTrace.vue'
 import StructuredQodoReview from './StructuredQodoReview.vue'
@@ -17,6 +17,7 @@ import StructuredQodoReview from './StructuredQodoReview.vue'
 const url = ref('')
 const pr = ref<PullRequest>()
 const error = ref('')
+const showingPreviousSnapshot = ref(false)
 const loading = ref(false)
 const selectedRevision = ref('')
 const focusedChecks = ref<PullRequest['checks']>()
@@ -58,18 +59,57 @@ const glyph: Record<CheckTone, string> = { pass: '✓', fail: '✕', running: '�
 
 async function loadPR() {
   const request = ++importRequest
-  error.value = validatePullRequestURL(url.value) ?? ''
+  const requestedURL = url.value
+  error.value = validatePullRequestURL(requestedURL) ?? ''
   if (error.value) {
     loading.value = false
     return
   }
-  loading.value = true; pr.value = undefined; selectedRevision.value = ''; selectedTraceId.value = ''; traceTrigger = undefined; focusedChecks.value = undefined; checksError.value = ''; checksLoading.value = false; copyResult.value = undefined; copyRequest++; revisionRequest++
-  qodoRequest++; qodoApiKey.value = ''; qodoStructuredReview.value = undefined; qodoReviewError.value = ''; qodoReviewLoading.value = false
+  const keepCurrentChange = isSamePullRequest(pr.value, requestedURL)
+  loading.value = true
+  if (!keepCurrentChange) {
+    pr.value = undefined
+    selectedRevision.value = ''
+    selectedTraceId.value = ''
+    traceTrigger = undefined
+    focusedChecks.value = undefined
+    checksError.value = ''
+    checksLoading.value = false
+    copyResult.value = undefined
+    qodoStructuredReview.value = undefined
+    qodoReviewError.value = ''
+  }
+  copyRequest++
+  if (!keepCurrentChange) revisionRequest++
+  qodoApiKey.value = ''
+  if (!keepCurrentChange) {
+    qodoRequest++
+    qodoReviewLoading.value = false
+  }
   try {
-    const importedPR = await importPullRequest(url.value)
-    if (request === importRequest) pr.value = importedPR
+    const importedPR = await importPullRequest(requestedURL)
+    if (request === importRequest) {
+      const focusedRevisionStillExists = importedPR.commits.some((commit) => commit.sha === selectedRevision.value)
+      if (selectedRevision.value && !focusedRevisionStillExists) {
+        revisionRequest++
+        selectedRevision.value = ''
+        focusedChecks.value = undefined
+        checksError.value = ''
+        checksLoading.value = false
+      } else if (selectedRevision.value && selectedRevision.value === importedPR.checks.revisionSha) {
+        revisionRequest++
+        focusedChecks.value = importedPR.checks
+        checksError.value = ''
+        checksLoading.value = false
+      }
+      pr.value = importedPR
+      showingPreviousSnapshot.value = false
+    }
   } catch (e) {
-    if (request === importRequest) error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
+    if (request === importRequest) {
+      error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
+      showingPreviousSnapshot.value = keepCurrentChange && pr.value !== undefined
+    }
   } finally {
     if (request === importRequest) loading.value = false
   }
@@ -81,14 +121,15 @@ async function loadStructuredQodoReview() {
   const request = ++qodoRequest
   const requestedPRURL = importedPR.url
   qodoApiKey.value = ''
-  qodoStructuredReview.value = undefined
   qodoReviewError.value = ''
   qodoReviewLoading.value = true
   try {
     const result = await fetchQodoReviewSession(requestedPRURL, apiKey)
     if (request === qodoRequest && pr.value?.url === requestedPRURL) qodoStructuredReview.value = result
   } catch (e) {
-    if (request === qodoRequest && pr.value?.url === requestedPRURL) qodoReviewError.value = e instanceof Error ? e.message : 'Could not load structured Qodo review data.'
+    if (request === qodoRequest && pr.value?.url === requestedPRURL) {
+      qodoReviewError.value = e instanceof Error ? e.message : 'Could not load structured Qodo review data.'
+    }
   } finally {
     if (request === qodoRequest) qodoReviewLoading.value = false
   }
@@ -110,7 +151,9 @@ async function focusRevision(sha: string) {
     const checks = await fetchRevisionChecks(importedPR.url, sha)
     if (request === revisionRequest && selectedRevision.value === sha) focusedChecks.value = checks
   } catch (e) {
-    if (request === revisionRequest && selectedRevision.value === sha) checksError.value = e instanceof Error ? e.message : 'Could not load checks for this revision.'
+    if (request === revisionRequest && selectedRevision.value === sha) {
+      checksError.value = e instanceof Error ? e.message : 'Could not load checks for this revision.'
+    }
   } finally {
     if (request === revisionRequest) checksLoading.value = false
   }
@@ -157,7 +200,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
     <header class="topbar"><a class="brand" href="#"><span class="brand-mark">G</span><span>GHOSTLINE<small>ENGINEERING CONTROL ROOM</small></span></a><span class="live"><i></i> SYSTEM READY</span></header>
     <main id="main-content" tabindex="-1">
     <section class="hero"><p class="eyebrow">CHANGE INTELLIGENCE / 001</p><h1>See the work.<br><em>Trace the decisions.</em></h1><p class="lede">Import a pull request to inspect its revision history. Commit timestamps show when commits were authored, not when they were pushed.</p></section>
-    <section class="import-panel"><label for="pr-url">GITHUB PULL REQUEST</label><div class="input-row"><span class="prefix">↗</span><input id="pr-url" v-model="url" placeholder="https://github.com/owner/repo/pull/123" @keyup.enter="loadPR"><button :disabled="loading" @click="loadPR">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button></div><p v-if="error" class="error" role="alert">{{ error }}</p></section>
+    <section class="import-panel"><label for="pr-url">GITHUB PULL REQUEST</label><div class="input-row"><span class="prefix">↗</span><input id="pr-url" v-model="url" placeholder="https://github.com/owner/repo/pull/123" @keyup.enter="loadPR"><button :disabled="loading" @click="loadPR">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button></div><p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="showingPreviousSnapshot && pr" class="checks-note warn" role="status">GitHub refresh failed. Showing the last imported snapshot for {{ pr.owner }}/{{ pr.repo }}#{{ pr.number }}.</p></section>
     <section v-if="pr" class="change-card">
       <div class="change-heading"><div><span class="eyebrow">{{ pr.repository }} / PULL REQUEST #{{ pr.number }}</span><h2>{{ pr.title }}</h2></div><span class="state" :class="pr.state">{{ pr.state }}</span></div>
       <div class="meta"><span>{{ pr.commits.length }} COMMITS</span><span>OPENED {{ date(pr.createdAt) }}</span><a :href="pr.url" target="_blank" rel="noreferrer">VIEW ON GITHUB ↗</a></div>
@@ -248,7 +291,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         <p class="footnote">Qodo review outcomes are reviewer feedback, not independent proof of correctness. Findings and summaries apply to their linked revision. A finding missing from a later review does not by itself prove the change was fixed.</p>
         <form class="qodo-connect" @submit.prevent="loadStructuredQodoReview">
           <label for="qodo-api-key">OPTIONAL · LOAD STRUCTURED QODO REVIEW</label>
-          <div class="qodo-connect-row"><input id="qodo-api-key" v-model="qodoApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Personal Qodo API key" :disabled="!qodoKeyTransportSecure"><button id="load-qodo-review" type="submit" :disabled="!qodoApiKey || !qodoKeyTransportSecure">{{ qodoReviewLoading ? 'REFRESH STRUCTURED REVIEW' : 'LOAD STRUCTURED REVIEW' }} <span>↗</span></button></div>
+          <div class="qodo-connect-row"><input id="qodo-api-key" v-model="qodoApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Personal Qodo API key" :disabled="!qodoKeyTransportSecure"><button id="load-qodo-review" type="submit" :disabled="!qodoApiKey || !qodoKeyTransportSecure">{{ qodoReviewLoading ? 'LOADING STRUCTURED REVIEW' : qodoStructuredReview ? 'REFRESH STRUCTURED REVIEW' : 'LOAD STRUCTURED REVIEW' }} <span>↗</span></button></div>
           <p v-if="!qodoKeyTransportSecure" class="checks-note warn" role="status"><strong>Secure connection required.</strong> Open Ghostline over HTTPS before sending a Qodo key. Localhost is also allowed.</p>
           <p v-else class="footnote">The key is used for this request only, sent in a header, and never saved by Ghostline. Use only a Ghostline instance you trust.</p>
           <p v-if="qodoReviewLoading" class="checks-note" role="status">Loading structured review data for {{ pr.url }}…</p>
