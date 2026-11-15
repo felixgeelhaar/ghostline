@@ -249,6 +249,11 @@ describe('structured Qodo review request binding', () => {
     expect(host?.textContent).toContain('Change 7')
     retry.resolve(makePR(7, secondSha))
     await settle()
+
+    expect(host?.textContent).toContain('Enter a valid GitHub pull request URL.')
+    expect(host?.textContent).toContain('Showing the last imported snapshot for acme/app#7.')
+    expect(host?.textContent).toContain('Change 7')
+    expect(host?.textContent).not.toContain(secondSha.slice(0, 7))
   })
 
   it('keeps a pending structured review alive during a failed same-PR refresh', async () => {
