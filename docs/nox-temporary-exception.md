@@ -8,7 +8,7 @@
 
 Nox reports four medium-severity advisories for OpenSSL 3.5.9 bundled with the frontend's Node runtime: CVE-2026-95691, CVE-2026-95692, CVE-2026-88823, and CVE-2026-88822. The findings identify an affected version, but Nox cannot establish whether Ghostline reaches the vulnerable code paths. This exception records unresolved risk; it does not mean the advisories are fixed or proven unreachable.
 
-The frontend image was pinned to `node:22.23.5-alpine3.24` when this exception was created. Nox scanned that image and still reported OpenSSL 3.5.9. Updating Alpine's system OpenSSL package alone does not replace the OpenSSL bundled in Node. The production image now uses the exact `node:22.23.5-alpine3.23` digest, but it still bundles the same Node OpenSSL until a supported Node release changes it; the exception remains in force.
+The frontend image was pinned to `node:22.23.5-alpine3.24` when this exception was created. Nox scanned that image and still reported OpenSSL 3.5.9. Updating Alpine's system OpenSSL package alone does not replace the OpenSSL bundled in Node. The production image now uses the exact `node:22.23.5-alpine3.24` digest, but it still bundles the same Node OpenSSL until a supported Node release changes it; the exception remains in force.
 
 ## Exception boundary
 

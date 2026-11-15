@@ -9,4 +9,3 @@ bin/
 .env
 .env.*
 !.env.example
-!.env.hosted.example

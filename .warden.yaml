@@ -9,7 +9,7 @@ commands:
   dev-servers-test: "bash .agents/skills/ghostline-ready-issue/scripts/test-dev-servers.sh"
   go-test: "go test ./... -count=1"
   go-vet: "go vet ./..."
-  nox-scan: "nox --format all --output .nox/results scan . --tracked-only; nox ci-gate --input .nox/results/findings.json"
+  nox-scan: "rm -rf .nox/results && nox --format all --output .nox/results scan . --tracked-only || scan_status=$?; test -s .nox/results/findings.json || exit 1; nox ci-gate --input .nox/results/findings.json"
   frontend-verify: "cd frontend && npm ci && npm test && npm run build"
 steps:
   pre_commit: [day-lock-test, runner-test, dev-servers-test, go-test, nox-scan]

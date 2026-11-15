@@ -5,7 +5,7 @@ Ghostline can run as one production container behind an HTTPS ingress. The image
 ## Configure
 
 1. Create a GitHub OAuth App for the exact public site origin. Set its callback to `https://your-host/auth/callback`.
-2. Copy `.env.hosted.example` to `.env.hosted` and replace every placeholder. Set `GHOSTLINE_ALLOWED_GITHUB_IDS` to the numeric GitHub IDs allowed to use this instance. Keep OAuth credentials in the host's secret manager; do not commit `.env.hosted`.
+2. Copy `hosted.env.example` to `.env.hosted` and replace every placeholder. Set `GHOSTLINE_ALLOWED_GITHUB_IDS` to the numeric GitHub IDs allowed to use this instance. Keep OAuth credentials in the host's secret manager; do not commit `.env.hosted`.
 3. Provide `GHOSTLINE_SESSION_SECRET` from the host secret manager as an environment variable to Docker Compose. Compose fails early if it is absent. The value must contain at least 32 random bytes.
 4. If an ingress sits in front of the container, configure it to terminate HTTPS and overwrite the configured client-IP header. Set `RATE_LIMIT_CLIENT_IP_HEADER` to that header and `RATE_LIMIT_TRUSTED_PROXIES` to the exact TCP peer address seen by the container. With a host ingress and Docker port publishing, inspect the Compose network gateway and use that gateway address as a `/32` CIDR; do not assume the ingress's public or private address reaches the container as its TCP peer. Leave both empty for direct connections without a proxy.
 5. Keep the container port bound to loopback and let the ingress be the public entry point. Set `GHOSTLINE_BIND_ADDRESS` only to an interface appropriate for the deployment.
