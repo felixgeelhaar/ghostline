@@ -301,7 +301,7 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 	// OAuth callback URLs contain one-time credentials in their query string.
 	// Keep that path out of access logs while retaining request logging elsewhere.
 	r := gin.New()
-	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipPaths: []string{"/auth/callback"}}), gin.Recovery())
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipPaths: []string{"/auth/callback", "/api/health"}}), gin.Recovery())
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	if auth == nil {
 		auth = newAuthManager(authConfig{}, nil)
@@ -357,7 +357,7 @@ func main() {
 	if host == "" {
 		host = "127.0.0.1"
 	}
-	if err := r.Run(host + ":" + port); err != nil {
+	if err := r.Run(joinHostPort(host, port)); err != nil {
 		panic(err)
 	}
 }

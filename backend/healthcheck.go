@@ -2,10 +2,34 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
+
+func joinHostPort(host, port string) string {
+	host = strings.TrimSpace(host)
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+	return net.JoinHostPort(host, port)
+}
+
+func containerHealthEndpoint(host, port string) string {
+	if strings.TrimSpace(port) == "" {
+		port = "8080"
+	}
+	host = strings.TrimSpace(host)
+	switch host {
+	case "", "0.0.0.0":
+		host = "127.0.0.1"
+	case "::":
+		host = "::1"
+	}
+	return "http://" + joinHostPort(host, port) + "/api/health"
+}
 
 func checkHealth(client *http.Client, endpoint string) error {
 	request, err := http.NewRequest(http.MethodGet, endpoint, nil)
@@ -24,10 +48,6 @@ func checkHealth(client *http.Client, endpoint string) error {
 }
 
 func runContainerHealthcheck() error {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
 	client := &http.Client{Timeout: 2 * time.Second}
-	return checkHealth(client, "http://127.0.0.1:"+port+"/api/health")
+	return checkHealth(client, containerHealthEndpoint(os.Getenv("HOST"), os.Getenv("PORT")))
 }
