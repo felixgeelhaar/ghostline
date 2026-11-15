@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"mime"
 	"net"
 	"net/http"
@@ -72,6 +73,9 @@ type qodoReviewDataWire struct {
 }
 
 func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
+	if err := rejectDuplicateJSONKeys(payload); err != nil {
+		return err
+	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &fields); err != nil {
 		return err
@@ -795,8 +799,7 @@ func (client *qodoReviewClient) post(ctx context.Context, apiKey, sessionID stri
 	if envelope.Error != nil {
 		return empty, newSessionID, fmt.Errorf("Qodo review service reported an MCP error (%d)", envelope.Error.Code)
 	}
-	var responseID int64
-	if err := json.Unmarshal(envelope.ID, &responseID); err != nil || responseID != expectedID {
+	if !mcpResponseIDMatches(envelope.ID, expectedID) {
 		return empty, newSessionID, errors.New("Qodo MCP response did not match the request")
 	}
 	return envelope, newSessionID, nil
@@ -896,8 +899,7 @@ func matchingMCPEvent(eventData []string, expectedID int64) (mcpEnvelope, bool) 
 	if err := decodeFirstMCPJSON([]byte(strings.Join(eventData, "\n")), &candidate); err != nil {
 		return mcpEnvelope{}, false
 	}
-	var responseID int64
-	if json.Unmarshal(candidate.ID, &responseID) != nil || responseID != expectedID {
+	if !mcpResponseIDMatches(candidate.ID, expectedID) {
 		return mcpEnvelope{}, false
 	}
 	return candidate, true
@@ -907,11 +909,95 @@ func decodeFirstMCPJSON(data []byte, envelope *mcpEnvelope) error {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return errors.New("empty MCP response")
 	}
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		return err
+	}
 	if err := json.Unmarshal(data, envelope); err != nil {
 		return err
 	}
 	if envelope.JSONRPC != "2.0" || len(envelope.Result) == 0 && envelope.Error == nil {
 		return errors.New("incomplete JSON-RPC response")
+	}
+	return nil
+}
+
+func mcpResponseIDMatches(encoded json.RawMessage, expectedID int64) bool {
+	var number json.Number
+	if err := json.Unmarshal(encoded, &number); err != nil {
+		return false
+	}
+	value, ok := new(big.Rat).SetString(number.String())
+	if !ok || value.Denom().Cmp(big.NewInt(1)) != 0 || !value.Num().IsInt64() {
+		return false
+	}
+	return value.Num().Int64() == expectedID
+}
+
+func rejectDuplicateJSONKeys(payload []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	if err := consumeJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return err
+		}
+		return errors.New("unexpected trailing JSON value")
+	}
+	return nil
+}
+
+func consumeJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("invalid JSON object key")
+			}
+			if _, exists := seen[key]; exists {
+				return errors.New("Qodo response contains a duplicate JSON object key")
+			}
+			seen[key] = struct{}{}
+			if err := consumeJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if closing != json.Delim('}') {
+			return errors.New("invalid JSON object ending")
+		}
+	case '[':
+		for decoder.More() {
+			if err := consumeJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if closing != json.Delim(']') {
+			return errors.New("invalid JSON array ending")
+		}
+	default:
+		return errors.New("invalid JSON delimiter")
 	}
 	return nil
 }
