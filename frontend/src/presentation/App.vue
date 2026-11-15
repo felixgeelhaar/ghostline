@@ -475,6 +475,8 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
 .nox-findings p { margin: 8px 0 0; line-height: 1.5; }
 .nox-findings .nox-location { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
 .nox-source { margin-top: 12px; }
+.nox-report a { color: #00e5ff; text-decoration-color: rgba(0, 229, 255, .55); text-underline-offset: .2em; }
+.nox-report a:focus-visible { outline: 2px solid #00e5ff; outline-offset: 3px; }
 
 .check-name .check-output {
   max-width: 760px;

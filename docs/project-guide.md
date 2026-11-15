@@ -14,6 +14,10 @@ The check list below shows GitHub's Nox check-run title and a short summary prev
 
 The Nox report panel links findings from the exact matched GitHub Actions artifact to the source workflow, and displays the scan revision and report expiry. An unavailable artifact is presented as unavailable evidence, not as a clean scan.
 
+The screenshot below shows that panel in a prepared replay, not a live artifact fetch. It demonstrates the revision and workflow source labels; the report metadata is illustrative. [Evidence notes](feature-evidence/nox-report-revision-bound-replay.md).
+
+![Prepared replay of Ghostline's revision-bound Nox report panel, explicitly labeled as illustrative](feature-evidence/nox-report-revision-bound-replay.png)
+
 The product helps an engineer inspect what changed, understand which revision review feedback and checks describe, and decide what to inspect next. GitHub remains authoritative for pull-request facts; Qodo remains the review source. Ghostline does not run agents, repair code, prove that a finding was fixed, or replace CI, Qodo, Nox, or Warden. It does not scan a developer’s local filesystem. Structured Qodo findings can be fetched for one imported public PR using a Qodo API key supplied for that request from a secure origin; Ghostline does not persist the key. Local demo mode has no login. Protected mode supports GitHub OAuth, signed 12-hour sessions, and an allowlist of immutable numeric GitHub account IDs; logout revokes the session in the current backend process, and the OAuth token is discarded after identity retrieval. OAuth state and revoked sessions are process-local, so protected mode currently requires a single backend instance.
 
 Evidence labels and links must preserve source and revision. Commit timestamps are commit metadata, not push or review times. A later commit in the PR list is only a candidate to inspect; ordering alone does not establish that it repaired a finding. If evidence is missing or unavailable, the UI should say so.
