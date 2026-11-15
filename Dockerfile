@@ -1,4 +1,4 @@
-FROM node:22.23.5-alpine3.23@sha256:bfaaaafa771b20f6c9cd237f175fa1a4ae3c99b1fe5237cbfac92c472ad44a3c AS frontend-build
+FROM node:24.22.3-alpine3.23@sha256:3946fb783fdce8a2812136ea694bc95c698c4f4096f3fd18568dc27a8ac389dc AS frontend-build
 WORKDIR /src/frontend
 # Upgrade the builder's Alpine package; the pinned upstream image predates the fix.
 RUN apk add --no-cache 'zlib>=1.4-r0' \

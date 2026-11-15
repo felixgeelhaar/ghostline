@@ -1,4 +1,4 @@
-FROM node:22.23.5-alpine3.23@sha256:bfaaaafa771b20f6c9cd237f175fa1a4ae3c99b1fe5237cbfac92c472ad44a3c
+FROM node:24.22.3-alpine3.23@sha256:3946fb783fdce8a2812136ea694bc95c698c4f4096f3fd18568dc27a8ac389dc
 LABEL maintainer="Ghostline maintainers"
 WORKDIR /app
 # Upgrade the pinned builder's Alpine package before running npm scripts.
