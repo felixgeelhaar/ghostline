@@ -60,3 +60,16 @@ export function noxReportNeedsAttention(report: NoxReport): boolean {
     || report.findings.length > 0
     || report.runConclusion !== 'success'
 }
+
+export function noxReportHeadline(report: NoxReport): string {
+  if (report.availability === 'unavailable') return 'Nox report unavailable'
+
+  if (report.totalCount === 0) {
+    return report.runConclusion === 'success'
+      ? 'No security findings reported'
+      : 'Scan did not complete successfully · results may be incomplete'
+  }
+
+  const count = `${report.totalCount} security finding${report.totalCount === 1 ? '' : 's'} reported`
+  return report.runConclusion === 'success' ? count : `${count} · scan did not complete successfully`
+}

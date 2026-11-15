@@ -52,8 +52,56 @@ func TestNoxWorkflowRunMustMatchTheRepositoryWorkflowAndRevision(t *testing.T) {
 	}
 }
 
+func TestNoxWorkflowRunMustBelongToRequestedPullRequest(t *testing.T) {
+	for name, input := range map[string]struct {
+		prs  []int
+		want bool
+	}{
+		"matching PR":                  {[]int{7}, true},
+		"another PR with same SHA":     {[]int{8}, false},
+		"multiple PRs including match": {[]int{8, 7}, true},
+		"missing PR identity":          {nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := IsNoxWorkflowRunForPullRequest(NoxSecurityWorkflowPath, "pull_request", "abc", "abc", input.prs, 7)
+			if got != input.want {
+				t.Fatalf("IsNoxWorkflowRunForPullRequest(..., %v, 7) = %v, want %v", input.prs, got, input.want)
+			}
+		})
+	}
+}
+
 func TestIsNoxScannerName(t *testing.T) {
-	if !IsNoxScannerName("Nox Security Scanner") || IsNoxScannerName("CodeQL") {
-		t.Fatal("scanner identity check did not distinguish Nox from another scanner")
+	for name, input := range map[string]struct {
+		value string
+		want  bool
+	}{
+		"Nox display name":              {"Nox Security Scanner", true},
+		"Nox executable name":           {"nox", true},
+		"case and surrounding spaces":   {"  NOX  ", true},
+		"CodeQL":                        {"CodeQL", false},
+		"unrelated name containing nox": {"NotNox", false},
+		"other scanner mentioning Nox":  {"CodeQL Nox plugin", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := IsNoxScannerName(input.value); got != input.want {
+				t.Fatalf("IsNoxScannerName(%q) = %v, want %v", input.value, got, input.want)
+			}
+		})
+	}
+}
+
+func TestSelectNoxArtifactsForRevision(t *testing.T) {
+	candidates := []NoxArtifactCandidate{
+		{Name: "nox-results", ArtifactID: 1, ArtifactRunID: 10, ArtifactHeadSHA: "abc", RunID: 10, RunHeadSHA: "abc", CreatedAt: "2026-11-15T13:00:00Z"},
+		{Name: "nox-results", ArtifactID: 2, ArtifactRunID: 20, ArtifactHeadSHA: "abc", RunID: 20, RunHeadSHA: "abc", CreatedAt: "2026-11-15T14:00:00Z"},
+		{Name: "other", ArtifactID: 3, ArtifactRunID: 30, ArtifactHeadSHA: "abc", RunID: 30, RunHeadSHA: "abc", CreatedAt: "2026-11-15T15:00:00Z"},
+		{Name: "nox-results", ArtifactID: 4, ArtifactRunID: 40, ArtifactHeadSHA: "old", RunID: 40, RunHeadSHA: "abc", CreatedAt: "2026-11-15T16:00:00Z"},
+		{Name: "nox-results", ArtifactID: 5, ArtifactRunID: 51, ArtifactHeadSHA: "abc", RunID: 50, RunHeadSHA: "abc", CreatedAt: "2026-11-15T17:00:00Z"},
+		{Name: "nox-results", ArtifactID: 6, ArtifactRunID: 60, ArtifactHeadSHA: "abc", RunID: 60, RunHeadSHA: "abc", Expired: true},
+	}
+	selected := SelectNoxArtifactsForRevision(candidates, "nox-results", "abc")
+	if len(selected) != 2 || selected[0].ArtifactID != 2 || selected[1].ArtifactID != 1 {
+		t.Fatalf("unexpected selected artifact candidates: %+v", selected)
 	}
 }

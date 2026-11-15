@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { fetchNoxReport } from '../application/fetchNoxReport'
+import { createNoxReportLoader } from '../application/noxReportLoader'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
 import { fetchQodoReviewSession } from '../application/fetchQodoReviewSession'
 import { buildChangeActivity, countReviewsWithUnavailableDetails, describeCheckActivity } from '../domain/changeActivity'
@@ -10,7 +11,7 @@ import { checkOutcome, checkSummaryPreview, headCommitLabel, orderChecks, summar
 import { findRecurringFindings, qodoHeadCoverage, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import type { QodoStructuredReview } from '../domain/qodoReviewSession'
 import type { NoxReport } from '../domain/noxReport'
-import { noxReportNeedsAttention } from '../domain/noxReport'
+import { noxReportHeadline, noxReportNeedsAttention } from '../domain/noxReport'
 import { buildFindingTrace } from '../domain/trace'
 import { isSamePullRequest, validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import { GhostlineApiError } from '../application/apiError'
@@ -44,7 +45,6 @@ let authChannel: BroadcastChannel | undefined
 let revisionRequest = 0
 let importRequest = 0
 let qodoRequest = 0
-let noxRequest = 0
 const activeChecks = computed(() => selectedRevision.value ? focusedChecks.value : pr.value?.checks)
 const orderedChecks = computed(() => orderChecks(activeChecks.value?.availability === 'available' ? activeChecks.value.items : []))
 const checksSummary = computed(() => summarizeChecks(orderedChecks.value))
@@ -94,6 +94,20 @@ function handleUnauthorized(error: unknown) {
     void handleSessionRejected()
   }
 }
+const noxReportLoader = createNoxReportLoader({
+  fetchReport: fetchNoxReport,
+  isCurrent: (pullRequestURL, revisionSHA) => {
+    const currentPR = pr.value
+    return currentPR?.url === pullRequestURL
+      && (selectedRevision.value || currentPR.checks.revisionSha) === revisionSHA
+  },
+  publish: (update) => {
+    noxLoading.value = update.loading
+    if ('error' in update) noxError.value = update.error ?? ''
+    if ('report' in update) focusedNoxReport.value = update.report
+  },
+  onError: handleUnauthorized,
+})
 
 async function logout() {
   try {
@@ -111,7 +125,7 @@ function clearWorkspace() {
   importRequest++
   revisionRequest++
   qodoRequest++
-  noxRequest++
+  noxReportLoader.invalidate()
   copyRequest++
   url.value = ''
   pr.value = undefined
@@ -143,6 +157,12 @@ async function loadPR() {
   }
   const keepCurrentChange = isSamePullRequest(pr.value, requestedURL)
   loading.value = true
+  noxReportLoader.invalidate()
+  if (keepCurrentChange) {
+    focusedNoxReport.value = undefined
+    noxError.value = ''
+    noxLoading.value = true
+  }
   if (!keepCurrentChange) {
     pr.value = undefined
     selectedRevision.value = ''
@@ -161,7 +181,6 @@ async function loadPR() {
   copyRequest++
   if (!keepCurrentChange) {
     revisionRequest++
-    noxRequest++
   }
   qodoApiKey.value = ''
   if (!keepCurrentChange) {
@@ -174,7 +193,7 @@ async function loadPR() {
       const focusedRevisionStillExists = importedPR.commits.some((commit) => commit.sha === selectedRevision.value)
       const nextNoxRevision = selectedRevision.value || importedPR.checks.revisionSha
       if (focusedNoxReport.value && focusedNoxReport.value.revisionSha !== nextNoxRevision) {
-        noxRequest++
+        noxReportLoader.invalidate()
         focusedNoxReport.value = undefined
         noxError.value = ''
         noxLoading.value = false
@@ -185,7 +204,7 @@ async function loadPR() {
         focusedChecks.value = undefined
         checksError.value = ''
         checksLoading.value = false
-        noxRequest++
+        noxReportLoader.invalidate()
         focusedNoxReport.value = undefined
         noxError.value = ''
         noxLoading.value = false
@@ -198,6 +217,10 @@ async function loadPR() {
       pr.value = importedPR
       if (selectedRevision.value) void loadNoxReport(importedPR, selectedRevision.value)
       else if (importedPR.checks.revisionSha) void loadNoxReport(importedPR, importedPR.checks.revisionSha)
+      else {
+        noxLoading.value = false
+        noxError.value = 'GitHub did not provide a pull request revision, so Ghostline cannot load its security report.'
+      }
       showingPreviousSnapshot.value = false
     }
   } catch (e) {
@@ -205,6 +228,10 @@ async function loadPR() {
     if (request === importRequest) {
       error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
       showingPreviousSnapshot.value = keepCurrentChange && pr.value !== undefined
+      if (keepCurrentChange) {
+        noxLoading.value = false
+        noxError.value = 'Could not confirm the latest pull request revision; re-import before relying on its security report.'
+      }
     }
   } finally {
     if (request === importRequest) loading.value = false
@@ -238,12 +265,11 @@ async function focusRevision(sha: string) {
   focusedNoxReport.value = undefined
   noxError.value = ''
   noxLoading.value = false
-  const noxRevisionRequest = ++noxRequest
   focusedChecks.value = undefined
   checksError.value = ''
   checksLoading.value = false
   const request = ++revisionRequest
-  void loadNoxReport(importedPR, sha, noxRevisionRequest)
+  void loadNoxReport(importedPR, sha)
   if (sha === importedPR.checks.revisionSha) {
     focusedChecks.value = importedPR.checks
     return
@@ -261,25 +287,8 @@ async function focusRevision(sha: string) {
     if (request === revisionRequest) checksLoading.value = false
   }
 }
-async function loadNoxReport(importedPR: PullRequest, sha: string, expectedRequest?: number) {
-  const request = expectedRequest ?? ++noxRequest
-  const requestedPRURL = importedPR.url
-  if (!sha) return
-  noxLoading.value = true
-  noxError.value = ''
-  try {
-    const report = await fetchNoxReport(requestedPRURL, sha)
-    if (request === noxRequest && pr.value?.url === requestedPRURL && (selectedRevision.value || pr.value.checks.revisionSha) === sha) {
-      focusedNoxReport.value = report
-    }
-  } catch (e) {
-    handleUnauthorized(e)
-    if (request === noxRequest && pr.value?.url === requestedPRURL && (selectedRevision.value || pr.value.checks.revisionSha) === sha) {
-      noxError.value = e instanceof Error ? e.message : 'Could not load the Nox report for this revision.'
-    }
-  } finally {
-    if (request === noxRequest) noxLoading.value = false
-  }
+function loadNoxReport(importedPR: PullRequest, sha: string) {
+  void noxReportLoader.load(importedPR.url, sha)
 }
 let copyRequest = 0
 async function copySha(sha: string) {
@@ -290,7 +299,7 @@ async function copySha(sha: string) {
 }
 function clearFocus() {
   revisionRequest++
-  noxRequest++
+  noxReportLoader.invalidate()
   selectedRevision.value = ''
   focusedChecks.value = undefined
   checksLoading.value = false
@@ -378,7 +387,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         </template>
         <template v-else-if="focusedNoxReport?.availability === 'available'">
           <p class="nox-summary" :class="{ warn: noxReportNeedsAttention(focusedNoxReport) }" role="status">
-            <strong>{{ focusedNoxReport.findings.length ? `${focusedNoxReport.totalCount} security finding${focusedNoxReport.totalCount === 1 ? '' : 's'} reported` : 'No security findings reported' }}</strong>
+            <strong>{{ noxReportHeadline(focusedNoxReport) }}</strong>
             <span>Workflow {{ focusedNoxReport.runConclusion || 'status unavailable' }} · {{ focusedNoxReport.runName || 'Nox scan' }} · report from {{ date(focusedNoxReport.createdAt) }} · retained until {{ date(focusedNoxReport.expiresAt) }}</span>
           </p>
           <p v-if="focusedNoxReport.totalCount === 0" class="checks-note">This is the published Nox report for this exact revision. It is not an independent guarantee that the code is secure.</p>

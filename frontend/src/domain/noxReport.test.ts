@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { noxReportNeedsAttention, NoxReportSchema } from './noxReport'
+import { noxReportHeadline, noxReportNeedsAttention, NoxReportSchema } from './noxReport'
 
 const sha = 'c'.repeat(40)
 const valid = {
@@ -25,5 +25,16 @@ describe('Nox report evidence schema', () => {
     expect(noxReportNeedsAttention(NoxReportSchema.parse({ ...valid, totalCount: 0, findings: [] }))).toBe(false)
     expect(noxReportNeedsAttention(NoxReportSchema.parse({ ...valid, totalCount: 0, findings: [], runConclusion: 'failure' }))).toBe(true)
     expect(noxReportNeedsAttention(NoxReportSchema.parse({ availability: 'unavailable', revisionSha: sha, reason: 'Not retained', totalCount: 0, truncated: false, findings: [] }))).toBe(true)
+  })
+
+  it('does not describe an unsuccessful scan with no findings as clean', () => {
+    const failed = NoxReportSchema.parse({ ...valid, totalCount: 0, findings: [], runConclusion: 'failure' })
+    expect(noxReportHeadline(failed)).toBe('Scan did not complete successfully · results may be incomplete')
+    expect(noxReportHeadline(NoxReportSchema.parse({ ...valid, totalCount: 2, findings: [], runConclusion: 'failure' })))
+      .toBe('2 security findings reported · scan did not complete successfully')
+    expect(noxReportHeadline(NoxReportSchema.parse({ ...valid, totalCount: 0, findings: [] })))
+      .toBe('No security findings reported')
+    expect(noxReportHeadline(NoxReportSchema.parse({ availability: 'unavailable', revisionSha: sha, reason: 'Artifact expired', totalCount: 0, truncated: false, findings: [] })))
+      .toBe('Nox report unavailable')
   })
 })

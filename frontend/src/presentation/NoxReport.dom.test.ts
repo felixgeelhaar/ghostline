@@ -24,9 +24,9 @@ const pr: PullRequest = {
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] }, referencedIssues: { availability: 'available', items: [] },
 }
 
-function report(revisionSha: string, count = 0): NoxReport {
+function report(revisionSha: string, count = 0, runConclusion = 'success'): NoxReport {
   return {
-    availability: 'available', revisionSha, runId: 12, runName: 'Nox Security', runConclusion: 'success',
+    availability: 'available', revisionSha, runId: 12, runName: 'Nox Security', runConclusion,
     runUrl: 'https://github.com/acme/app/actions/runs/12', artifactId: 3, artifactUrl: 'https://github.com/acme/app/actions/runs/12',
     artifactDigest: 'sha256:abc', createdAt: '2026-11-15T13:58:17Z', expiresAt: '2026-11-22T13:58:16Z',
     totalCount: count, truncated: false,
@@ -73,6 +73,13 @@ describe('revision-linked Nox report', () => {
     expect(host!.querySelector('.nox-source a')?.getAttribute('href')).toBe('https://github.com/acme/app/actions/runs/12')
   })
 
+  it('does not show a clean headline when the scan did not succeed', async () => {
+    vi.mocked(fetchNoxReport).mockResolvedValue(report(headSha, 0, 'failure'))
+    await importPR()
+    await vi.waitFor(() => expect(host!.querySelector('.nox-summary strong')?.textContent).toContain('results may be incomplete'))
+    expect(host!.querySelector('.nox-summary strong')?.textContent).not.toContain('No security findings reported')
+  })
+
   it('ignores an earlier focused revision request that resolves last', async () => {
     const earlier = deferred<NoxReport>()
     vi.mocked(fetchNoxReport).mockImplementation((_url, sha) => sha === headSha ? earlier.promise : Promise.resolve(report(earlierSha)))
@@ -84,5 +91,30 @@ describe('revision-linked Nox report', () => {
     await settle()
     expect(host!.querySelector('.nox-report')?.textContent).not.toContain('Untrusted input reaches a command.')
     expect(host!.querySelector('.nox-report')?.textContent).toContain('No security findings reported')
+  })
+
+  it('hides the previous report while the same pull request refreshes its head', async () => {
+    const refresh = deferred<PullRequest>()
+    const refreshedSHA = 'd'.repeat(40)
+    const refreshedPR: PullRequest = {
+      ...pr,
+      title: 'Security report after refresh',
+      commits: [...pr.commits, { sha: refreshedSHA, shortSha: refreshedSHA.slice(0, 7), message: 'Latest revision', author: 'A', committedAt: '2026-11-10T11:00:00Z', url: `https://github.com/acme/app/commit/${refreshedSHA}` }],
+      checks: { ...pr.checks, revisionSha: refreshedSHA, revisionShortSha: refreshedSHA.slice(0, 7), revisionUrl: `https://github.com/acme/app/commit/${refreshedSHA}` },
+    }
+    vi.mocked(importPullRequest).mockResolvedValueOnce(pr).mockReturnValueOnce(refresh.promise)
+    vi.mocked(fetchNoxReport).mockResolvedValueOnce(report(headSha, 1)).mockResolvedValueOnce(report(refreshedSHA))
+    await importPR()
+    await vi.waitFor(() => expect(host!.querySelector('.nox-findings')).not.toBeNull())
+
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await settle()
+
+    expect(host!.querySelector('.nox-report')?.textContent).toContain('Loading the published security report')
+    expect(host!.querySelector('.nox-report')?.textContent).not.toContain('Untrusted input reaches a command.')
+
+    refresh.resolve(refreshedPR)
+    await vi.waitFor(() => expect(host!.querySelector('.nox-report')?.textContent).toContain('No security findings reported'))
+    expect(fetchNoxReport).toHaveBeenLastCalledWith(pr.url, refreshedSHA)
   })
 })

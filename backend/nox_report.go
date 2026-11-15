@@ -97,34 +97,47 @@ func noxFindingFromDomain(finding domain.NoxFinding) noxFinding {
 }
 
 type workflowRunsResponse struct {
-	WorkflowRuns []struct {
-		ID         int64  `json:"id"`
-		Path       string `json:"path"`
-		Name       string `json:"name"`
-		Event      string `json:"event"`
-		HeadSHA    string `json:"head_sha"`
-		Status     string `json:"status"`
-		Conclusion string `json:"conclusion"`
-		HTMLURL    string `json:"html_url"`
-		CreatedAt  string `json:"created_at"`
-	} `json:"workflow_runs"`
+	WorkflowRuns []workflowRun `json:"workflow_runs"`
+}
+
+type workflowRun struct {
+	ID           int64  `json:"id"`
+	Path         string `json:"path"`
+	Name         string `json:"name"`
+	Event        string `json:"event"`
+	HeadSHA      string `json:"head_sha"`
+	Status       string `json:"status"`
+	Conclusion   string `json:"conclusion"`
+	HTMLURL      string `json:"html_url"`
+	CreatedAt    string `json:"created_at"`
+	PullRequests []struct {
+		Number int `json:"number"`
+	} `json:"pull_requests"`
 }
 
 type workflowArtifactsResponse struct {
-	Artifacts []struct {
-		ID          int64  `json:"id"`
-		Name        string `json:"name"`
-		Size        int64  `json:"size_in_bytes"`
-		URL         string `json:"url"`
-		Digest      string `json:"digest"`
-		Expired     bool   `json:"expired"`
-		CreatedAt   string `json:"created_at"`
-		ExpiresAt   string `json:"expires_at"`
-		WorkflowRun struct {
-			ID      int64  `json:"id"`
-			HeadSHA string `json:"head_sha"`
-		} `json:"workflow_run"`
-	} `json:"artifacts"`
+	Artifacts []workflowArtifact `json:"artifacts"`
+}
+
+type workflowArtifact struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Size        int64  `json:"size_in_bytes"`
+	URL         string `json:"url"`
+	HTMLURL     string `json:"html_url"`
+	Digest      string `json:"digest"`
+	Expired     bool   `json:"expired"`
+	CreatedAt   string `json:"created_at"`
+	ExpiresAt   string `json:"expires_at"`
+	WorkflowRun struct {
+		ID      int64  `json:"id"`
+		HeadSHA string `json:"head_sha"`
+	} `json:"workflow_run"`
+}
+
+type noxArtifactCandidate struct {
+	artifact workflowArtifact
+	run      workflowRun
 }
 
 type sarifLog struct {
@@ -139,7 +152,7 @@ type sarifRun struct {
 			Rules []sarifRule `json:"rules"`
 		} `json:"driver"`
 	} `json:"tool"`
-	Results []sarifResult `json:"results"`
+	Results *[]sarifResult `json:"results"`
 }
 
 type sarifRule struct {
@@ -212,17 +225,7 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		}
 	}
 
-	matchingRuns := make([]struct {
-		ID         int64  `json:"id"`
-		Path       string `json:"path"`
-		Name       string `json:"name"`
-		Event      string `json:"event"`
-		HeadSHA    string `json:"head_sha"`
-		Status     string `json:"status"`
-		Conclusion string `json:"conclusion"`
-		HTMLURL    string `json:"html_url"`
-		CreatedAt  string `json:"created_at"`
-	}, 0)
+	matchingRuns := make([]workflowRun, 0)
 	workflowHistoryTruncated := false
 	for page := 1; page <= maxNoxPages; page++ {
 		var runs workflowRunsResponse
@@ -233,7 +236,11 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 			return result
 		}
 		for _, run := range runs.WorkflowRuns {
-			if domain.IsNoxWorkflowRun(run.Path, run.Event, run.HeadSHA, sha) {
+			pullRequestNumbers := make([]int, 0, len(run.PullRequests))
+			for _, pullRequest := range run.PullRequests {
+				pullRequestNumbers = append(pullRequestNumbers, pullRequest.Number)
+			}
+			if domain.IsNoxWorkflowRunForPullRequest(run.Path, run.Event, run.HeadSHA, sha, pullRequestNumbers, number) {
 				matchingRuns = append(matchingRuns, run)
 			}
 		}
@@ -254,35 +261,12 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		return result
 	}
 
-	var artifact *struct {
-		ID          int64  `json:"id"`
-		Name        string `json:"name"`
-		Size        int64  `json:"size_in_bytes"`
-		URL         string `json:"url"`
-		Digest      string `json:"digest"`
-		Expired     bool   `json:"expired"`
-		CreatedAt   string `json:"created_at"`
-		ExpiresAt   string `json:"expires_at"`
-		WorkflowRun struct {
-			ID      int64  `json:"id"`
-			HeadSHA string `json:"head_sha"`
-		} `json:"workflow_run"`
-	}
-	var selectedRun *struct {
-		ID         int64  `json:"id"`
-		Path       string `json:"path"`
-		Name       string `json:"name"`
-		Event      string `json:"event"`
-		HeadSHA    string `json:"head_sha"`
-		Status     string `json:"status"`
-		Conclusion string `json:"conclusion"`
-		HTMLURL    string `json:"html_url"`
-		CreatedAt  string `json:"created_at"`
-	}
+	var latestExpired *noxArtifactCandidate
 	expiredArtifactFound := false
+	candidateFailureRecorded := false
 	for i := range matchingRuns {
 		run := &matchingRuns[i]
-		artifactHistoryTruncated := false
+		artifactsForRun := make([]workflowArtifact, 0)
 		for page := 1; page <= maxNoxPages; page++ {
 			var response workflowArtifactsResponse
 			artifactsPath := fmt.Sprintf("/repos/%s/%s/actions/runs/%d/artifacts?name=%s&per_page=%d&page=%d", url.PathEscape(owner), url.PathEscape(repo), run.ID, url.QueryEscape(noxArtifactName), noxPageSize, page)
@@ -292,105 +276,141 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 			}
 			for j := range response.Artifacts {
 				candidate := &response.Artifacts[j]
-				if candidate.Name != noxArtifactName || candidate.WorkflowRun.HeadSHA != sha || candidate.WorkflowRun.ID != run.ID {
+				artifactIdentity := domain.NoxArtifactCandidate{
+					Name: candidate.Name, ArtifactID: candidate.ID, ArtifactRunID: candidate.WorkflowRun.ID,
+					ArtifactHeadSHA: candidate.WorkflowRun.HeadSHA, RunID: run.ID, RunHeadSHA: run.HeadSHA,
+				}
+				if !domain.IsNoxArtifactForRevision(artifactIdentity, noxArtifactName, sha) {
 					continue
 				}
 				if candidate.Expired {
-					if !expiredArtifactFound || candidate.CreatedAt > result.CreatedAt {
-						result.RunID = run.ID
-						result.RunName = run.Name
-						result.RunConclusion = run.Conclusion
-						result.RunURL = githubRunURL(owner, repo, run.ID)
-						result.ArtifactID = candidate.ID
-						result.ArtifactURL = result.RunURL
-						result.ArtifactDigest = candidate.Digest
-						result.CreatedAt = candidate.CreatedAt
-						result.ExpiresAt = candidate.ExpiresAt
-						result.Reason = "The Nox report has expired from GitHub Actions storage."
-						expiredArtifactFound = true
+					copy := noxArtifactCandidate{artifact: *candidate, run: *run}
+					if latestExpired == nil || candidate.CreatedAt > latestExpired.artifact.CreatedAt {
+						latestExpired = &copy
 					}
+					expiredArtifactFound = true
 					continue
 				}
-				if artifact == nil || candidate.CreatedAt > artifact.CreatedAt {
-					artifact = candidate
-					selectedRun = run
-				}
+				artifactsForRun = append(artifactsForRun, *candidate)
 			}
 			if len(response.Artifacts) < noxPageSize {
 				break
 			}
-			if page == maxNoxPages && artifact == nil {
-				artifactHistoryTruncated = true
+			if page == maxNoxPages {
+				result.Reason = noxInspectionIncompleteReason
+				return result
 			}
 		}
-		if artifactHistoryTruncated && artifact == nil {
-			result.Reason = noxInspectionIncompleteReason
-			return result
+		candidates := make([]domain.NoxArtifactCandidate, 0, len(artifactsForRun))
+		for _, artifact := range artifactsForRun {
+			candidates = append(candidates, domain.NoxArtifactCandidate{
+				Name: artifact.Name, ArtifactID: artifact.ID, ArtifactRunID: artifact.WorkflowRun.ID,
+				ArtifactHeadSHA: artifact.WorkflowRun.HeadSHA, CreatedAt: artifact.CreatedAt,
+				Expired: artifact.Expired, RunID: run.ID, RunHeadSHA: run.HeadSHA,
+			})
 		}
-		if artifact != nil {
-			break // Runs are newest first; a later run may not replace a missing artifact.
+		selected := domain.SelectNoxArtifactsForRevision(candidates, noxArtifactName, sha)
+		for _, selectedCandidate := range selected {
+			artifact := findWorkflowArtifact(artifactsForRun, selectedCandidate.ArtifactID)
+			candidate := noxArtifactCandidate{artifact: artifact, run: *run}
+			parsed, reason, err := loadNoxArtifact(ctx, budget, candidate, owner, repo, sha)
+			if err != nil {
+				if !candidateFailureRecorded {
+					setNoxArtifactProvenance(&result, candidate)
+					candidateFailureRecorded = true
+				}
+				if errors.Is(err, errNotFound) {
+					if result.Reason == "" {
+						result.Reason = "GitHub’s listed Nox artifact disappeared before it could be downloaded."
+					}
+					continue
+				}
+				result.Reason = noxRequestFailureReason(err)
+				return result
+			}
+			if reason != "" {
+				if !candidateFailureRecorded {
+					setNoxArtifactProvenance(&result, candidate)
+					result.Reason = reason
+					candidateFailureRecorded = true
+				}
+				continue
+			}
+			return parsed
 		}
 	}
-	if artifact == nil || selectedRun == nil {
-		if workflowHistoryTruncated {
-			result.Reason = noxInspectionIncompleteReason
-		} else if expiredArtifactFound {
-			return result
-		} else {
-			result.Reason = "No retained Nox report was published for this revision."
-		}
+	if workflowHistoryTruncated {
+		result.Reason = noxInspectionIncompleteReason
 		return result
 	}
-	result.RunID = selectedRun.ID
-	result.RunName = selectedRun.Name
-	result.RunConclusion = selectedRun.Conclusion
-	result.RunURL = githubRunURL(owner, repo, selectedRun.ID)
-	result.ArtifactID = artifact.ID
-	result.ArtifactURL = result.RunURL
-	result.ArtifactDigest = artifact.Digest
-	result.CreatedAt = artifact.CreatedAt
-	result.ExpiresAt = artifact.ExpiresAt
-	if artifact.Expired {
+	if result.ArtifactID != 0 {
+		return result
+	}
+	if expiredArtifactFound && latestExpired != nil {
+		setNoxArtifactProvenance(&result, *latestExpired)
 		result.Reason = "The Nox report has expired from GitHub Actions storage."
 		return result
 	}
-	if artifact.Size < 0 || artifact.Size > maxNoxArtifactBytes {
-		result.Reason = "GitHub’s Nox artifact is too large for Ghostline to inspect safely."
-		return result
+	if result.Reason == "" {
+		result.Reason = "No retained Nox report was published for this revision."
 	}
+	return result
+}
 
+func findWorkflowArtifact(artifacts []workflowArtifact, id int64) workflowArtifact {
+	for _, artifact := range artifacts {
+		if artifact.ID == id {
+			return artifact
+		}
+	}
+	return workflowArtifact{}
+}
+
+func setNoxArtifactProvenance(report *noxReport, candidate noxArtifactCandidate) {
+	report.RunID = candidate.run.ID
+	report.RunName = candidate.run.Name
+	report.RunConclusion = candidate.run.Conclusion
+	report.RunURL = safeGitHubWebURL(candidate.run.HTMLURL)
+	report.ArtifactID = candidate.artifact.ID
+	report.ArtifactURL = safeGitHubAPIURL(candidate.artifact.URL)
+	report.ArtifactDigest = candidate.artifact.Digest
+	report.CreatedAt = candidate.artifact.CreatedAt
+	report.ExpiresAt = candidate.artifact.ExpiresAt
+}
+
+func loadNoxArtifact(ctx context.Context, budget *noxGitHubRequestBudget, candidate noxArtifactCandidate, owner, repo, sha string) (noxReport, string, error) {
+	artifact, run := candidate.artifact, candidate.run
+	if artifact.Size < 0 || artifact.Size > maxNoxArtifactBytes {
+		return noxReport{}, "GitHub’s Nox artifact is too large for Ghostline to inspect safely.", nil
+	}
 	archivePath := fmt.Sprintf("/repos/%s/%s/actions/artifacts/%d/zip", url.PathEscape(owner), url.PathEscape(repo), artifact.ID)
 	archive, err := budget.downloadArtifact(ctx, archivePath, maxNoxArtifactBytes)
 	if err != nil {
-		result.Reason = noxRequestFailureReason(err)
-		return result
+		return noxReport{}, "", err
 	}
 	digest := strings.TrimPrefix(artifact.Digest, "sha256:")
 	if len(digest) != sha256.Size*2 {
-		result.Reason = "GitHub did not provide a verifiable SHA-256 digest for the Nox artifact."
-		return result
+		return noxReport{}, "GitHub did not provide a verifiable SHA-256 digest for the Nox artifact.", nil
 	}
 	actual := sha256.Sum256(archive)
 	if !strings.EqualFold(digest, hex.EncodeToString(actual[:])) {
-		result.Reason = "GitHub’s Nox artifact did not match its published SHA-256 digest."
-		return result
+		return noxReport{}, "GitHub’s Nox artifact did not match its published SHA-256 digest.", nil
 	}
 	sarif, err := readNoxSARIFArtifact(archive)
 	if err != nil {
-		result.Reason = "GitHub’s Nox artifact could not be read as a supported SARIF report."
-		return result
+		return noxReport{}, "GitHub’s Nox artifact could not be read as a supported SARIF report.", nil
 	}
-	parsed, err := parseNoxSARIF(sarif, sha, selectedRun.ID, result.RunURL, artifact.CreatedAt, artifact.ExpiresAt)
+	runURL := safeGitHubWebURL(run.HTMLURL)
+	parsed, err := parseNoxSARIF(sarif, sha, run.ID, runURL, artifact.CreatedAt, artifact.ExpiresAt)
 	if err != nil {
-		result.Reason = "GitHub’s Nox artifact did not contain a valid Nox SARIF report."
-		return result
+		return noxReport{}, "GitHub’s Nox artifact did not contain a valid Nox SARIF report.", nil
 	}
-	parsed.RunName = selectedRun.Name
-	parsed.RunConclusion = selectedRun.Conclusion
+	parsed.RunName = run.Name
+	parsed.RunConclusion = run.Conclusion
 	parsed.ArtifactID = artifact.ID
-	parsed.ArtifactURL = result.ArtifactURL
+	parsed.ArtifactURL = safeGitHubAPIURL(artifact.URL)
 	parsed.ArtifactDigest = artifact.Digest
-	return parsed
+	return parsed, "", nil
 }
 
 func pullRequestContainsRevision(ctx context.Context, budget *noxGitHubRequestBudget, owner, repo string, number int, sha string) (bool, error) {
@@ -471,7 +491,10 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 		if !domain.IsNoxScannerName(run.Tool.Driver.Name) {
 			return noxReport{}, errors.New("artifact contains a report from a different scanner")
 		}
-		for _, result := range run.Results {
+		if run.Results == nil {
+			return noxReport{}, errors.New("Nox SARIF run has no results array")
+		}
+		for _, result := range *run.Results {
 			var rule sarifRule
 			if result.RuleIndex != nil && *result.RuleIndex >= 0 && *result.RuleIndex < len(run.Tool.Driver.Rules) {
 				rule = run.Tool.Driver.Rules[*result.RuleIndex]
@@ -500,8 +523,20 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 	return report, nil
 }
 
-func githubRunURL(owner, repo string, runID int64) string {
-	return fmt.Sprintf("https://github.com/%s/%s/actions/runs/%d", url.PathEscape(owner), url.PathEscape(repo), runID)
+func safeGitHubWebURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, "github.com") {
+		return ""
+	}
+	return parsed.String()
+}
+
+func safeGitHubAPIURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, "api.github.com") {
+		return ""
+	}
+	return parsed.String()
 }
 
 func noxUnavailableReason(err error) string {
