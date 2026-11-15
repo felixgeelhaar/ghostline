@@ -6,6 +6,7 @@ import { importPullRequest } from '../application/importPullRequest'
 import App from './App.vue'
 
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
+vi.mock('../application/fetchGhostlineSession', () => ({ fetchGhostlineSession: vi.fn().mockResolvedValue({ authRequired: false, authenticated: true }) }))
 vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
 
 const headSha = 'a'.repeat(40)
@@ -31,6 +32,7 @@ async function showPullRequest(result: PullRequest = pullRequest) {
   document.body.append(host)
   mounted = createApp(App)
   mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector("#pr-url")).not.toBeNull())
   const input = host.querySelector<HTMLInputElement>('#pr-url')!
   input.value = pullRequest.url
   input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -91,6 +93,7 @@ describe('Qodo PR-head coverage status', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector("#pr-url")).not.toBeNull())
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = pullRequest.url
     input.dispatchEvent(new Event('input', { bubbles: true }))

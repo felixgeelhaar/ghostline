@@ -9,6 +9,7 @@ import type { QodoStructuredReview } from '../domain/qodoReviewSession'
 import App from './App.vue'
 
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
+vi.mock('../application/fetchGhostlineSession', () => ({ fetchGhostlineSession: vi.fn().mockResolvedValue({ authRequired: false, authenticated: true }) }))
 vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
 vi.mock('../application/fetchQodoReviewSession', () => ({ fetchQodoReviewSession: vi.fn() }))
 
@@ -57,6 +58,7 @@ async function mount() {
   document.body.append(host)
   app = createApp(App)
   app.mount(host)
+  await vi.waitFor(() => expect(host?.querySelector("#pr-url")).not.toBeNull())
 }
 
 afterEach(() => {

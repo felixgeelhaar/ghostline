@@ -12,7 +12,7 @@ The check list below shows GitHub's Nox check-run title and a short summary prev
 
 ![Ghostline showing revision-bound GitHub checks and the Nox check-run summary for PR #56](assets/nox-check-summary.jpg)
 
-The product helps an engineer inspect what changed, understand which revision review feedback and checks describe, and decide what to inspect next. GitHub remains authoritative for pull-request facts; Qodo remains the review source. Ghostline does not run agents, repair code, prove that a finding was fixed, or replace CI, Qodo, Nox, or Warden. It does not scan a developer’s local filesystem. Structured Qodo findings can be fetched for one imported public PR using a Qodo API key supplied for that request from a secure origin; Ghostline does not persist the key.
+The product helps an engineer inspect what changed, understand which revision review feedback and checks describe, and decide what to inspect next. GitHub remains authoritative for pull-request facts; Qodo remains the review source. Ghostline does not run agents, repair code, prove that a finding was fixed, or replace CI, Qodo, Nox, or Warden. It does not scan a developer’s local filesystem. Structured Qodo findings can be fetched for one imported public PR using a Qodo API key supplied for that request from a secure origin; Ghostline does not persist the key. Local demo mode has no login. Protected mode supports GitHub OAuth, signed 12-hour sessions, and an allowlist of immutable numeric GitHub account IDs; logout revokes the session in the current backend process, and the OAuth token is discarded after identity retrieval. OAuth state and revoked sessions are process-local, so protected mode currently requires a single backend instance.
 
 Evidence labels and links must preserve source and revision. Commit timestamps are commit metadata, not push or review times. A later commit in the PR list is only a candidate to inspect; ordering alone does not establish that it repaired a finding. If evidence is missing or unavailable, the UI should say so.
 
@@ -23,11 +23,12 @@ Ghostline is a small Go API and Vue single-page application. It has no database 
 ```text
 Browser (Vue 3 + TypeScript)
   presentation: App.vue, ReviewCard.vue, DeepTrace.vue
-  application: importPullRequest, fetchRevisionChecks, fetchQodoReviewSession
+  application: fetchGhostlineSession, importPullRequest, fetchRevisionChecks, fetchQodoReviewSession
   domain: pullRequest, checks, reviews, trace, change activity, referenced issues
-          │ /api/import, /api/checks, /api/qodo-review
+          │ /auth/*, /api/session, /api/import, /api/checks, /api/qodo-review
           ▼
 Go + Gin API
+  GitHub OAuth callback, signed session, account-ID allowlist middleware
   HTTP handlers and GitHub response normalization
   GitHub client, referenced-issue lookup, check aggregation, Qodo comment parsing
   fixed-endpoint Qodo MCP client
@@ -63,13 +64,15 @@ npm run dev
 
 Open the URL Vite prints. The frontend proxies `/api` requests to `http://localhost:8080`. Public GitHub API access works without credentials but has a low rate limit; export `GITHUB_TOKEN` before starting the local Go API to raise it. Never commit or paste a token into a report.
 
+Local mode leaves sign-in disabled. Protected OAuth mode is supported only when a trusted HTTPS ingress serves Ghostline at the same public origin as `GITHUB_OAUTH_CALLBACK_URL`; direct access to the local HTTP Vite URL is rejected by the same-origin check. Configure `GHOSTLINE_AUTH_MODE=required`, GitHub OAuth client ID and secret, the matching HTTPS callback, a 32-byte `GHOSTLINE_SESSION_SECRET`, and one or more numeric IDs in `GHOSTLINE_ALLOWED_GITHUB_IDS`. If the ingress proxies requests to Vite, set `GHOSTLINE_TRUSTED_PROXY_CIDRS` to its peer CIDRs and configure it to overwrite `X-Real-IP`. Local Vite proxies `/api` and `/auth` to the backend.
+
 To run both services in containers:
 
 ```sh
 docker compose up --build
 ```
 
-Open `http://localhost:5173`, or the configured `GHOSTLINE_PORT`. Compose exposes the frontend on network interfaces by default; use `GHOSTLINE_BIND_ADDRESS` to select a bind address. The Compose backend does not currently receive `GITHUB_TOKEN`, so use the local API run above when authenticated GitHub API access is needed.
+Open `http://localhost:5173`, or the configured `GHOSTLINE_PORT`, for the unauthenticated local demo. Compose exposes the frontend on network interfaces by default; use `GHOSTLINE_BIND_ADDRESS` to select a bind address. The Compose backend does not currently receive `GITHUB_TOKEN`, so use the local API run above when authenticated GitHub API access is needed. Compose accepts the GitHub OAuth configuration described in the [README](../README.md#protected-hosted-mode-sign-in), but protected sign-in works only through the matching HTTPS ingress, and its frontend remains a Vite development server rather than production hosting.
 
 Run the project checks:
 

@@ -6,6 +6,7 @@ import { importPullRequest } from '../application/importPullRequest'
 import App from './App.vue'
 
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
+vi.mock('../application/fetchGhostlineSession', () => ({ fetchGhostlineSession: vi.fn().mockResolvedValue({ authRequired: false, authenticated: true }) }))
 
 const pullRequest: PullRequest = {
   repository: 'acme/app', owner: 'acme', repo: 'app', number: 7,
@@ -35,6 +36,7 @@ async function importPR(data: PullRequest) {
   document.body.append(host)
   app = createApp(App)
   app.mount(host)
+  await vi.waitFor(() => expect(host?.querySelector("#pr-url")).not.toBeNull())
   host.querySelector<HTMLInputElement>('#pr-url')!.value = data.url
   host.querySelector<HTMLInputElement>('#pr-url')!.dispatchEvent(new Event('input', { bubbles: true }))
   host.querySelector<HTMLButtonElement>('.input-row button')!.click()

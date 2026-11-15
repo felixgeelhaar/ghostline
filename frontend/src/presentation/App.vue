@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
@@ -10,9 +10,11 @@ import { findRecurringFindings, qodoHeadCoverage, reviewCountSummary, reviewsFor
 import type { QodoStructuredReview } from '../domain/qodoReviewSession'
 import { buildFindingTrace } from '../domain/trace'
 import { isSamePullRequest, validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
+import { GhostlineApiError } from '../application/apiError'
 import ReviewCard from './ReviewCard.vue'
 import DeepTrace from './DeepTrace.vue'
 import StructuredQodoReview from './StructuredQodoReview.vue'
+import { useGhostlineSession } from './useGhostlineSession'
 
 const url = ref('')
 const pr = ref<PullRequest>()
@@ -29,7 +31,9 @@ const qodoStructuredReview = ref<QodoStructuredReview>()
 const qodoReviewError = ref('')
 const qodoReviewLoading = ref(false)
 const qodoKeyTransportSecure = computed(() => globalThis.isSecureContext === true)
+const { ghostlineSession, sessionLoading, sessionError, refreshGhostlineSession, handleSessionRejected, endSession } = useGhostlineSession()
 let traceTrigger: HTMLButtonElement | undefined
+let authChannel: BroadcastChannel | undefined
 let revisionRequest = 0
 let importRequest = 0
 let qodoRequest = 0
@@ -55,6 +59,67 @@ const activeTrace = computed(() => {
   return finding ? buildFindingTrace(finding, pr.value?.commits ?? []) : undefined
 })
 const glyph: Record<CheckTone, string> = { pass: '✓', fail: '✕', running: '●', neutral: '–' }
+
+onMounted(() => {
+  if (typeof BroadcastChannel !== 'undefined') {
+    authChannel = new BroadcastChannel('ghostline-session')
+    authChannel.onmessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'session-changed') return
+      clearWorkspace()
+      void handleSessionRejected()
+    }
+  }
+  const currentURL = new URL(window.location.href)
+  const signInCompleted = currentURL.searchParams.get('ghostline_auth') === 'complete'
+  if (signInCompleted) {
+    currentURL.searchParams.delete('ghostline_auth')
+    window.history.replaceState(window.history.state, '', `${currentURL.pathname}${currentURL.search}${currentURL.hash}`)
+    authChannel?.postMessage({ type: 'session-changed' })
+  }
+  void refreshGhostlineSession()
+})
+
+onBeforeUnmount(() => authChannel?.close())
+
+function handleUnauthorized(error: unknown) {
+  if (ghostlineSession.value?.authenticated && error instanceof GhostlineApiError && error.code === 'AUTH_REQUIRED') {
+    void handleSessionRejected()
+  }
+}
+
+async function logout() {
+  try {
+    const response = await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' })
+    if (!response.ok) throw new Error()
+    clearWorkspace()
+    endSession()
+    authChannel?.postMessage({ type: 'session-changed' })
+  } catch {
+    sessionError.value = 'Ghostline could not end this session. Try again.'
+  }
+}
+
+function clearWorkspace() {
+  importRequest++
+  revisionRequest++
+  qodoRequest++
+  copyRequest++
+  url.value = ''
+  pr.value = undefined
+  error.value = ''
+  loading.value = false
+  selectedRevision.value = ''
+  focusedChecks.value = undefined
+  checksLoading.value = false
+  checksError.value = ''
+  selectedTraceId.value = ''
+  traceTrigger = undefined
+  copyResult.value = undefined
+  qodoApiKey.value = ''
+  qodoStructuredReview.value = undefined
+  qodoReviewError.value = ''
+  qodoReviewLoading.value = false
+}
 
 async function loadPR() {
   const request = ++importRequest
@@ -101,7 +166,10 @@ async function loadPR() {
       pr.value = importedPR
     }
   } catch (e) {
-    if (request === importRequest) error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
+    handleUnauthorized(e)
+    if (request === importRequest) {
+      error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
+    }
   } finally {
     if (request === importRequest) loading.value = false
   }
@@ -119,7 +187,10 @@ async function loadStructuredQodoReview() {
     const result = await fetchQodoReviewSession(requestedPRURL, apiKey)
     if (request === qodoRequest && pr.value?.url === requestedPRURL) qodoStructuredReview.value = result
   } catch (e) {
-    if (request === qodoRequest && pr.value?.url === requestedPRURL) qodoReviewError.value = e instanceof Error ? e.message : 'Could not load structured Qodo review data.'
+    handleUnauthorized(e)
+    if (request === qodoRequest && pr.value?.url === requestedPRURL) {
+      qodoReviewError.value = e instanceof Error ? e.message : 'Could not load structured Qodo review data.'
+    }
   } finally {
     if (request === qodoRequest) qodoReviewLoading.value = false
   }
@@ -141,7 +212,10 @@ async function focusRevision(sha: string) {
     const checks = await fetchRevisionChecks(importedPR.url, sha)
     if (request === revisionRequest && selectedRevision.value === sha) focusedChecks.value = checks
   } catch (e) {
-    if (request === revisionRequest && selectedRevision.value === sha) checksError.value = e instanceof Error ? e.message : 'Could not load checks for this revision.'
+    handleUnauthorized(e)
+    if (request === revisionRequest && selectedRevision.value === sha) {
+      checksError.value = e instanceof Error ? e.message : 'Could not load checks for this revision.'
+    }
   } finally {
     if (request === revisionRequest) checksLoading.value = false
   }
@@ -185,8 +259,13 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
 <template>
   <div class="shell">
     <a class="skip-link" href="#main-content">Skip to main content</a>
-    <header class="topbar"><a class="brand" href="#"><span class="brand-mark">G</span><span>GHOSTLINE<small>ENGINEERING CONTROL ROOM</small></span></a><span class="live"><i></i> SYSTEM READY</span></header>
+    <header class="topbar"><a class="brand" href="#"><span class="brand-mark">G</span><span>GHOSTLINE<small>ENGINEERING CONTROL ROOM</small></span></a><span v-if="ghostlineSession?.authenticated && ghostlineSession.login" class="account"><span>{{ ghostlineSession.login }}</span><button type="button" @click="logout">SIGN OUT</button></span><span v-else class="live"><i></i> SYSTEM READY</span></header>
     <main id="main-content" tabindex="-1">
+    <section v-if="sessionLoading && !ghostlineSession" class="auth-message" role="status"><p class="eyebrow">ACCESS CHECK</p><h1>Checking sign-in…</h1></section>
+    <section v-else-if="sessionError && !ghostlineSession" class="auth-message" role="alert"><p class="eyebrow">CONNECTION REQUIRED</p><h1>Can’t verify access.</h1><p>{{ sessionError }}</p><button type="button" @click="refreshGhostlineSession">TRY AGAIN</button></section>
+    <section v-else-if="ghostlineSession?.authRequired && !ghostlineSession.authenticated" class="auth-message"><p class="eyebrow">GHOSTLINE ACCESS</p><h1>Sign in to your control room.</h1><p>Use the GitHub account invited to this Ghostline instance. Only your account name is kept in the session; the OAuth access token is discarded after sign-in.</p><form action="/auth/login" method="post"><button class="github-sign-in" type="submit">SIGN IN WITH GITHUB <span aria-hidden="true">↗</span></button></form></section>
+    <div v-else-if="ghostlineSession && (!ghostlineSession.authRequired || ghostlineSession.authenticated)" class="workspace-content">
+    <p v-if="sessionError && ghostlineSession.authenticated" class="session-error" role="alert">{{ sessionError }}</p>
     <section class="hero"><p class="eyebrow">CHANGE INTELLIGENCE / 001</p><h1>See the work.<br><em>Trace the decisions.</em></h1><p class="lede">Import a pull request to inspect its revision history. Commit timestamps show when commits were authored, not when they were pushed.</p></section>
     <section class="import-panel"><label for="pr-url">GITHUB PULL REQUEST</label><div class="input-row"><span class="prefix">↗</span><input id="pr-url" v-model="url" placeholder="https://github.com/owner/repo/pull/123" @keyup.enter="loadPR"><button :disabled="loading" @click="loadPR">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button></div><p v-if="error" class="error" role="alert">{{ error }}</p></section>
     <section v-if="pr" class="change-card">
@@ -288,6 +367,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         <StructuredQodoReview v-if="qodoStructuredReview && pr" :review="qodoStructuredReview" :pull-request-url="pr.url" :head-sha="pr.checks.revisionSha" />
       </section>
     </section>
+    </div>
     </main>
     <footer><span>GHOSTLINE // DAY 01</span><span>EVERY SIGNAL HAS A SOURCE.</span></footer>
   </div>

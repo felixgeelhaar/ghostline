@@ -1,4 +1,4 @@
-import { apiErrorMessage } from './apiError'
+import { ghostlineApiError } from './apiError'
 import { QodoStructuredReviewSchema, type QodoStructuredReview } from '../domain/qodoReviewSession'
 
 export async function fetchQodoReviewSession(url: string, apiKey: string): Promise<QodoStructuredReview> {
@@ -14,7 +14,7 @@ export async function fetchQodoReviewSession(url: string, apiKey: string): Promi
     // Proxies can return empty or non-JSON error pages; status-based guidance
     // still applies, including Retry-After for rate limits.
   }
-  if (!response.ok) throw new Error(apiErrorMessage(response, payload, 'Unable to load structured Qodo review data.'))
+  if (!response.ok) throw ghostlineApiError(response, payload, 'Unable to load structured Qodo review data.')
   const result = QodoStructuredReviewSchema.safeParse(payload)
   if (!result.success) throw new Error('Qodo returned review data that did not pass validation. Please retry.')
   return result.data

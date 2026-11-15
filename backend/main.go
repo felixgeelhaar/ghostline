@@ -294,9 +294,25 @@ func newRouterWithQodoAndLimiter(gh *githubClient, qodo qodoReviewSource, limite
 }
 
 func newRouterWithQodoLogger(gh *githubClient, qodo qodoReviewSource, limiter *rateLimiter, identity clientIdentity, logger *slog.Logger) *gin.Engine {
-	r := gin.Default()
+	return newRouterWithAuth(gh, qodo, limiter, identity, logger, nil)
+}
+
+func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLimiter, identity clientIdentity, logger *slog.Logger, auth *authManager) *gin.Engine {
+	// OAuth callback URLs contain one-time credentials in their query string.
+	// Keep that path out of access logs while retaining request logging elsewhere.
+	r := gin.New()
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipPaths: []string{"/auth/callback"}}), gin.Recovery())
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
-	limited := r.Group("/api", rateLimitMiddleware(limiter, identity))
+	if auth == nil {
+		auth = newAuthManager(authConfig{}, nil)
+	}
+	r.GET("/api/session", auth.session)
+	oauthLoginLimiter := newRateLimiter(limiter.limit, limiter.window, limiter.now)
+	oauthCallbackLimiter := newRateLimiter(limiter.limit, limiter.window, limiter.now)
+	r.POST("/auth/login", rateLimitMiddleware(oauthLoginLimiter, identity), auth.login)
+	r.GET("/auth/callback", rateLimitMiddleware(oauthCallbackLimiter, identity), auth.callback)
+	r.POST("/auth/logout", auth.logout)
+	limited := r.Group("/api", rateLimitMiddleware(limiter, identity), auth.middleware())
 	client := api{gh: gh, qodo: qodo, logger: logger}
 	limited.POST("/import", client.importPR)
 	limited.POST("/checks", client.loadRevisionChecks)
@@ -310,7 +326,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	r := newRouterWithQodoAndLimiter(newGitHubClient(), newQodoReviewClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity)
+	auth, err := loadAuthConfig(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	r := newRouterWithAuth(newGitHubClient(), newQodoReviewClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity, slog.Default(), newAuthManager(auth, nil))
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
