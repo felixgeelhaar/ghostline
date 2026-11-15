@@ -321,6 +321,14 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
+		if err := runContainerHealthcheck(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	cfg, err := loadRateLimitConfig(os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

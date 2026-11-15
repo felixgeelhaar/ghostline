@@ -6,6 +6,7 @@ services:
     env_file:
       - .env.hosted
     environment:
+      GHOSTLINE_SESSION_SECRET: ${GHOSTLINE_SESSION_SECRET:?Provide this value through the host secret manager}
       HOST: 0.0.0.0
       PORT: 8080
       GHOSTLINE_ENV: production
@@ -16,6 +17,12 @@ services:
     ports:
       - "${GHOSTLINE_BIND_ADDRESS:-127.0.0.1}:${GHOSTLINE_PORT:-8080}:8080"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/ghostline", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
     read_only: true
     tmpfs:
       - /tmp
@@ -23,12 +30,6 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
-      interval: 10s
-      timeout: 3s
-      retries: 6
-      start_period: 30s
     deploy:
       resources:
         limits:
