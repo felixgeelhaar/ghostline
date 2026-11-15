@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,12 +73,18 @@ type qodoReviewDataWire struct {
 }
 
 func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
+	if err := rejectDuplicateJSONKeys(payload); err != nil {
+		return err
+	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &fields); err != nil {
 		return err
 	}
 	if fields == nil {
 		return errors.New("Qodo review response must be an object")
+	}
+	if err := rejectAmbiguousQodoWireFields(fields); err != nil {
+		return err
 	}
 	knownFields := []string{"review_session", "reviewSession", "findings", "camelFindings", "review_runs", "reviewRuns"}
 	recognized := false
@@ -144,6 +151,30 @@ func (data *qodoReviewData) UnmarshalJSON(payload []byte) error {
 		return err
 	}
 	*data = normalized
+	return nil
+}
+
+func rejectAmbiguousQodoWireFields(fields map[string]json.RawMessage) error {
+	// encoding/json matches struct field names case-insensitively. Restrict this
+	// check to top-level wire fields so arbitrary citation metadata can retain
+	// distinct keys such as "key" and "Key".
+	knownFields := []string{
+		"review_session", "reviewSession", "findings", "camelFindings",
+		"review_runs", "reviewRuns", "warnings", "qar_operation_result_truncated",
+	}
+	seen := make(map[string]string, len(knownFields))
+	for name := range fields {
+		for _, known := range knownFields {
+			if !strings.EqualFold(name, known) {
+				continue
+			}
+			if previous, exists := seen[known]; exists && previous != name {
+				return errors.New("Qodo response contains ambiguous JSON object keys")
+			}
+			seen[known] = name
+			break
+		}
+	}
 	return nil
 }
 
@@ -795,8 +826,7 @@ func (client *qodoReviewClient) post(ctx context.Context, apiKey, sessionID stri
 	if envelope.Error != nil {
 		return empty, newSessionID, fmt.Errorf("Qodo review service reported an MCP error (%d)", envelope.Error.Code)
 	}
-	var responseID int64
-	if err := json.Unmarshal(envelope.ID, &responseID); err != nil || responseID != expectedID {
+	if !mcpResponseIDMatches(envelope.ID, expectedID) {
 		return empty, newSessionID, errors.New("Qodo MCP response did not match the request")
 	}
 	return envelope, newSessionID, nil
@@ -896,8 +926,7 @@ func matchingMCPEvent(eventData []string, expectedID int64) (mcpEnvelope, bool) 
 	if err := decodeFirstMCPJSON([]byte(strings.Join(eventData, "\n")), &candidate); err != nil {
 		return mcpEnvelope{}, false
 	}
-	var responseID int64
-	if json.Unmarshal(candidate.ID, &responseID) != nil || responseID != expectedID {
+	if !mcpResponseIDMatches(candidate.ID, expectedID) {
 		return mcpEnvelope{}, false
 	}
 	return candidate, true
@@ -907,11 +936,211 @@ func decodeFirstMCPJSON(data []byte, envelope *mcpEnvelope) error {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return errors.New("empty MCP response")
 	}
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		return err
+	}
 	if err := json.Unmarshal(data, envelope); err != nil {
 		return err
 	}
 	if envelope.JSONRPC != "2.0" || len(envelope.Result) == 0 && envelope.Error == nil {
 		return errors.New("incomplete JSON-RPC response")
+	}
+	return nil
+}
+
+func mcpResponseIDMatches(encoded json.RawMessage, expectedID int64) bool {
+	value, ok := jsonNumberAsInt64(string(encoded))
+	return ok && value == expectedID
+}
+
+func jsonNumberAsInt64(number string) (int64, bool) {
+	if len(number) == 0 {
+		return 0, false
+	}
+	index := 0
+	negative := false
+	if number[index] == '-' {
+		negative = true
+		index++
+		if index == len(number) {
+			return 0, false
+		}
+	}
+
+	integerStart := index
+	if number[index] == '0' {
+		index++
+		if index < len(number) && number[index] >= '0' && number[index] <= '9' {
+			return 0, false
+		}
+	} else if number[index] >= '1' && number[index] <= '9' {
+		for index < len(number) && number[index] >= '0' && number[index] <= '9' {
+			index++
+		}
+	} else {
+		return 0, false
+	}
+	integerEnd := index
+
+	fractionStart, fractionEnd := index, index
+	if index < len(number) && number[index] == '.' {
+		index++
+		fractionStart = index
+		for index < len(number) && number[index] >= '0' && number[index] <= '9' {
+			index++
+		}
+		fractionEnd = index
+		if fractionStart == fractionEnd {
+			return 0, false
+		}
+	}
+
+	exponentSign := int64(1)
+	var exponent int64
+	if index < len(number) && (number[index] == 'e' || number[index] == 'E') {
+		index++
+		if index < len(number) && (number[index] == '+' || number[index] == '-') {
+			if number[index] == '-' {
+				exponentSign = -1
+			}
+			index++
+		}
+		exponentStart := index
+		limit := int64(len(number)) + 20
+		for index < len(number) && number[index] >= '0' && number[index] <= '9' {
+			digit := int64(number[index] - '0')
+			if exponent <= (limit-digit)/10 {
+				exponent = exponent*10 + digit
+			} else {
+				exponent = limit
+			}
+			index++
+		}
+		if index == exponentStart {
+			return 0, false
+		}
+	}
+	if index != len(number) {
+		return 0, false
+	}
+
+	digits := number[integerStart:integerEnd] + number[fractionStart:fractionEnd]
+	allZero := true
+	for i := 0; i < len(digits); i++ {
+		if digits[i] != '0' {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		return 0, true
+	}
+
+	if exponentSign < 0 {
+		exponent = -exponent
+	}
+	scale := exponent - int64(fractionEnd-fractionStart)
+	integerDigits := digits
+	if scale < 0 {
+		remove := -scale
+		if remove > int64(len(integerDigits)) {
+			return 0, false
+		}
+		for i := len(integerDigits) - int(remove); i < len(integerDigits); i++ {
+			if integerDigits[i] != '0' {
+				return 0, false
+			}
+		}
+		integerDigits = integerDigits[:len(integerDigits)-int(remove)]
+	} else if scale > 0 {
+		if scale > 19 {
+			return 0, false
+		}
+		integerDigits += strings.Repeat("0", int(scale))
+	}
+	integerDigits = strings.TrimLeft(integerDigits, "0")
+	if len(integerDigits) == 0 {
+		return 0, true
+	}
+	if len(integerDigits) > 19 {
+		return 0, false
+	}
+	if negative {
+		integerDigits = "-" + integerDigits
+	}
+	value, err := strconv.ParseInt(integerDigits, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+func rejectDuplicateJSONKeys(payload []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	if err := consumeJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return err
+		}
+		return errors.New("unexpected trailing JSON value")
+	}
+	return nil
+}
+
+func consumeJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("invalid JSON object key")
+			}
+			if _, exists := seen[key]; exists {
+				return errors.New("Qodo response contains a duplicate JSON object key")
+			}
+			seen[key] = struct{}{}
+			if err := consumeJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if closing != json.Delim('}') {
+			return errors.New("invalid JSON object ending")
+		}
+	case '[':
+		for decoder.More() {
+			if err := consumeJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		if closing != json.Delim(']') {
+			return errors.New("invalid JSON array ending")
+		}
+	default:
+		return errors.New("invalid JSON delimiter")
 	}
 	return nil
 }
