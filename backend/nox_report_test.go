@@ -32,6 +32,21 @@ func TestParseNoxSARIFBindsFindingsToReportRevision(t *testing.T) {
 	}
 }
 
+func TestParseNoxSARIFFindsRuleMetadataWhenRuleIndexIsOmitted(t *testing.T) {
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	data := []byte(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox","rules":[{"id":"SEC-002","name":"Unsafe configuration","shortDescription":{"text":"Review exposed configuration"},"properties":{"severity":"critical"}}]}},"results":[{"ruleId":"SEC-002","level":"warning","message":{"text":"A configuration value is exposed."}}]}]}`)
+	report, err := parseNoxSARIF(data, sha, 123, "https://github.com/acme/app/actions/runs/123", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Findings) != 1 {
+		t.Fatalf("expected one finding, got %+v", report.Findings)
+	}
+	if got := report.Findings[0]; got.RuleID != "SEC-002" || got.Title != "Review exposed configuration" || got.Severity != "critical" {
+		t.Fatalf("rule metadata was not resolved by ruleId: %+v", got)
+	}
+}
+
 func TestParseNoxSARIFRejectsOtherScannerAndUnsafeLocations(t *testing.T) {
 	const sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	for name, data := range map[string][]byte{

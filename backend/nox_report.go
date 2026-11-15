@@ -505,10 +505,7 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 			return noxReport{}, errors.New("Nox SARIF run has no results array")
 		}
 		for _, result := range *run.Results {
-			var rule sarifRule
-			if result.RuleIndex != nil && *result.RuleIndex >= 0 && *result.RuleIndex < len(run.Tool.Driver.Rules) {
-				rule = run.Tool.Driver.Rules[*result.RuleIndex]
-			}
+			rule := sarifRuleForResult(result, run.Tool.Driver.Rules)
 			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, ResultLevel: result.Level, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressed: len(result.Suppressions) > 0}
 			if value.Suppressed {
 				value.SuppressionKind = result.Suppressions[0].Kind
@@ -540,6 +537,21 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 		return noxReport{}, errors.New("SARIF contains no runs")
 	}
 	return report, nil
+}
+
+func sarifRuleForResult(result sarifResult, rules []sarifRule) sarifRule {
+	if result.RuleIndex != nil && *result.RuleIndex >= 0 && *result.RuleIndex < len(rules) {
+		indexed := rules[*result.RuleIndex]
+		if indexed.ID == result.RuleID {
+			return indexed
+		}
+	}
+	for _, rule := range rules {
+		if rule.ID != "" && rule.ID == result.RuleID {
+			return rule
+		}
+	}
+	return sarifRule{}
 }
 
 func safeGitHubWebURL(raw string) string {
