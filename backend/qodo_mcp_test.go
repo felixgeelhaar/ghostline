@@ -595,6 +595,20 @@ func TestQodoReviewDataRejectsUnrecognizedEmptyObject(t *testing.T) {
 	}
 }
 
+func TestQodoReviewDataPreservesRunWhenStatusIsMissing(t *testing.T) {
+	var data qodoReviewData
+	err := json.Unmarshal([]byte(`{"findings":[{"id":"f-1","title":"Keep findings"}],"review_runs":[{"id":"run-1"}]}`), &data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateQodoReviewData(data); err != nil {
+		t.Fatalf("run without status hid the finding payload: %v", err)
+	}
+	if len(data.Findings) != 1 || data.Findings[0].ID != "f-1" || len(data.ReviewRuns) != 1 || data.ReviewRuns[0].ID != "run-1" {
+		t.Fatalf("sparse Qodo response lost review evidence: %+v", data)
+	}
+}
+
 func TestQodoReviewDataPreservesCamelCaseFindingDetails(t *testing.T) {
 	var data qodoReviewData
 	payload := `{"reviewSession":{"status":"completed"},"findings":[{"id":"f-1","title":"Keep details","actionLevel":"action_required","attributionStatus":"attributed","gitSha":"` + strings.Repeat("a", 40) + `","reviewRunId":"r-1","location":{"filePath":"backend/main.go","startLine":12,"endLine":14,"side":"RIGHT","codeSnippet":"if ready {"},"evidence":{"citations":[{"sourceType":"code"}]}}],"reviewRuns":[]}`

@@ -32,6 +32,16 @@ describe('structured Qodo review evidence', () => {
     expect(reviewRunForFinding(review.findings[0]!, review)?.commitSha).toBe(shaB)
   })
 
+  it('accepts review-run evidence when Qodo omitted the run status', () => {
+    const review = QodoStructuredReviewSchema.parse({
+      availability: 'available', source: 'Qodo', reviewSession: null,
+      findings: [{ id: 'finding-1', title: 'Keep findings visible' }],
+      reviewRuns: [{ id: 'run-1', commitSha: shaA }],
+    })
+    expect(review.reviewRuns[0]).toMatchObject({ id: 'run-1', commitSha: shaA })
+    expect(reviewAttentionSummary(review, shaA).nextAction).toContain('Inspect')
+  })
+
   it('rejects malformed source revisions instead of displaying them as evidence', () => {
     const parsed = QodoStructuredReviewSchema.safeParse({
       availability: 'available', source: 'Qodo',

@@ -66,6 +66,20 @@ describe('structured Qodo review presentation', () => {
     expect(host.querySelector('.qodo-attention')?.textContent).toContain(currentSha.slice(0, 7))
   })
 
+  it('shows review runs when Qodo omitted their status', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: { ...review, reviewRuns: [{ id: 'run-no-status', commitSha: currentSha }] },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('STATUS NOT RETURNED · run-no-status')
+  })
+
   it('links only HTTPS citations from the imported GitHub repository', async () => {
     const javascriptSource = 'javascript:alert(1)'
     const httpSource = 'http://example.com/review'

@@ -54,14 +54,14 @@ const attention = computed(() => reviewAttentionSummary(props.review, props.head
             </li></ul>
           </section>
           <p v-if="finding.resolutionReason" class="finding-description">Qodo’s recorded reason: {{ finding.resolutionReason }}</p>
-          <p v-if="reviewRunForFinding(finding, review)" class="qodo-run-link">QODO-LINKED REVIEW RUN {{ reviewRunForFinding(finding, review)?.id }} · {{ reviewRunForFinding(finding, review)?.status }}<span v-if="reviewRunForFinding(finding, review)?.commitSha"> · REVISION {{ reviewRunForFinding(finding, review)?.commitSha?.slice(0, 7) }}</span></p>
+          <p v-if="reviewRunForFinding(finding, review)" class="qodo-run-link">QODO-LINKED REVIEW RUN {{ reviewRunForFinding(finding, review)?.id }} · {{ reviewRunForFinding(finding, review)?.status || 'STATUS NOT RETURNED' }}<span v-if="reviewRunForFinding(finding, review)?.commitSha"> · REVISION {{ reviewRunForFinding(finding, review)?.commitSha?.slice(0, 7) }}</span></p>
           <p v-else-if="finding.reviewRunId" class="qodo-run-link">QODO REPORTED LINKED REVIEW RUN {{ finding.reviewRunId }} · DETAILS NOT RETURNED</p>
           <p v-else class="qodo-run-link">NO REVIEW-RUN LINK RETURNED FOR THIS FINDING</p>
         </li>
     </ol>
     <section v-if="review.reviewRuns.length" class="qodo-runs" aria-label="Qodo review runs">
         <h5>RECORDED QODO REVIEW RUNS</h5>
-        <ol><li v-for="run in review.reviewRuns" :key="run.id"><span>{{ run.status.toUpperCase() }} · {{ run.id }}</span><a v-if="run.commitSha && qodoRevisionURL(pullRequestUrl, run.commitSha)" :href="qodoRevisionURL(pullRequestUrl, run.commitSha)" target="_blank" rel="noreferrer">{{ run.commitSha.slice(0, 7) }} ↗</a><span v-else-if="run.commitSha">{{ run.commitSha.slice(0, 7) }} · SOURCE LINK UNAVAILABLE</span><span v-else>REVISION NOT RETURNED</span></li></ol>
+        <ol><li v-for="run in review.reviewRuns" :key="run.id"><span>{{ run.status?.toUpperCase() || 'STATUS NOT RETURNED' }} · {{ run.id }}</span><a v-if="run.commitSha && qodoRevisionURL(pullRequestUrl, run.commitSha)" :href="qodoRevisionURL(pullRequestUrl, run.commitSha)" target="_blank" rel="noreferrer">{{ run.commitSha.slice(0, 7) }} ↗</a><span v-else-if="run.commitSha">{{ run.commitSha.slice(0, 7) }} · SOURCE LINK UNAVAILABLE</span><span v-else>REVISION NOT RETURNED</span></li></ol>
     </section>
     <p class="footnote">Statuses and run links are reported by Qodo. Ghostline does not independently verify that a finding was fixed, nor infer causation from commit order.</p>
   </section>

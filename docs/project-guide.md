@@ -95,3 +95,5 @@ The running change activity index, imported from Ghostline PR #49, is shown in [
 The current source-backed review timeline, imported from Ghostline PR #50 at revision `4bae19d`, is shown in [this screenshot](feature-evidence/activity-index-review-timeline.jpg). It shows observed commit and published Qodo comment events; it does not imply that event order proves a repair relationship. Parser-incompleteness and partial-check-placement warnings are edge states covered by tests, not present in this PR's current records.
 
 The [live referenced-issues panel](feature-evidence/referenced-issue-live-2026-11-13.jpg) shows issue states imported from a public pull request. This example’s referenced issues are now closed; the merged/open warning is covered by UI tests using explicit fixtures.
+
+The [Qodo missing-status state](feature-evidence/qodo-run-status-omitted.jpg) shows a prepared UI fixture where the run and linked finding remain visible while the absent status is labeled explicitly. The screenshot itself marks the sample as a fixture, not a live Qodo response.
