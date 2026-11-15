@@ -176,6 +176,51 @@ func TestParseNoxSARIFDoesNotTreatRejectedOrUnderReviewSuppressionsAsAccepted(t 
 	}
 }
 
+func TestParseNoxSARIFCountsAcceptedSuppressionBeyondDisplayLimit(t *testing.T) {
+	const sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	var data strings.Builder
+	data.WriteString(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[{"ruleId":"SEC-LATE-SUPPRESSION","message":{"text":"Suppressed finding."},"suppressions":[`)
+	for index := 0; index < domain.MaxNoxSuppressionsPerFinding; index++ {
+		if index > 0 {
+			data.WriteByte(',')
+		}
+		data.WriteString(`{"kind":"external","status":"rejected","justification":"Not accepted"}`)
+	}
+	data.WriteString(`,{"kind":"external","status":"accepted","justification":"Accepted after display limit"}]}]}]}`)
+
+	report, err := parseNoxSARIF([]byte(data.String()), sha, 1, "https://github.com/acme/app/actions/runs/1", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.TotalCount != 1 || report.ActiveCount != 0 || report.SuppressedCount != 1 {
+		t.Fatalf("accepted suppression beyond displayed details was not counted: %+v", report)
+	}
+	if finding := report.Findings[0]; !finding.Suppressed || len(finding.Suppressions) != domain.MaxNoxSuppressionsPerFinding || !finding.SuppressionsTruncated {
+		t.Fatalf("expected the finding to be suppressed while bounding displayed details: %+v", finding)
+	}
+}
+
+func TestParseNoxSARIFMarksFindingsTruncatedAtDisplayLimit(t *testing.T) {
+	const sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	var data strings.Builder
+	data.WriteString(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[`)
+	for index := 0; index <= maxNoxFindings; index++ {
+		if index > 0 {
+			data.WriteByte(',')
+		}
+		fmt.Fprintf(&data, `{"ruleId":"SEC-%03d","message":{"text":"Finding %d."}}`, index, index)
+	}
+	data.WriteString(`]}]}`)
+
+	report, err := parseNoxSARIF([]byte(data.String()), sha, 1, "https://github.com/acme/app/actions/runs/1", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Findings) != maxNoxFindings || report.TotalCount != maxNoxFindings+1 || report.ActiveCount != maxNoxFindings+1 || report.SuppressedCount != 0 || !report.Truncated {
+		t.Fatalf("report limit should be visible while totals retain every result: %+v", report)
+	}
+}
+
 func TestReadNoxSARIFFromArtifactRejectsOversizeAndDuplicateReports(t *testing.T) {
 	makeZip := func(t *testing.T, entries map[string]string) []byte {
 		t.Helper()

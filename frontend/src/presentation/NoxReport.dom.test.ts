@@ -97,6 +97,19 @@ describe('revision-linked Nox report', () => {
     expect(panel.textContent).not.toContain('No security findings reported')
   })
 
+  it('explains when the displayed finding list is truncated', async () => {
+    vi.mocked(fetchNoxReport).mockResolvedValue({
+      ...report(headSha, 101), truncated: true,
+      findings: Array.from({ length: 100 }, (_, index) => ({
+        ruleId: `SEC-${index}`, title: 'Validate input', severity: 'high', message: 'Untrusted input reaches a command.',
+        suppressed: false, suppressions: [], suppressionsTruncated: false,
+      })),
+    })
+    await importPR()
+    await vi.waitFor(() => expect(host!.querySelector('.nox-report')?.textContent).toContain('Showing 100 of 101 report results'))
+    expect(host!.querySelector('.nox-report')?.textContent).toContain('Open the source workflow for the full report.')
+  })
+
   it('restores the missing revision explanation after clearing focused history', async () => {
     const missingHead: PullRequest = {
       ...pr,
