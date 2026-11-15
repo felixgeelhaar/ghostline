@@ -533,7 +533,10 @@ func TestQodoReviewEndpointOmitsMissingSessionStatus(t *testing.T) {
 			Availability: "available", Source: "Qodo Agentic Toolbox",
 			ReviewSession: &qodoReviewSession{CommitSHA: sha},
 			Findings:      []qodoManagedFinding{{ID: "finding-1", Title: "Preserve review data", GitSHA: sha}},
-			ReviewRuns:    []qodoManagedReviewRun{{ID: "run-1", Status: "completed", CommitSHA: sha}},
+			ReviewRuns: []qodoManagedReviewRun{
+				{ID: "run-1", Status: "completed", CommitSHA: sha},
+				{ID: "run-2", CommitSHA: sha},
+			},
 		}, nil
 	}), newRateLimiter(defaultRateLimitRequests, defaultRateLimitWindow, time.Now), clientIdentity{})
 	req := httptest.NewRequest(http.MethodPost, "/api/qodo-review", strings.NewReader(`{"url":"https://github.com/acme/payments/pull/42"}`))
@@ -551,7 +554,7 @@ func TestQodoReviewEndpointOmitsMissingSessionStatus(t *testing.T) {
 	if !strings.Contains(res.Body.String(), `"commitSha":"`+sha+`"`) {
 		t.Fatalf("session revision was lost while omitting status: %s", res.Body.String())
 	}
-	for _, expected := range []string{`"id":"finding-1"`, `"id":"run-1"`} {
+	for _, expected := range []string{`"id":"finding-1"`, `"id":"run-1"`, `"id":"run-2"`} {
 		if !strings.Contains(res.Body.String(), expected) {
 			t.Fatalf("valid Qodo evidence %s was lost while omitting status: %s", expected, res.Body.String())
 		}

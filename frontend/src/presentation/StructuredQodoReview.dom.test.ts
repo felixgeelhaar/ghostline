@@ -66,6 +66,39 @@ describe('structured Qodo review presentation', () => {
     expect(host.querySelector('.qodo-attention')?.textContent).toContain(currentSha.slice(0, 7))
   })
 
+  it('shows review runs even when Qodo omitted their status', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: { ...review, reviewRuns: [{ id: 'run-no-status', commitSha: currentSha }] },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('STATUS NOT RETURNED · run-no-status')
+  })
+
+  it('treats a whitespace-only source status as missing in both run views', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        findings: [{ ...review.findings[0]!, reviewRunId: 'run-blank-status' }],
+        reviewRuns: [{ id: 'run-blank-status', status: ' ', commitSha: currentSha }],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('QODO-LINKED REVIEW RUN run-blank-status · STATUS NOT RETURNED')
+    expect(host.textContent).toContain('STATUS NOT RETURNED · run-blank-status')
+  })
+
   it('links only HTTPS citations from the imported GitHub repository', async () => {
     const javascriptSource = 'javascript:alert(1)'
     const httpSource = 'http://example.com/review'

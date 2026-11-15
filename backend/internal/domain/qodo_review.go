@@ -113,6 +113,7 @@ func MergeQodoReviewRuns(values []QodoReviewRun) ([]QodoReviewRun, error) {
 	indexes := make(map[string]int, len(values))
 	result := make([]QodoReviewRun, 0, len(values))
 	for _, value := range values {
+		value.Status = strings.TrimSpace(value.Status)
 		if index, exists := indexes[value.ID]; exists {
 			merged, err := mergeQodoReviewRun(result[index], value)
 			if err != nil {
@@ -290,8 +291,8 @@ func ValidateQodoReviewSnapshot(snapshot QodoReviewSnapshot) error {
 		}
 	}
 	for _, run := range snapshot.ReviewRuns {
-		if strings.TrimSpace(run.ID) == "" || strings.TrimSpace(run.Status) == "" {
-			return errors.New("Qodo returned a review run without its native ID or status")
+		if strings.TrimSpace(run.ID) == "" {
+			return errors.New("Qodo returned a review run without its native ID")
 		}
 		if run.CommitSHA != "" && !fullGitSHA.MatchString(strings.ToLower(run.CommitSHA)) {
 			return errors.New("Qodo review run contained an invalid commit SHA")
