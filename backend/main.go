@@ -58,6 +58,7 @@ type githubPR struct {
 		Repo struct {
 			Name     string `json:"name"`
 			FullName string `json:"full_name"`
+			Private  bool   `json:"private"`
 			Owner    struct {
 				Login string `json:"login"`
 			} `json:"owner"`

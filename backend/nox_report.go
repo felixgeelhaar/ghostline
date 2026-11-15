@@ -28,6 +28,8 @@ const (
 	maxNoxSARIFBytes     = 4 << 20
 	maxNoxFindings       = 100
 	noxPageSize          = 100
+	maxNoxPages          = 10
+	noxWorkflowPath      = ".github/workflows/nox.yml"
 )
 
 type noxReport struct {
@@ -58,9 +60,14 @@ type noxFinding struct {
 	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
+func noxFindingFromDomain(finding domain.NoxFinding) noxFinding {
+	return noxFinding{RuleID: finding.RuleID, Title: finding.Title, Severity: finding.Severity, Message: finding.Message, Path: finding.Path, Line: finding.Line, Fingerprint: finding.Fingerprint}
+}
+
 type workflowRunsResponse struct {
 	WorkflowRuns []struct {
 		ID         int64  `json:"id"`
+		Path       string `json:"path"`
 		Name       string `json:"name"`
 		Event      string `json:"event"`
 		HeadSHA    string `json:"head_sha"`
@@ -155,6 +162,10 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		return result
 	}
 	owner, repo = identity.Owner, identity.Name
+	if pr.Base.Repo.Private {
+		result.Reason = "Security reports are only available for public pull requests."
+		return result
+	}
 
 	if pr.Head.SHA != sha {
 		found, err := pullRequestContainsRevision(ctx, gh, owner, repo, number, sha)
@@ -168,14 +179,9 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		}
 	}
 
-	var runs workflowRunsResponse
-	path := fmt.Sprintf("/repos/%s/%s/actions/runs?head_sha=%s&event=pull_request&per_page=%d", url.PathEscape(owner), url.PathEscape(repo), url.QueryEscape(sha), noxPageSize)
-	if err := gh.get(ctx, path, &runs); err != nil {
-		result.Reason = noxUnavailableReason(err)
-		return result
-	}
 	matchingRuns := make([]struct {
 		ID         int64  `json:"id"`
+		Path       string `json:"path"`
 		Name       string `json:"name"`
 		Event      string `json:"event"`
 		HeadSHA    string `json:"head_sha"`
@@ -183,15 +189,34 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		Conclusion string `json:"conclusion"`
 		HTMLURL    string `json:"html_url"`
 		CreatedAt  string `json:"created_at"`
-	}, 0, len(runs.WorkflowRuns))
-	for _, run := range runs.WorkflowRuns {
-		if run.HeadSHA == sha && run.Event == "pull_request" {
-			matchingRuns = append(matchingRuns, run)
+	}, 0)
+	workflowHistoryTruncated := false
+	for page := 1; page <= maxNoxPages; page++ {
+		var runs workflowRunsResponse
+		runsPath := fmt.Sprintf("/repos/%s/%s/actions/workflows/nox.yml/runs?head_sha=%s&event=pull_request&per_page=%d&page=%d", url.PathEscape(owner), url.PathEscape(repo), url.QueryEscape(sha), noxPageSize, page)
+		if err := gh.get(ctx, runsPath, &runs); err != nil {
+			result.Reason = noxUnavailableReason(err)
+			return result
+		}
+		for _, run := range runs.WorkflowRuns {
+			if run.HeadSHA == sha && run.Event == "pull_request" && isNoxWorkflowPath(run.Path) {
+				matchingRuns = append(matchingRuns, run)
+			}
+		}
+		if len(runs.WorkflowRuns) < noxPageSize {
+			break
+		}
+		if page == maxNoxPages {
+			workflowHistoryTruncated = true
 		}
 	}
 	sort.SliceStable(matchingRuns, func(i, j int) bool { return matchingRuns[i].CreatedAt > matchingRuns[j].CreatedAt })
 	if len(matchingRuns) == 0 {
-		result.Reason = "GitHub has no pull-request workflow run for this revision."
+		if workflowHistoryTruncated {
+			result.Reason = "GitHub has more workflow history than Ghostline can inspect for this revision. Narrow the revision or try again after older runs expire."
+		} else {
+			result.Reason = "GitHub has no pull-request workflow run for this revision."
+		}
 		return result
 	}
 
@@ -211,6 +236,7 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 	}
 	var selectedRun *struct {
 		ID         int64  `json:"id"`
+		Path       string `json:"path"`
 		Name       string `json:"name"`
 		Event      string `json:"event"`
 		HeadSHA    string `json:"head_sha"`
@@ -221,21 +247,34 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 	}
 	for i := range matchingRuns {
 		run := &matchingRuns[i]
-		var response workflowArtifactsResponse
-		artifactsPath := fmt.Sprintf("/repos/%s/%s/actions/runs/%d/artifacts?name=%s&per_page=%d", url.PathEscape(owner), url.PathEscape(repo), run.ID, url.QueryEscape(noxArtifactName), noxPageSize)
-		if err := gh.get(ctx, artifactsPath, &response); err != nil {
-			result.Reason = noxUnavailableReason(err)
-			return result
+		artifactHistoryTruncated := false
+		for page := 1; page <= maxNoxPages; page++ {
+			var response workflowArtifactsResponse
+			artifactsPath := fmt.Sprintf("/repos/%s/%s/actions/runs/%d/artifacts?name=%s&per_page=%d&page=%d", url.PathEscape(owner), url.PathEscape(repo), run.ID, url.QueryEscape(noxArtifactName), noxPageSize, page)
+			if err := gh.get(ctx, artifactsPath, &response); err != nil {
+				result.Reason = noxUnavailableReason(err)
+				return result
+			}
+			for j := range response.Artifacts {
+				candidate := &response.Artifacts[j]
+				if candidate.Name != noxArtifactName || candidate.WorkflowRun.HeadSHA != sha || candidate.WorkflowRun.ID != run.ID {
+					continue
+				}
+				if artifact == nil || candidate.CreatedAt > artifact.CreatedAt {
+					artifact = candidate
+					selectedRun = run
+				}
+			}
+			if len(response.Artifacts) < noxPageSize {
+				break
+			}
+			if page == maxNoxPages && artifact == nil {
+				artifactHistoryTruncated = true
+			}
 		}
-		for j := range response.Artifacts {
-			candidate := &response.Artifacts[j]
-			if candidate.Name != noxArtifactName || candidate.WorkflowRun.HeadSHA != sha || candidate.WorkflowRun.ID != run.ID {
-				continue
-			}
-			if artifact == nil || candidate.CreatedAt > artifact.CreatedAt {
-				artifact = candidate
-				selectedRun = run
-			}
+		if artifactHistoryTruncated && artifact == nil {
+			result.Reason = "GitHub has more artifact history than Ghostline can inspect for this revision."
+			return result
 		}
 		if artifact != nil {
 			break // Runs are newest first; a later run may not replace a missing artifact.
@@ -269,12 +308,15 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		result.Reason = noxUnavailableReason(err)
 		return result
 	}
-	if digest := strings.TrimPrefix(artifact.Digest, "sha256:"); digest != "" {
-		actual := sha256.Sum256(archive)
-		if !strings.EqualFold(digest, hex.EncodeToString(actual[:])) {
-			result.Reason = "GitHub’s Nox artifact did not match its published SHA-256 digest."
-			return result
-		}
+	digest := strings.TrimPrefix(artifact.Digest, "sha256:")
+	if len(digest) != sha256.Size*2 {
+		result.Reason = "GitHub did not provide a verifiable SHA-256 digest for the Nox artifact."
+		return result
+	}
+	actual := sha256.Sum256(archive)
+	if !strings.EqualFold(digest, hex.EncodeToString(actual[:])) {
+		result.Reason = "GitHub’s Nox artifact did not match its published SHA-256 digest."
+		return result
 	}
 	sarif, err := readNoxSARIFArtifact(archive)
 	if err != nil {
@@ -312,6 +354,10 @@ func pullRequestContainsRevision(ctx context.Context, gh *githubClient, owner, r
 			return false, nil
 		}
 	}
+}
+
+func isNoxWorkflowPath(value string) bool {
+	return value == noxWorkflowPath || strings.HasPrefix(value, noxWorkflowPath+"@")
 }
 
 func readNoxSARIFArtifact(data []byte) ([]byte, error) {
@@ -370,7 +416,18 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 			return noxReport{}, errors.New("artifact contains a report from a different scanner")
 		}
 		for _, result := range run.Results {
-			if len(result.Suppressions) > 0 {
+			var rule sarifRule
+			if result.RuleIndex != nil && *result.RuleIndex >= 0 && *result.RuleIndex < len(run.Tool.Driver.Rules) {
+				rule = run.Tool.Driver.Rules[*result.RuleIndex]
+			}
+			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, ResultLevel: result.Level, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressed: len(result.Suppressions) > 0}
+			if len(result.Locations) > 0 {
+				location := result.Locations[0].PhysicalLocation
+				value.Path = location.ArtifactLocation.URI
+				value.Line = location.Region.StartLine
+			}
+			finding, include := domain.ParseNoxFinding(value)
+			if !include {
 				continue
 			}
 			report.TotalCount++
@@ -378,105 +435,13 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 				report.Truncated = true
 				continue
 			}
-			finding := noxFinding{RuleID: result.RuleID, Severity: sarifSeverity(result.Level), Message: boundedNoxText(result.Message.Text, 2000)}
-			if finding.Message == "" {
-				finding.Message = boundedNoxText(result.Message.Markdown, 2000)
-			}
-			if result.RuleIndex != nil && *result.RuleIndex >= 0 && *result.RuleIndex < len(run.Tool.Driver.Rules) {
-				rule := run.Tool.Driver.Rules[*result.RuleIndex]
-				if finding.RuleID == "" {
-					finding.RuleID = rule.ID
-				}
-				finding.Title = rule.ShortDescription.Text
-				if finding.Title == "" {
-					finding.Title = rule.Name
-				}
-				if rule.Properties.Severity != "" {
-					finding.Severity = sarifSeverity(rule.Properties.Severity)
-				}
-			}
-			if finding.Title == "" {
-				finding.Title = finding.RuleID
-			}
-			if finding.RuleID == "" {
-				finding.RuleID = "unclassified"
-			}
-			if len(result.Locations) > 0 {
-				location := result.Locations[0].PhysicalLocation
-				finding.Path = safeSARIFPath(location.ArtifactLocation.URI)
-				if finding.Path != "" && location.Region.StartLine > 0 {
-					finding.Line = location.Region.StartLine
-				}
-			}
-			for _, key := range []string{"primaryLocationLineHash", "primaryLocationLineHash/v1", "noxFingerprint"} {
-				if value := result.PartialFingerprints[key]; value != "" {
-					finding.Fingerprint = boundedNoxText(value, 200)
-					break
-				}
-			}
-			report.Findings = append(report.Findings, finding)
+			report.Findings = append(report.Findings, noxFindingFromDomain(finding))
 		}
 	}
 	if len(log.Runs) == 0 {
 		return noxReport{}, errors.New("SARIF contains no runs")
 	}
 	return report, nil
-}
-
-func sarifSeverity(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "critical":
-		return "critical"
-	case "high", "error":
-		return "high"
-	case "medium", "moderate", "warning":
-		return "medium"
-	case "low", "note":
-		return "low"
-	case "info", "informational", "none":
-		return "info"
-	default:
-		return "unknown"
-	}
-}
-
-func safeSARIFPath(value string) string {
-	if value == "" || strings.Contains(value, "\\") {
-		return ""
-	}
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.IsAbs() || parsed.Host != "" || strings.HasPrefix(value, "/") {
-		return ""
-	}
-	for _, segment := range strings.Split(value, "/") {
-		decoded, decodeErr := url.PathUnescape(segment)
-		if decodeErr != nil || decoded == ".." || decoded == "." {
-			return ""
-		}
-	}
-	clean := path.Clean(value)
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-		return ""
-	}
-	return clean
-}
-
-func boundedNoxText(value string, maxRunes int) string {
-	if len(value) <= maxRunes*4 {
-		count := 0
-		for index := range value {
-			if count == maxRunes {
-				return value[:index]
-			}
-			count++
-		}
-		return value
-	}
-	runes := []rune(value)
-	if len(runes) > maxRunes {
-		return string(runes[:maxRunes])
-	}
-	return value
 }
 
 func githubRunURL(owner, repo string, runID int64) string {

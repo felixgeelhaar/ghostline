@@ -10,6 +10,7 @@ import { checkOutcome, checkSummaryPreview, headCommitLabel, orderChecks, summar
 import { findRecurringFindings, qodoHeadCoverage, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import type { QodoStructuredReview } from '../domain/qodoReviewSession'
 import type { NoxReport } from '../domain/noxReport'
+import { noxReportNeedsAttention } from '../domain/noxReport'
 import { buildFindingTrace } from '../domain/trace'
 import { isSamePullRequest, validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import { GhostlineApiError } from '../application/apiError'
@@ -171,6 +172,13 @@ async function loadPR() {
     const importedPR = await importPullRequest(requestedURL)
     if (request === importRequest) {
       const focusedRevisionStillExists = importedPR.commits.some((commit) => commit.sha === selectedRevision.value)
+      const nextNoxRevision = selectedRevision.value || importedPR.checks.revisionSha
+      if (focusedNoxReport.value && focusedNoxReport.value.revisionSha !== nextNoxRevision) {
+        noxRequest++
+        focusedNoxReport.value = undefined
+        noxError.value = ''
+        noxLoading.value = false
+      }
       if (selectedRevision.value && !focusedRevisionStillExists) {
         revisionRequest++
         selectedRevision.value = ''
@@ -369,7 +377,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
           <p v-if="focusedNoxReport.runUrl" class="checks-note"><a :href="focusedNoxReport.runUrl" target="_blank" rel="noreferrer">VIEW SOURCE WORKFLOW RUN ↗</a></p>
         </template>
         <template v-else-if="focusedNoxReport?.availability === 'available'">
-          <p class="nox-summary" :class="{ warn: focusedNoxReport.findings.length > 0 || focusedNoxReport.runConclusion !== 'success' }" role="status">
+          <p class="nox-summary" :class="{ warn: noxReportNeedsAttention(focusedNoxReport) }" role="status">
             <strong>{{ focusedNoxReport.findings.length ? `${focusedNoxReport.totalCount} security finding${focusedNoxReport.totalCount === 1 ? '' : 's'} reported` : 'No security findings reported' }}</strong>
             <span>Workflow {{ focusedNoxReport.runConclusion || 'status unavailable' }} · {{ focusedNoxReport.runName || 'Nox scan' }} · report from {{ date(focusedNoxReport.createdAt) }} · retained until {{ date(focusedNoxReport.expiresAt) }}</span>
           </p>

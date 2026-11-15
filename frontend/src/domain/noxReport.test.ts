@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { NoxReportSchema } from './noxReport'
+import { noxReportNeedsAttention, NoxReportSchema } from './noxReport'
 
 const sha = 'c'.repeat(40)
 const valid = {
@@ -18,5 +18,12 @@ describe('Nox report evidence schema', () => {
   it('rejects unknown severities and invalid source URLs', () => {
     expect(NoxReportSchema.safeParse({ ...valid, findings: [{ ...valid.findings[0], severity: 'urgent' }] }).success).toBe(false)
     expect(NoxReportSchema.safeParse({ ...valid, runUrl: 'javascript:alert(1)' }).success).toBe(false)
+  })
+
+  it('marks findings and unsuccessful workflows for attention', () => {
+    expect(noxReportNeedsAttention(NoxReportSchema.parse(valid))).toBe(true)
+    expect(noxReportNeedsAttention(NoxReportSchema.parse({ ...valid, totalCount: 0, findings: [] }))).toBe(false)
+    expect(noxReportNeedsAttention(NoxReportSchema.parse({ ...valid, totalCount: 0, findings: [], runConclusion: 'failure' }))).toBe(true)
+    expect(noxReportNeedsAttention(NoxReportSchema.parse({ availability: 'unavailable', revisionSha: sha, reason: 'Not retained', totalCount: 0, truncated: false, findings: [] }))).toBe(true)
   })
 })

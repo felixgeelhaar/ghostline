@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -120,13 +121,13 @@ func TestLoadNoxReportUsesOnlyArtifactForExactPullRequestRevision(t *testing.T) 
 		switch r.URL.Path {
 		case "/repos/acme/app/pulls/7":
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
-		case "/repos/acme/app/actions/runs":
+		case "/repos/acme/app/actions/workflows/nox.yml/runs":
 			if r.URL.Query().Get("head_sha") != sha || r.URL.Query().Get("event") != "pull_request" {
 				t.Errorf("workflow query not scoped to requested revision and PR event: %s", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{
-				map[string]any{"id": 12, "name": "Security", "event": "pull_request", "head_sha": "dddddddddddddddddddddddddddddddddddddddd", "html_url": "https://github.com/acme/app/actions/runs/12", "created_at": "2026-11-15T13:59:00Z"},
-				map[string]any{"id": 11, "name": "Security", "event": "pull_request", "head_sha": sha, "conclusion": "success", "html_url": "https://github.com/acme/app/actions/runs/11", "created_at": "2026-11-15T13:58:00Z"},
+				map[string]any{"id": 12, "path": noxWorkflowPath, "name": "Security", "event": "pull_request", "head_sha": "dddddddddddddddddddddddddddddddddddddddd", "html_url": "https://github.com/acme/app/actions/runs/12", "created_at": "2026-11-15T13:59:00Z"},
+				map[string]any{"id": 11, "path": noxWorkflowPath + "@refs/pull/7/merge", "name": "Security", "event": "pull_request", "head_sha": sha, "conclusion": "success", "html_url": "https://github.com/acme/app/actions/runs/11", "created_at": "2026-11-15T13:58:00Z"},
 			}})
 		case "/repos/acme/app/actions/runs/11/artifacts":
 			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{
@@ -158,8 +159,8 @@ func TestLoadNoxReportRejectsArtifactWithDifferentRevisionProvenance(t *testing.
 		switch r.URL.Path {
 		case "/repos/acme/app/pulls/7":
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
-		case "/repos/acme/app/actions/runs":
-			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 20, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:00:00Z"}}})
+		case "/repos/acme/app/actions/workflows/nox.yml/runs":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 20, "path": noxWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:00:00Z"}}})
 		case "/repos/acme/app/actions/runs/20/artifacts":
 			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{"id": 45, "name": noxArtifactName, "workflow_run": map[string]any{"id": 20, "head_sha": "ffffffffffffffffffffffffffffffffffffffff"}}}})
 		default:
@@ -170,6 +171,115 @@ func TestLoadNoxReportRejectsArtifactWithDifferentRevisionProvenance(t *testing.
 	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
 	if report.Availability != noxReportUnavailable || report.Reason != "No retained Nox report was published for this revision." {
 		t.Fatalf("mismatched artifact should not be presented as evidence: %+v", report)
+	}
+}
+
+func TestLoadNoxReportRejectsPrivatePullRequestBeforeReadingActions(t *testing.T) {
+	const sha = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	var actionsRequests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/actions/") {
+			actionsRequests++
+		}
+		if r.URL.Path != "/repos/acme/app/pulls/7" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "private": true, "owner": map[string]string{"login": "acme"}}}})
+	}))
+	defer srv.Close()
+	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+	if report.Availability != noxReportUnavailable || report.Reason != "Security reports are only available for public pull requests." || actionsRequests != 0 {
+		t.Fatalf("private report was not rejected before Actions access: %+v, actions requests=%d", report, actionsRequests)
+	}
+}
+
+func TestLoadNoxReportRequiresTheRepositorySecurityWorkflow(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	digest := sha256.Sum256(archive)
+	var artifactRequests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/app/pulls/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "private": false, "owner": map[string]string{"login": "acme"}}}})
+		case "/repos/acme/app/actions/workflows/nox.yml/runs":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{
+				map[string]any{"id": 12, "path": "attacker.yml", "event": "pull_request", "head_sha": sha, "html_url": "https://github.com/acme/app/actions/runs/12", "created_at": "2026-11-15T13:59:00Z"},
+				map[string]any{"id": 11, "path": ".github/workflows/nox.yml", "event": "pull_request", "head_sha": sha, "html_url": "https://github.com/acme/app/actions/runs/11", "created_at": "2026-11-15T13:58:00Z"},
+			}})
+		case "/repos/acme/app/actions/runs/11/artifacts":
+			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{"id": 44, "name": noxArtifactName, "digest": "sha256:" + hex.EncodeToString(digest[:]), "workflow_run": map[string]any{"id": 11, "head_sha": sha}}}})
+		case "/repos/acme/app/actions/runs/12/artifacts":
+			artifactRequests++
+			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{"id": 45, "name": noxArtifactName, "digest": "sha256:" + hex.EncodeToString(digest[:]), "workflow_run": map[string]any{"id": 12, "head_sha": sha}}}})
+		case "/repos/acme/app/actions/artifacts/44/zip", "/repos/acme/app/actions/artifacts/45/zip":
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+	if report.Availability != noxReportAvailable || report.RunID != 11 || artifactRequests != 0 {
+		t.Fatalf("report did not come from the repository security workflow: %+v, rejected-workflow artifact requests=%d", report, artifactRequests)
+	}
+}
+
+func TestLoadNoxReportRequiresArtifactDigest(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/app/pulls/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+		case "/repos/acme/app/actions/workflows/nox.yml/runs":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 11, "path": ".github/workflows/nox.yml", "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z"}}})
+		case "/repos/acme/app/actions/runs/11/artifacts":
+			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{"id": 44, "name": noxArtifactName, "workflow_run": map[string]any{"id": 11, "head_sha": sha}}}})
+		case "/repos/acme/app/actions/artifacts/44/zip":
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+	if report.Availability != noxReportUnavailable || report.Reason != "GitHub did not provide a verifiable SHA-256 digest for the Nox artifact." {
+		t.Fatalf("artifact without digest should fail closed: %+v", report)
+	}
+}
+
+func TestLoadNoxReportFindsSecurityWorkflowBeyondFirstPage(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	digest := sha256.Sum256(archive)
+	var requestedPageTwo bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/acme/app/pulls/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+		case r.URL.Path == "/repos/acme/app/actions/workflows/nox.yml/runs" && r.URL.Query().Get("page") == "1":
+			runs := make([]map[string]any, noxPageSize)
+			for index := range runs {
+				runs[index] = map[string]any{"id": index + 100, "path": "other.yml", "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z"}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": runs})
+		case r.URL.Path == "/repos/acme/app/actions/workflows/nox.yml/runs" && r.URL.Query().Get("page") == "2":
+			requestedPageTwo = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 11, "path": noxWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:57:00Z"}}})
+		case r.URL.Path == "/repos/acme/app/actions/runs/11/artifacts":
+			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{"id": 44, "name": noxArtifactName, "digest": "sha256:" + hex.EncodeToString(digest[:]), "workflow_run": map[string]any{"id": 11, "head_sha": sha}}}})
+		case r.URL.Path == "/repos/acme/app/actions/artifacts/44/zip":
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+	if !requestedPageTwo || report.Availability != noxReportAvailable || report.RunID != 11 {
+		t.Fatalf("later workflow page was not inspected: %+v, page two=%v", report, requestedPageTwo)
 	}
 }
 

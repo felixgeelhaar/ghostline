@@ -54,3 +54,9 @@ export type NoxReport = z.infer<typeof NoxReportSchema>
 export function noxSeverityLabel(value: NoxReport['findings'][number]['severity']): string {
   return value.toUpperCase()
 }
+
+export function noxReportNeedsAttention(report: NoxReport): boolean {
+  return report.availability === 'unavailable'
+    || report.findings.length > 0
+    || report.runConclusion !== 'success'
+}
