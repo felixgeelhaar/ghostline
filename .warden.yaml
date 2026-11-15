@@ -15,3 +15,5 @@ steps:
   pre_commit: [day-lock-test, runner-test, dev-servers-test, go-test, nox-scan]
   pre_push: [go-test, go-vet, frontend-verify, nox-scan]
 parallel: true
+trusted_keys:
+  - 139e6eb9e2611c76
