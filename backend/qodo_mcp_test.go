@@ -171,6 +171,141 @@ func TestQodoReviewDataFailedDecodeDoesNotLeakSessionIntoLaterResponse(t *testin
 	}
 }
 
+func TestQodoReviewDataRejectsRepeatedJSONFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "findings",
+			payload: `{"findings":[],"findings":[{"id":"hidden","title":"Hidden finding"}],"review_runs":[]}`,
+		},
+		{
+			name:    "warnings",
+			payload: `{"findings":[],"review_runs":[],"warnings":["partial"],"warnings":[]}`,
+		},
+		{
+			name:    "truncation flag",
+			payload: `{"findings":[],"review_runs":[],"qar_operation_result_truncated":true,"qar_operation_result_truncated":false}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var data qodoReviewData
+			if err := json.Unmarshal([]byte(test.payload), &data); err == nil || !strings.Contains(err.Error(), "duplicate JSON object key") {
+				t.Fatalf("decode error = %v; want duplicate JSON object key", err)
+			}
+		})
+	}
+}
+
+func TestQodoReviewDataRejectsCaseInsensitiveRepeatedFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+	}{
+		{
+			name:    "findings",
+			payload: `{"findings":[{"id":"visible","title":"Visible finding"}],"Findings":[],"review_runs":[]}`,
+		},
+		{
+			name:    "truncation flag",
+			payload: `{"findings":[],"review_runs":[],"qar_operation_result_truncated":true,"QAR_OPERATION_RESULT_TRUNCATED":false}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var data qodoReviewData
+			if err := json.Unmarshal([]byte(test.payload), &data); err == nil || !strings.Contains(err.Error(), "ambiguous JSON object keys") {
+				t.Fatalf("decode error = %v; want ambiguous JSON object keys", err)
+			}
+		})
+	}
+}
+
+func TestQodoReviewDataPreservesCaseSensitiveCitationMetadataKeys(t *testing.T) {
+	payload := `{"findings":[{"id":"f-1","title":"Keep metadata","evidence":{"citations":[{"metadata":{"key":1,"Key":2}}]}}],"review_runs":[]}`
+	var data qodoReviewData
+	if err := json.Unmarshal([]byte(payload), &data); err != nil {
+		t.Fatalf("case-sensitive citation metadata keys were rejected: %v", err)
+	}
+	metadata := string(data.Findings[0].Evidence.Citations[0].Metadata)
+	if !strings.Contains(metadata, `"key":1`) || !strings.Contains(metadata, `"Key":2`) {
+		t.Fatalf("citation metadata keys were not preserved: %s", metadata)
+	}
+}
+
+func TestQodoReviewClientAcceptsIntegerValuedDecimalResponseID(t *testing.T) {
+	client := qodoReviewClient{
+		endpoint: "https://qodo.test/v1/tools/mcp/",
+		http: &http.Client{Transport: qodoRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			recorder := httptest.NewRecorder()
+			recorder.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(recorder, `{"jsonrpc":"2.0","id":2.0,"result":{"ok":true}}`)
+			return recorder.Result(), nil
+		})},
+	}
+	if _, _, err := client.post(context.Background(), "qodo-secret", "", map[string]any{"method": "tools/call"}, 2, true); err != nil {
+		t.Fatalf("integer-valued decimal response id was rejected: %v", err)
+	}
+}
+
+func TestQodoReviewClientRejectsNonIntegerResponseID(t *testing.T) {
+	client := qodoReviewClient{
+		endpoint: "https://qodo.test/v1/tools/mcp/",
+		http: &http.Client{Transport: qodoRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			recorder := httptest.NewRecorder()
+			recorder.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(recorder, `{"jsonrpc":"2.0","id":2.5,"result":{"ok":true}}`)
+			return recorder.Result(), nil
+		})},
+	}
+	if _, _, err := client.post(context.Background(), "qodo-secret", "", map[string]any{"method": "tools/call"}, 2, true); err == nil {
+		t.Fatal("non-integer response id was accepted")
+	}
+}
+
+func TestMCPResponseIDMatchesRejectsHugeExponentWithoutExpansion(t *testing.T) {
+	if mcpResponseIDMatches(json.RawMessage(`1e1000000000`), 1) {
+		t.Fatal("out-of-range response id matched")
+	}
+	if mcpResponseIDMatches(json.RawMessage(`1e-1000000000`), 0) {
+		t.Fatal("fractional response id matched zero")
+	}
+	if !mcpResponseIDMatches(json.RawMessage(`0e1000000000`), 0) {
+		t.Fatal("zero response id with a large exponent did not match zero")
+	}
+}
+
+func TestJSONNumberAsInt64(t *testing.T) {
+	tests := []struct {
+		name  string
+		raw   string
+		want  int64
+		valid bool
+	}{
+		{name: "integer", raw: "2", want: 2, valid: true},
+		{name: "decimal integer", raw: "2.0", want: 2, valid: true},
+		{name: "negative scale", raw: "20e-1", want: 2, valid: true},
+		{name: "positive scale", raw: "2e1", want: 20, valid: true},
+		{name: "fractional", raw: "2.5"},
+		{name: "fraction below one", raw: "2e-1"},
+		{name: "int64 maximum", raw: "9223372036854775807", want: 9223372036854775807, valid: true},
+		{name: "int64 minimum", raw: "-9223372036854775808", want: -9223372036854775808, valid: true},
+		{name: "int64 overflow", raw: "9223372036854775808"},
+		{name: "leading zero", raw: "02"},
+		{name: "missing exponent", raw: "2e"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, valid := jsonNumberAsInt64(test.raw)
+			if got != test.want || valid != test.valid {
+				t.Fatalf("jsonNumberAsInt64(%q) = (%d, %t), want (%d, %t)", test.raw, got, valid, test.want, test.valid)
+			}
+		})
+	}
+}
+
 func TestMergeQodoReviewDataCombinesDuplicateFindingEvidenceAndRejectsConflicts(t *testing.T) {
 	citation := qodoFindingCitation{Source: "backend/retry.go", Text: "retry()"}
 	first := qodoReviewData{Findings: []qodoManagedFinding{{ID: "f-1", Title: "Guard retries", Evidence: &qodoFindingEvidence{Citations: []qodoFindingCitation{citation}}}}, ReviewRuns: []qodoManagedReviewRun{}}
@@ -789,6 +924,35 @@ func TestDecodeMCPEnvelopeSelectsMatchingSSERequestID(t *testing.T) {
 	}
 	if id != 2 || string(envelope.Result) != `{"review":"complete"}` {
 		t.Fatalf("selected event = id %d, result %s; want id 2 review result", id, envelope.Result)
+	}
+}
+
+func TestDecodeMCPEnvelopeRejectsRepeatedJSONRPCResponseID(t *testing.T) {
+	payload := []byte(`{"jsonrpc":"2.0","id":1,"id":2,"result":{"ok":true}}`)
+	if _, err := decodeMCPEnvelope(payload, "application/json", 2); err == nil {
+		t.Fatal("response with repeated JSON-RPC ids was accepted")
+	}
+}
+
+func TestDecodeMCPEnvelopePreservesLargeValidMetadataNumbers(t *testing.T) {
+	payload := []byte(`{"jsonrpc":"2.0","id":2,"result":{"citation":{"metadata":{"value":1e400}}}}`)
+	var envelope mcpEnvelope
+	if err := decodeFirstMCPJSON(payload, &envelope); err != nil {
+		t.Fatalf("valid metadata number was rejected: %v", err)
+	}
+	if !strings.Contains(string(envelope.Result), `1e400`) {
+		t.Fatalf("result metadata number was changed: %s", envelope.Result)
+	}
+}
+
+func TestDecodeMCPEnvelopeSelectsIntegerValuedDecimalSSERequestID(t *testing.T) {
+	data := []byte("event: message\ndata: " + `{"jsonrpc":"2.0","id":2.0,"result":{"review":"complete"}}` + "\n\n")
+	envelope, err := decodeMCPEnvelope(data, "text/event-stream", 2)
+	if err != nil {
+		t.Fatalf("integer-valued decimal SSE response id was rejected: %v", err)
+	}
+	if string(envelope.Result) != `{"review":"complete"}` {
+		t.Fatalf("result = %s", envelope.Result)
 	}
 }
 
