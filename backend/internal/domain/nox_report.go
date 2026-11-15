@@ -78,56 +78,63 @@ func SelectNoxArtifactsForRevision(candidates []NoxArtifactCandidate, artifactNa
 
 // NoxFinding is a source-backed finding extracted from a Nox SARIF result.
 type NoxFinding struct {
-	RuleID      string
-	Title       string
-	Severity    string
-	Message     string
-	Path        string
-	Line        int
-	Fingerprint string
+	RuleID                   string
+	Title                    string
+	Severity                 string
+	Message                  string
+	Path                     string
+	Line                     int
+	Fingerprint              string
+	Suppressed               bool
+	SuppressionKind          string
+	SuppressionJustification string
 }
 
 // NoxReport is the domain representation of one Nox result set.
 type NoxReport struct {
-	RevisionSHA string
-	Findings    []NoxFinding
-	TotalCount  int
-	Truncated   bool
+	RevisionSHA     string
+	Findings        []NoxFinding
+	TotalCount      int
+	ActiveCount     int
+	SuppressedCount int
+	Truncated       bool
 }
 
 // NoxSARIFFinding preserves normalized finding data from SARIF.
 type NoxSARIFFinding struct {
-	RuleID           string
-	RuleDefinitionID string
-	RuleName         string
-	RuleTitle        string
-	RuleSeverity     string
-	ResultLevel      string
-	Message          string
-	Markdown         string
-	Path             string
-	Line             int
-	Fingerprints     map[string]string
-	Suppressed       bool
+	RuleID                   string
+	RuleDefinitionID         string
+	RuleName                 string
+	RuleTitle                string
+	RuleSeverity             string
+	ResultLevel              string
+	Message                  string
+	Markdown                 string
+	Path                     string
+	Line                     int
+	Fingerprints             map[string]string
+	Suppressed               bool
+	SuppressionKind          string
+	SuppressionJustification string
 }
 
 // ParseNoxFinding converts one Nox SARIF result to Ghostline's domain model.
 func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
-	if value.Suppressed {
-		return NoxFinding{}, false
-	}
 	path := SafeNoxPath(value.Path)
 	line := 0
 	if path != "" && value.Line > 0 {
 		line = value.Line
 	}
 	finding := NoxFinding{
-		RuleID:   value.RuleID,
-		Title:    value.RuleTitle,
-		Severity: NoxSeverity(value.ResultLevel),
-		Message:  BoundedNoxText(value.Message, 2000),
-		Path:     path,
-		Line:     line,
+		RuleID:                   value.RuleID,
+		Title:                    value.RuleTitle,
+		Severity:                 NoxSeverity(value.ResultLevel),
+		Message:                  BoundedNoxText(value.Message, 2000),
+		Path:                     path,
+		Line:                     line,
+		Suppressed:               value.Suppressed,
+		SuppressionKind:          BoundedNoxText(value.SuppressionKind, 100),
+		SuppressionJustification: BoundedNoxText(value.SuppressionJustification, 1000),
 	}
 	if finding.Message == "" {
 		finding.Message = BoundedNoxText(value.Markdown, 2000)

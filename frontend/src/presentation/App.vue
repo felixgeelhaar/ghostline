@@ -391,12 +391,13 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
             <span>Workflow {{ focusedNoxReport.runConclusion || 'status unavailable' }} · {{ focusedNoxReport.runName || 'Nox scan' }} · report from {{ date(focusedNoxReport.createdAt) }} · retained until {{ date(focusedNoxReport.expiresAt) }}</span>
           </p>
           <p v-if="focusedNoxReport.totalCount === 0" class="checks-note">This is the published Nox report for this exact revision. It is not an independent guarantee that the code is secure.</p>
-          <ol v-else class="nox-findings"><li v-for="(finding, index) in focusedNoxReport.findings" :key="`${finding.fingerprint || finding.ruleId}:${index}`">
-            <div class="nox-finding-heading"><strong>{{ finding.title }}</strong><span :class="`severity-${finding.severity}`">{{ finding.severity }}</span></div>
+          <ol v-else class="nox-findings"><li v-for="(finding, index) in focusedNoxReport.findings" :key="`${finding.fingerprint || finding.ruleId}:${index}`" :class="{ suppressed: finding.suppressed }">
+            <div class="nox-finding-heading"><strong>{{ finding.title }}</strong><span v-if="finding.suppressed" class="suppression-label">SUPPRESSED BY SOURCE</span><span v-else :class="`severity-${finding.severity}`">{{ finding.severity }}</span></div>
             <p>{{ finding.message }}</p>
             <p v-if="finding.path" class="nox-location">{{ finding.path }}<span v-if="finding.line">:{{ finding.line }}</span></p>
+            <p v-if="finding.suppressed" class="nox-suppression"><span v-if="finding.suppressionKind">Suppression type: {{ finding.suppressionKind }}. </span><span v-if="finding.suppressionJustification">Source justification: {{ finding.suppressionJustification }}. </span>The source marks this result suppressed; that does not mean it was fixed or verified.</p>
           </li></ol>
-          <p v-if="focusedNoxReport.truncated" class="checks-note warn" role="status">Showing {{ focusedNoxReport.findings.length }} of {{ focusedNoxReport.totalCount }} findings. Open the source workflow for the full report.</p>
+          <p v-if="focusedNoxReport.truncated" class="checks-note warn" role="status">Showing {{ focusedNoxReport.findings.length }} of {{ focusedNoxReport.totalCount }} report results ({{ focusedNoxReport.activeCount }} active, {{ focusedNoxReport.suppressedCount }} suppressed). Open the source workflow for the full report.</p>
           <p class="nox-source"><a :href="focusedNoxReport.runUrl" target="_blank" rel="noreferrer">OPEN SOURCE WORKFLOW RUN ↗</a><span> · Report and findings apply to revision {{ focusedNoxReport.revisionSha.slice(0, 7) }}.</span></p>
         </template>
       </section>
@@ -486,11 +487,14 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
 .nox-summary span, .nox-location, .nox-source { color: #8a91a7; font-size: .82rem; }
 .nox-findings { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 10px; }
 .nox-findings li { padding: 12px 14px; border: 1px solid rgba(255, 43, 214, .2); background: rgba(9, 11, 22, .55); }
+.nox-findings li.suppressed { border-color: rgba(252, 238, 10, .28); }
 .nox-finding-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .nox-finding-heading > span { font: 600 .68rem/1.2 ui-monospace, monospace; text-transform: uppercase; color: #fcee0a; }
 .nox-finding-heading .severity-critical, .nox-finding-heading .severity-high { color: #ff708d; }
 .nox-findings p { margin: 8px 0 0; line-height: 1.5; }
 .nox-findings .nox-location { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.nox-findings .nox-suppression { color: #c5c6d5; font-size: .88rem; }
+.nox-finding-heading .suppression-label { color: #fcee0a; }
 .nox-source { margin-top: 12px; }
 .nox-report a { color: #00e5ff; text-decoration-color: rgba(0, 229, 255, .55); text-underline-offset: .2em; }
 .nox-report a:focus-visible { outline: 2px solid #00e5ff; outline-offset: 3px; }

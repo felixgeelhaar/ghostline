@@ -6,8 +6,8 @@ const valid = {
   availability: 'available', revisionSha: sha, runId: 12, runName: 'Nox', runConclusion: 'success',
   runUrl: 'https://github.com/acme/app/actions/runs/12', artifactId: 4,
   artifactUrl: 'https://github.com/acme/app/actions/runs/12', artifactDigest: 'sha256:abc',
-  createdAt: '2026-11-15T13:58:17Z', expiresAt: '2026-11-22T13:58:16Z', totalCount: 1,
-  truncated: false, findings: [{ ruleId: 'SEC-1', title: 'Input validation', severity: 'critical', message: 'Validate input.', path: 'backend/server.go', line: 42 }],
+  createdAt: '2026-11-15T13:58:17Z', expiresAt: '2026-11-22T13:58:16Z', totalCount: 1, activeCount: 1, suppressedCount: 0,
+  truncated: false, findings: [{ ruleId: 'SEC-1', title: 'Input validation', severity: 'critical', message: 'Validate input.', path: 'backend/server.go', line: 42, suppressed: false }],
 }
 
 describe('Nox report evidence schema', () => {
@@ -20,21 +20,38 @@ describe('Nox report evidence schema', () => {
     expect(NoxReportSchema.safeParse({ ...valid, runUrl: 'javascript:alert(1)' }).success).toBe(false)
   })
 
+  it('rejects inconsistent active, suppressed and total result counts', () => {
+    expect(NoxReportSchema.safeParse({ ...valid, suppressedCount: 1 }).success).toBe(false)
+  })
+
   it('marks findings and unsuccessful workflows for attention', () => {
     expect(noxReportNeedsAttention(NoxReportSchema.parse(valid))).toBe(true)
-    expect(noxReportNeedsAttention(NoxReportSchema.parse({ ...valid, totalCount: 0, findings: [] }))).toBe(false)
-    expect(noxReportNeedsAttention(NoxReportSchema.parse({ ...valid, totalCount: 0, findings: [], runConclusion: 'failure' }))).toBe(true)
-    expect(noxReportNeedsAttention(NoxReportSchema.parse({ availability: 'unavailable', revisionSha: sha, reason: 'Not retained', totalCount: 0, truncated: false, findings: [] }))).toBe(true)
+    expect(noxReportNeedsAttention(NoxReportSchema.parse({ ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [] }))).toBe(false)
+    expect(noxReportNeedsAttention(NoxReportSchema.parse({ ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [], runConclusion: 'failure' }))).toBe(true)
+    expect(noxReportNeedsAttention(NoxReportSchema.parse({ availability: 'unavailable', revisionSha: sha, reason: 'Not retained', totalCount: 0, activeCount: 0, suppressedCount: 0, truncated: false, findings: [] }))).toBe(true)
   })
 
   it('does not describe an unsuccessful scan with no findings as clean', () => {
-    const failed = NoxReportSchema.parse({ ...valid, totalCount: 0, findings: [], runConclusion: 'failure' })
+    const failed = NoxReportSchema.parse({ ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [], runConclusion: 'failure' })
     expect(noxReportHeadline(failed)).toBe('Scan did not complete successfully · results may be incomplete')
-    expect(noxReportHeadline(NoxReportSchema.parse({ ...valid, totalCount: 2, findings: [], runConclusion: 'failure' })))
-      .toBe('2 security findings reported · scan did not complete successfully')
-    expect(noxReportHeadline(NoxReportSchema.parse({ ...valid, totalCount: 0, findings: [] })))
+    expect(noxReportHeadline(NoxReportSchema.parse({ ...valid, totalCount: 2, activeCount: 2, findings: [valid.findings[0], { ...valid.findings[0], ruleId: 'SEC-2' }], runConclusion: 'failure' })))
+      .toBe('2 active security findings reported · scan did not complete successfully')
+    expect(noxReportHeadline(NoxReportSchema.parse({ ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [] })))
       .toBe('No security findings reported')
-    expect(noxReportHeadline(NoxReportSchema.parse({ availability: 'unavailable', revisionSha: sha, reason: 'Artifact expired', totalCount: 0, truncated: false, findings: [] })))
+    expect(noxReportHeadline(NoxReportSchema.parse({ availability: 'unavailable', revisionSha: sha, reason: 'Artifact expired', totalCount: 0, activeCount: 0, suppressedCount: 0, truncated: false, findings: [] })))
       .toBe('Nox report unavailable')
+  })
+
+  it('keeps suppressed results visible and does not describe them as clear or fixed', () => {
+    const suppressed = NoxReportSchema.parse({
+      ...valid,
+      totalCount: 1,
+      activeCount: 0,
+      suppressedCount: 1,
+      findings: [{ ruleId: 'SEC-1', title: 'Known issue', severity: 'medium', message: 'Still reported.', suppressed: true, suppressionKind: 'external', suppressionJustification: 'Accepted baseline' }],
+    })
+    expect(noxReportNeedsAttention(suppressed)).toBe(true)
+    expect(noxReportHeadline(suppressed)).toBe('No active findings · 1 suppressed result')
+    expect(suppressed.findings[0].suppressionJustification).toBe('Accepted baseline')
   })
 })

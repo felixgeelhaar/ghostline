@@ -101,15 +101,19 @@ func TestDownloadGitHubArtifactRestrictsRedirectsAndDoesNotForwardToken(t *testi
 	}
 }
 
-func TestParseNoxSARIFDoesNotCountSuppressedResultsAsFindings(t *testing.T) {
+func TestParseNoxSARIFKeepsSuppressedResultsVisibleAndSeparate(t *testing.T) {
 	const sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	data := []byte(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[{"ruleId":"SEC-001","message":{"text":"Known baseline item."},"suppressions":[{"kind":"external","justification":"Accepted baseline"}]}]}]}`)
 	report, err := parseNoxSARIF(data, sha, 1, "https://github.com/acme/app/actions/runs/1", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.TotalCount != 0 || len(report.Findings) != 0 {
-		t.Fatalf("suppressed finding counted as active: %+v", report)
+	if report.TotalCount != 1 || report.ActiveCount != 0 || report.SuppressedCount != 1 || len(report.Findings) != 1 {
+		t.Fatalf("suppressed result should remain visible and separately counted: %+v", report)
+	}
+	finding := report.Findings[0]
+	if !finding.Suppressed || finding.SuppressionKind != "external" || finding.SuppressionJustification != "Accepted baseline" {
+		t.Fatalf("suppression details were not preserved: %+v", finding)
 	}
 }
 

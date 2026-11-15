@@ -13,13 +13,14 @@ func TestParseNoxFindingNormalizesSourceAndSeverity(t *testing.T) {
 	}
 }
 
-func TestParseNoxFindingRejectsUnsafePathsAndSuppressedResults(t *testing.T) {
+func TestParseNoxFindingRejectsUnsafePathsAndPreservesSuppression(t *testing.T) {
 	finding, include := ParseNoxFinding(NoxSARIFFinding{RuleID: "SEC-1", Path: "../../secret", Line: 10})
 	if !include || finding.Path != "" || finding.Line != 0 {
 		t.Fatalf("unsafe location should be omitted: %+v, include=%v", finding, include)
 	}
-	if _, include := ParseNoxFinding(NoxSARIFFinding{Suppressed: true}); include {
-		t.Fatal("suppressed result should not be presented as an active finding")
+	finding, include = ParseNoxFinding(NoxSARIFFinding{RuleID: "SEC-1", Suppressed: true, SuppressionKind: "external", SuppressionJustification: "Accepted baseline"})
+	if !include || !finding.Suppressed || finding.SuppressionKind != "external" || finding.SuppressionJustification != "Accepted baseline" {
+		t.Fatalf("suppression evidence should remain visible: %+v, include=%v", finding, include)
 	}
 }
 

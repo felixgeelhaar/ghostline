@@ -12,7 +12,7 @@ The check list below shows GitHub's Nox check-run title and a short summary prev
 
 ![Ghostline showing revision-bound GitHub checks and the Nox check-run summary for PR #56](assets/nox-check-summary.jpg)
 
-The Nox report panel links findings from an artifact produced by this repository’s `.github/workflows/nox.yml` for the exact matched public PR revision, verifies GitHub’s artifact SHA-256 digest, and displays the scan revision and report expiry. Other workflows and private PRs are not accepted as Nox evidence. An unavailable or over-limit lookup is presented as unavailable evidence, not as a clean scan.
+The Nox report panel links results from an artifact produced by this repository’s `.github/workflows/nox.yml` for the exact matched public PR revision, verifies GitHub’s artifact SHA-256 digest, and displays the scan revision and report expiry. Other workflows and private PRs are not accepted as Nox evidence. Active and SARIF-suppressed results are counted separately; suppressed results remain visible with their source kind and justification when supplied. Suppression does not mean a finding was fixed or verified. An unavailable or over-limit lookup is presented as unavailable evidence, not as a clean scan.
 
 The screenshot below shows that panel in a prepared replay, not a live artifact fetch. It demonstrates the revision and workflow source labels; the report metadata is illustrative. [Evidence notes](feature-evidence/nox-report-revision-bound-replay.md).
 

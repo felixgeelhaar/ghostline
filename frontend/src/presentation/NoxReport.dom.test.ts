@@ -29,8 +29,8 @@ function report(revisionSha: string, count = 0, runConclusion = 'success'): NoxR
     availability: 'available', revisionSha, runId: 12, runName: 'Nox Security', runConclusion,
     runUrl: 'https://github.com/acme/app/actions/runs/12', artifactId: 3, artifactUrl: 'https://github.com/acme/app/actions/runs/12',
     artifactDigest: 'sha256:abc', createdAt: '2026-11-15T13:58:17Z', expiresAt: '2026-11-22T13:58:16Z',
-    totalCount: count, truncated: false,
-    findings: count ? [{ ruleId: 'SEC-1', title: 'Validate input', severity: 'high', message: 'Untrusted input reaches a command.', path: 'backend/server.go', line: 42 }] : [],
+    totalCount: count, activeCount: count, suppressedCount: 0, truncated: false,
+    findings: count ? [{ ruleId: 'SEC-1', title: 'Validate input', severity: 'high', message: 'Untrusted input reaches a command.', path: 'backend/server.go', line: 42, suppressed: false }] : [],
   }
 }
 
@@ -78,6 +78,20 @@ describe('revision-linked Nox report', () => {
     await importPR()
     await vi.waitFor(() => expect(host!.querySelector('.nox-summary strong')?.textContent).toContain('results may be incomplete'))
     expect(host!.querySelector('.nox-summary strong')?.textContent).not.toContain('No security findings reported')
+  })
+
+  it('shows suppressed reports and explains suppression is not a repair', async () => {
+    vi.mocked(fetchNoxReport).mockResolvedValue({
+      ...report(headSha), totalCount: 1, activeCount: 0, suppressedCount: 1,
+      findings: [{ ruleId: 'SEC-BASELINE', title: 'Known issue', severity: 'medium', message: 'Still reported by Nox.', suppressed: true, suppressionKind: 'external', suppressionJustification: 'Accepted baseline' }],
+    })
+    await importPR()
+    await vi.waitFor(() => expect(host!.querySelector('.nox-suppression')).not.toBeNull())
+    const panel = host!.querySelector('.nox-report')!
+    expect(panel.textContent).toContain('No active findings · 1 suppressed result')
+    expect(panel.textContent).toContain('Accepted baseline')
+    expect(panel.textContent).toContain('does not mean it was fixed or verified')
+    expect(panel.textContent).not.toContain('No security findings reported')
   })
 
   it('ignores an earlier focused revision request that resolves last', async () => {

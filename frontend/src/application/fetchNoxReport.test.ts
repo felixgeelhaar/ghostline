@@ -6,7 +6,7 @@ const payload = {
   availability: 'available', revisionSha: sha, runId: 12, runName: 'Nox', runConclusion: 'success',
   runUrl: 'https://github.com/acme/app/actions/runs/12', artifactId: 4,
   artifactUrl: 'https://github.com/acme/app/actions/runs/12', artifactDigest: 'sha256:abc',
-  createdAt: '2026-11-15T13:58:17Z', expiresAt: '2026-11-22T13:58:16Z', totalCount: 0,
+  createdAt: '2026-11-15T13:58:17Z', expiresAt: '2026-11-22T13:58:16Z', totalCount: 0, activeCount: 0, suppressedCount: 0,
   truncated: false, findings: [],
 }
 

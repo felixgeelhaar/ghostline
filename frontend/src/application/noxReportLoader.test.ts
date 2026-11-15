@@ -9,7 +9,7 @@ const report = (revisionSha: string) => NoxReportSchema.parse({
   availability: 'available', revisionSha, runId: 12, runName: 'Nox Security', runConclusion: 'success',
   runUrl: 'https://github.com/acme/app/actions/runs/12', artifactId: 4,
   artifactUrl: 'https://api.github.com/repos/acme/app/actions/artifacts/4', artifactDigest: 'sha256:abc',
-  createdAt: '2026-11-15T13:58:17Z', expiresAt: '2026-11-22T13:58:16Z', totalCount: 0, truncated: false, findings: [],
+  createdAt: '2026-11-15T13:58:17Z', expiresAt: '2026-11-22T13:58:16Z', totalCount: 0, activeCount: 0, suppressedCount: 0, truncated: false, findings: [],
 })
 
 function deferred<T>() {

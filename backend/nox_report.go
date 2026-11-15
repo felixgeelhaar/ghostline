@@ -65,35 +65,40 @@ func noxRequestFailureReason(err error) string {
 }
 
 type noxReport struct {
-	Availability   string       `json:"availability"`
-	Reason         string       `json:"reason,omitempty"`
-	RevisionSHA    string       `json:"revisionSha"`
-	RunID          int64        `json:"runId,omitempty"`
-	RunName        string       `json:"runName,omitempty"`
-	RunConclusion  string       `json:"runConclusion,omitempty"`
-	RunURL         string       `json:"runUrl,omitempty"`
-	ArtifactID     int64        `json:"artifactId,omitempty"`
-	ArtifactURL    string       `json:"artifactUrl,omitempty"`
-	ArtifactDigest string       `json:"artifactDigest,omitempty"`
-	CreatedAt      string       `json:"createdAt,omitempty"`
-	ExpiresAt      string       `json:"expiresAt,omitempty"`
-	TotalCount     int          `json:"totalCount"`
-	Truncated      bool         `json:"truncated"`
-	Findings       []noxFinding `json:"findings"`
+	Availability    string       `json:"availability"`
+	Reason          string       `json:"reason,omitempty"`
+	RevisionSHA     string       `json:"revisionSha"`
+	RunID           int64        `json:"runId,omitempty"`
+	RunName         string       `json:"runName,omitempty"`
+	RunConclusion   string       `json:"runConclusion,omitempty"`
+	RunURL          string       `json:"runUrl,omitempty"`
+	ArtifactID      int64        `json:"artifactId,omitempty"`
+	ArtifactURL     string       `json:"artifactUrl,omitempty"`
+	ArtifactDigest  string       `json:"artifactDigest,omitempty"`
+	CreatedAt       string       `json:"createdAt,omitempty"`
+	ExpiresAt       string       `json:"expiresAt,omitempty"`
+	TotalCount      int          `json:"totalCount"`
+	ActiveCount     int          `json:"activeCount"`
+	SuppressedCount int          `json:"suppressedCount"`
+	Truncated       bool         `json:"truncated"`
+	Findings        []noxFinding `json:"findings"`
 }
 
 type noxFinding struct {
-	RuleID      string `json:"ruleId"`
-	Title       string `json:"title"`
-	Severity    string `json:"severity"`
-	Message     string `json:"message"`
-	Path        string `json:"path,omitempty"`
-	Line        int    `json:"line,omitempty"`
-	Fingerprint string `json:"fingerprint,omitempty"`
+	RuleID                   string `json:"ruleId"`
+	Title                    string `json:"title"`
+	Severity                 string `json:"severity"`
+	Message                  string `json:"message"`
+	Path                     string `json:"path,omitempty"`
+	Line                     int    `json:"line,omitempty"`
+	Fingerprint              string `json:"fingerprint,omitempty"`
+	Suppressed               bool   `json:"suppressed"`
+	SuppressionKind          string `json:"suppressionKind,omitempty"`
+	SuppressionJustification string `json:"suppressionJustification,omitempty"`
 }
 
 func noxFindingFromDomain(finding domain.NoxFinding) noxFinding {
-	return noxFinding{RuleID: finding.RuleID, Title: finding.Title, Severity: finding.Severity, Message: finding.Message, Path: finding.Path, Line: finding.Line, Fingerprint: finding.Fingerprint}
+	return noxFinding{RuleID: finding.RuleID, Title: finding.Title, Severity: finding.Severity, Message: finding.Message, Path: finding.Path, Line: finding.Line, Fingerprint: finding.Fingerprint, Suppressed: finding.Suppressed, SuppressionKind: finding.SuppressionKind, SuppressionJustification: finding.SuppressionJustification}
 }
 
 type workflowRunsResponse struct {
@@ -174,7 +179,7 @@ type sarifResult struct {
 		Text     string `json:"text"`
 		Markdown string `json:"markdown"`
 	} `json:"message"`
-	Suppressions []json.RawMessage `json:"suppressions"`
+	Suppressions []sarifSuppression `json:"suppressions"`
 	Locations    []struct {
 		PhysicalLocation struct {
 			ArtifactLocation struct {
@@ -186,6 +191,11 @@ type sarifResult struct {
 		} `json:"physicalLocation"`
 	} `json:"locations"`
 	PartialFingerprints map[string]string `json:"partialFingerprints"`
+}
+
+type sarifSuppression struct {
+	Kind          string `json:"kind"`
+	Justification string `json:"justification"`
 }
 
 func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, number int, sha string) noxReport {
@@ -500,6 +510,10 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 				rule = run.Tool.Driver.Rules[*result.RuleIndex]
 			}
 			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, ResultLevel: result.Level, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressed: len(result.Suppressions) > 0}
+			if value.Suppressed {
+				value.SuppressionKind = result.Suppressions[0].Kind
+				value.SuppressionJustification = result.Suppressions[0].Justification
+			}
 			if len(result.Locations) > 0 {
 				location := result.Locations[0].PhysicalLocation
 				value.Path = location.ArtifactLocation.URI
@@ -510,6 +524,11 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 				continue
 			}
 			report.TotalCount++
+			if finding.Suppressed {
+				report.SuppressedCount++
+			} else {
+				report.ActiveCount++
+			}
 			if len(report.Findings) >= maxNoxFindings {
 				report.Truncated = true
 				continue
