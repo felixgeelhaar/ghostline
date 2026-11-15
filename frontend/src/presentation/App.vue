@@ -19,6 +19,7 @@ import { useGhostlineSession } from './useGhostlineSession'
 const url = ref('')
 const pr = ref<PullRequest>()
 const error = ref('')
+const showingPreviousSnapshot = ref(false)
 const loading = ref(false)
 const selectedRevision = ref('')
 const focusedChecks = ref<PullRequest['checks']>()
@@ -123,12 +124,14 @@ function clearWorkspace() {
 
 async function loadPR() {
   const request = ++importRequest
-  error.value = validatePullRequestURL(url.value) ?? ''
+  const requestedURL = url.value
+  error.value = validatePullRequestURL(requestedURL) ?? ''
+  showingPreviousSnapshot.value = false
   if (error.value) {
     loading.value = false
     return
   }
-  const keepCurrentChange = isSamePullRequest(pr.value, url.value)
+  const keepCurrentChange = isSamePullRequest(pr.value, requestedURL)
   loading.value = true
   if (!keepCurrentChange) {
     pr.value = undefined
@@ -144,11 +147,13 @@ async function loadPR() {
   }
   copyRequest++
   if (!keepCurrentChange) revisionRequest++
-  qodoRequest++
   qodoApiKey.value = ''
-  qodoReviewLoading.value = false
+  if (!keepCurrentChange) {
+    qodoRequest++
+    qodoReviewLoading.value = false
+  }
   try {
-    const importedPR = await importPullRequest(url.value)
+    const importedPR = await importPullRequest(requestedURL)
     if (request === importRequest) {
       const focusedRevisionStillExists = importedPR.commits.some((commit) => commit.sha === selectedRevision.value)
       if (selectedRevision.value && !focusedRevisionStillExists) {
@@ -164,11 +169,13 @@ async function loadPR() {
         checksLoading.value = false
       }
       pr.value = importedPR
+      showingPreviousSnapshot.value = false
     }
   } catch (e) {
     handleUnauthorized(e)
     if (request === importRequest) {
       error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
+      showingPreviousSnapshot.value = keepCurrentChange && pr.value !== undefined
     }
   } finally {
     if (request === importRequest) loading.value = false
@@ -267,7 +274,7 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
     <div v-else-if="ghostlineSession && (!ghostlineSession.authRequired || ghostlineSession.authenticated)" class="workspace-content">
     <p v-if="sessionError && ghostlineSession.authenticated" class="session-error" role="alert">{{ sessionError }}</p>
     <section class="hero"><p class="eyebrow">CHANGE INTELLIGENCE / 001</p><h1>See the work.<br><em>Trace the decisions.</em></h1><p class="lede">Import a pull request to inspect its revision history. Commit timestamps show when commits were authored, not when they were pushed.</p></section>
-    <section class="import-panel"><label for="pr-url">GITHUB PULL REQUEST</label><div class="input-row"><span class="prefix">↗</span><input id="pr-url" v-model="url" placeholder="https://github.com/owner/repo/pull/123" @keyup.enter="loadPR"><button :disabled="loading" @click="loadPR">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button></div><p v-if="error" class="error" role="alert">{{ error }}</p></section>
+    <section class="import-panel"><label for="pr-url">GITHUB PULL REQUEST</label><div class="input-row"><span class="prefix">↗</span><input id="pr-url" v-model="url" placeholder="https://github.com/owner/repo/pull/123" @keyup.enter="loadPR"><button :disabled="loading" @click="loadPR">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button></div><p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="showingPreviousSnapshot && pr" class="checks-note warn" role="status">GitHub refresh failed. Showing the last imported snapshot for {{ pr.owner }}/{{ pr.repo }}#{{ pr.number }}.</p></section>
     <section v-if="pr" class="change-card">
       <div class="change-heading"><div><span class="eyebrow">{{ pr.repository }} / PULL REQUEST #{{ pr.number }}</span><h2>{{ pr.title }}</h2></div><span class="state" :class="pr.state">{{ pr.state }}</span></div>
       <div class="meta"><span>{{ pr.commits.length }} COMMITS</span><span>OPENED {{ date(pr.createdAt) }}</span><a :href="pr.url" target="_blank" rel="noreferrer">VIEW ON GITHUB ↗</a></div>

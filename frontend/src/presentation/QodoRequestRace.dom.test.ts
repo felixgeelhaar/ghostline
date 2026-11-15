@@ -198,6 +198,34 @@ describe('structured Qodo review request binding', () => {
     expect(host?.textContent).toContain('GitHub is temporarily unavailable.')
   })
 
+  it('keeps a pending structured review alive during a failed same-PR refresh', async () => {
+    vi.stubGlobal('isSecureContext', true)
+    vi.mocked(importPullRequest)
+      .mockResolvedValueOnce(makePR(7))
+      .mockRejectedValueOnce(new Error('GitHub is temporarily unavailable.'))
+    const pendingReview = deferred<QodoStructuredReview>()
+    vi.mocked(fetchQodoReviewSession).mockReturnValueOnce(pendingReview.promise)
+    await mount()
+
+    await setValue('#pr-url', 'https://github.com/acme/app/pull/7')
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await settle()
+    await setValue('#qodo-api-key', 'review-key')
+    host!.querySelector<HTMLButtonElement>('#load-qodo-review')!.click()
+    await settle()
+    expect(host?.textContent).toContain('LOADING STRUCTURED REVIEW')
+
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await settle()
+    expect(host?.textContent).toContain('LOADING STRUCTURED REVIEW')
+    expect(host?.textContent).toContain('Showing the last imported snapshot for acme/app#7.')
+
+    pendingReview.resolve(review('Finding from pending review'))
+    await settle()
+    expect(host?.textContent).toContain('Finding from pending review')
+    expect(host?.textContent).not.toContain('LOADING STRUCTURED REVIEW')
+  })
+
   it('clears structured findings as soon as a different PR is imported', async () => {
     vi.stubGlobal('isSecureContext', true)
     const nextImport = deferred<PullRequest>()
