@@ -520,18 +520,11 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 		ruleByID := indexSARIFrules(run.Tool.Driver.Rules)
 		for _, result := range *run.Results {
 			rule := sarifRuleForResult(result, run.Tool.Driver.Rules, ruleByID)
-			suppressions := make([]domain.NoxSuppression, 0, min(len(result.Suppressions), domain.MaxNoxSuppressionsPerFinding))
-			suppressed := false
-			for index, suppression := range result.Suppressions {
-				if suppression.Status == "accepted" {
-					suppressed = true
-				}
-				if index >= domain.MaxNoxSuppressionsPerFinding {
-					continue
-				}
+			suppressions := make([]domain.NoxSuppression, 0, len(result.Suppressions))
+			for _, suppression := range result.Suppressions {
 				suppressions = append(suppressions, domain.NoxSuppression{Status: suppression.Status, Kind: suppression.Kind, Justification: suppression.Justification})
 			}
-			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, ResultLevel: result.Level, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressed: suppressed, Suppressions: suppressions, SuppressionsTruncated: len(result.Suppressions) > domain.MaxNoxSuppressionsPerFinding}
+			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, ResultLevel: result.Level, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressions: suppressions, SuppressionsTruncated: len(result.Suppressions) > domain.MaxNoxSuppressionsPerFinding}
 			if len(result.Locations) > 0 {
 				location := result.Locations[0].PhysicalLocation
 				value.Path = location.ArtifactLocation.URI
