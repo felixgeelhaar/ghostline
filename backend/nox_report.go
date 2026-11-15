@@ -29,8 +29,40 @@ const (
 	maxNoxFindings       = 100
 	noxPageSize          = 100
 	maxNoxPages          = 10
-	noxWorkflowPath      = ".github/workflows/nox.yml"
+	maxNoxGitHubRequests = 32
 )
+
+const noxInspectionIncompleteReason = "GitHub evidence exceeded Ghostline’s inspection limit. The report may exist outside the inspected history; narrow the revision or try again later."
+
+var errNoxInspectionLimit = errors.New("Nox evidence inspection limit reached")
+
+type noxGitHubRequestBudget struct {
+	client    *githubClient
+	remaining int
+}
+
+func (budget *noxGitHubRequestBudget) get(ctx context.Context, requestPath string, target any) error {
+	if budget.remaining <= 0 {
+		return errNoxInspectionLimit
+	}
+	budget.remaining--
+	return budget.client.get(ctx, requestPath, target)
+}
+
+func (budget *noxGitHubRequestBudget) downloadArtifact(ctx context.Context, requestPath string, maxBytes int64) ([]byte, error) {
+	if budget.remaining <= 0 {
+		return nil, errNoxInspectionLimit
+	}
+	budget.remaining--
+	return budget.client.downloadGitHubArtifact(ctx, requestPath, maxBytes)
+}
+
+func noxRequestFailureReason(err error) string {
+	if errors.Is(err, errNoxInspectionLimit) {
+		return noxInspectionIncompleteReason
+	}
+	return noxUnavailableReason(err)
+}
 
 type noxReport struct {
 	Availability   string       `json:"availability"`
@@ -149,11 +181,12 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		result.Reason = "Choose a full commit revision from this pull request."
 		return result
 	}
+	budget := &noxGitHubRequestBudget{client: gh, remaining: maxNoxGitHubRequests}
 
 	prPath := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(owner), url.PathEscape(repo), number)
 	var pr githubPR
-	if err := gh.get(ctx, prPath, &pr); err != nil {
-		result.Reason = noxUnavailableReason(err)
+	if err := budget.get(ctx, prPath, &pr); err != nil {
+		result.Reason = noxRequestFailureReason(err)
 		return result
 	}
 	identity, err := domain.NewRepositoryIdentity(pr.Base.Repo.Owner.Login, pr.Base.Repo.Name)
@@ -168,9 +201,9 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 	}
 
 	if pr.Head.SHA != sha {
-		found, err := pullRequestContainsRevision(ctx, gh, owner, repo, number, sha)
+		found, err := pullRequestContainsRevision(ctx, budget, owner, repo, number, sha)
 		if err != nil {
-			result.Reason = noxUnavailableReason(err)
+			result.Reason = noxRequestFailureReason(err)
 			return result
 		}
 		if !found {
@@ -193,13 +226,14 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 	workflowHistoryTruncated := false
 	for page := 1; page <= maxNoxPages; page++ {
 		var runs workflowRunsResponse
-		runsPath := fmt.Sprintf("/repos/%s/%s/actions/workflows/nox.yml/runs?head_sha=%s&event=pull_request&per_page=%d&page=%d", url.PathEscape(owner), url.PathEscape(repo), url.QueryEscape(sha), noxPageSize, page)
-		if err := gh.get(ctx, runsPath, &runs); err != nil {
-			result.Reason = noxUnavailableReason(err)
+		workflowName := strings.TrimPrefix(domain.NoxSecurityWorkflowPath, ".github/workflows/")
+		runsPath := fmt.Sprintf("/repos/%s/%s/actions/workflows/%s/runs?head_sha=%s&event=pull_request&per_page=%d&page=%d", url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(workflowName), url.QueryEscape(sha), noxPageSize, page)
+		if err := budget.get(ctx, runsPath, &runs); err != nil {
+			result.Reason = noxRequestFailureReason(err)
 			return result
 		}
 		for _, run := range runs.WorkflowRuns {
-			if run.HeadSHA == sha && run.Event == "pull_request" && isNoxWorkflowPath(run.Path) {
+			if domain.IsNoxWorkflowRun(run.Path, run.Event, run.HeadSHA, sha) {
 				matchingRuns = append(matchingRuns, run)
 			}
 		}
@@ -251,8 +285,8 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		for page := 1; page <= maxNoxPages; page++ {
 			var response workflowArtifactsResponse
 			artifactsPath := fmt.Sprintf("/repos/%s/%s/actions/runs/%d/artifacts?name=%s&per_page=%d&page=%d", url.PathEscape(owner), url.PathEscape(repo), run.ID, url.QueryEscape(noxArtifactName), noxPageSize, page)
-			if err := gh.get(ctx, artifactsPath, &response); err != nil {
-				result.Reason = noxUnavailableReason(err)
+			if err := budget.get(ctx, artifactsPath, &response); err != nil {
+				result.Reason = noxRequestFailureReason(err)
 				return result
 			}
 			for j := range response.Artifacts {
@@ -273,7 +307,7 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 			}
 		}
 		if artifactHistoryTruncated && artifact == nil {
-			result.Reason = "GitHub has more artifact history than Ghostline can inspect for this revision."
+			result.Reason = noxInspectionIncompleteReason
 			return result
 		}
 		if artifact != nil {
@@ -281,7 +315,11 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		}
 	}
 	if artifact == nil || selectedRun == nil {
-		result.Reason = "No retained Nox report was published for this revision."
+		if workflowHistoryTruncated {
+			result.Reason = noxInspectionIncompleteReason
+		} else {
+			result.Reason = "No retained Nox report was published for this revision."
+		}
 		return result
 	}
 	result.RunID = selectedRun.ID
@@ -303,9 +341,9 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 	}
 
 	archivePath := fmt.Sprintf("/repos/%s/%s/actions/artifacts/%d/zip", url.PathEscape(owner), url.PathEscape(repo), artifact.ID)
-	archive, err := gh.downloadGitHubArtifact(ctx, archivePath, maxNoxArtifactBytes)
+	archive, err := budget.downloadArtifact(ctx, archivePath, maxNoxArtifactBytes)
 	if err != nil {
-		result.Reason = noxUnavailableReason(err)
+		result.Reason = noxRequestFailureReason(err)
 		return result
 	}
 	digest := strings.TrimPrefix(artifact.Digest, "sha256:")
@@ -336,13 +374,13 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 	return parsed
 }
 
-func pullRequestContainsRevision(ctx context.Context, gh *githubClient, owner, repo string, number int, sha string) (bool, error) {
+func pullRequestContainsRevision(ctx context.Context, budget *noxGitHubRequestBudget, owner, repo string, number int, sha string) (bool, error) {
 	base := fmt.Sprintf("/repos/%s/%s/pulls/%d/commits", url.PathEscape(owner), url.PathEscape(repo), number)
 	for page := 1; ; page++ {
 		var commits []struct {
 			SHA string `json:"sha"`
 		}
-		if err := gh.get(ctx, fmt.Sprintf("%s?per_page=%d&page=%d", base, noxPageSize, page), &commits); err != nil {
+		if err := budget.get(ctx, fmt.Sprintf("%s?per_page=%d&page=%d", base, noxPageSize, page), &commits); err != nil {
 			return false, err
 		}
 		for _, commit := range commits {
@@ -353,11 +391,10 @@ func pullRequestContainsRevision(ctx context.Context, gh *githubClient, owner, r
 		if len(commits) < noxPageSize {
 			return false, nil
 		}
+		if page == maxNoxPages {
+			return false, errNoxInspectionLimit
+		}
 	}
-}
-
-func isNoxWorkflowPath(value string) bool {
-	return value == noxWorkflowPath || strings.HasPrefix(value, noxWorkflowPath+"@")
 }
 
 func readNoxSARIFArtifact(data []byte) ([]byte, error) {
@@ -412,7 +449,7 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 	}
 	report := noxReport{Availability: noxReportAvailable, RevisionSHA: sha, RunID: runID, RunURL: safeURL(runURL), CreatedAt: createdAt, ExpiresAt: expiresAt, Findings: []noxFinding{}}
 	for _, run := range log.Runs {
-		if !strings.Contains(strings.ToLower(run.Tool.Driver.Name), "nox") {
+		if !domain.IsNoxScannerName(run.Tool.Driver.Name) {
 			return noxReport{}, errors.New("artifact contains a report from a different scanner")
 		}
 		for _, result := range run.Results {

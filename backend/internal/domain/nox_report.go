@@ -6,6 +6,21 @@ import (
 	"strings"
 )
 
+const NoxSecurityWorkflowPath = ".github/workflows/nox.yml"
+
+// IsNoxWorkflowRun reports whether GitHub identified this run as the repository's
+// Nox pull-request workflow for the requested revision.
+func IsNoxWorkflowRun(workflowPath, event, runSHA, requestedSHA string) bool {
+	workflowMatches := workflowPath == NoxSecurityWorkflowPath ||
+		(strings.HasPrefix(workflowPath, NoxSecurityWorkflowPath+"@") && len(workflowPath) > len(NoxSecurityWorkflowPath)+1)
+	return workflowMatches && event == "pull_request" && runSHA != "" && runSHA == requestedSHA
+}
+
+// IsNoxScannerName checks whether a SARIF run identifies Nox as its scanner.
+func IsNoxScannerName(value string) bool {
+	return strings.Contains(strings.ToLower(value), "nox")
+}
+
 // NoxFinding is a source-backed finding extracted from a Nox SARIF result.
 type NoxFinding struct {
 	RuleID      string
