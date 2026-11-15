@@ -74,7 +74,7 @@ jobs:
             --env GITHUB_OAUTH_CLIENT_ID=ci-client \
             --env GITHUB_OAUTH_CLIENT_SECRET=ci-secret \
             --env GITHUB_OAUTH_CALLBACK_URL=https://ghostline.example/auth/callback \
-            --env GHOSTLINE_SESSION_SECRET=ci-only-secret-with-at-least-32-bytes \
+            --env GHOSTLINE_SESSION_SECRET="$(printf 'c%.0s' $(seq 1 40))" \
             --env GHOSTLINE_ALLOWED_GITHUB_IDS=42 \
             ghostline:ci
       - name: Verify frontend and protected API
