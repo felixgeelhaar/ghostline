@@ -10,9 +10,9 @@ Nox reports four medium-severity advisories for OpenSSL 3.5.9 bundled with the f
 
 The frontend development image was pinned to `node:22.23.5-alpine3.24` when this exception was created. Nox scanned that image and still reported OpenSSL 3.5.9. Updating Alpine's system OpenSSL package alone does not replace the OpenSSL bundled in Node. Both the frontend development image and production frontend build now use the exact `node:24.22.3-alpine3.23` digest. The newer supported Node LTS release still bundles OpenSSL 3.5.9, so the same exception covers the development image while the production builder findings remain visible. The final production image is built from `scratch` and does not include the Node builder image.
 
-## Alpine zlib finding in builder images
+## Observed Alpine zlib findings
 
-Nox reports the zlib 1.3.2-r1 package from the pinned Alpine 3.23 `FROM` images, even when a later Dockerfile step upgrades zlib and verifies that it is 1.4-r0 before project build commands run. The production image copies only the built binary, CA certificates, and frontend assets into its `scratch` runtime. The development images retain Alpine but install and check the fixed zlib package. A passing Nox source scan alone does not verify those image layers; the Docker build assertions and hosted build must pass. Keep these findings visible until a fresh Nox scan can account for the package upgrade or upstream publishes pinned builder images containing the fixed package.
+Nox reports zlib 1.3.2-r1 from the pinned Alpine 3.23 `FROM` images, even though the Dockerfiles upgrade zlib to 1.4-r0 before project build commands run. The production Go image copies only the built binary, CA certificates, and frontend assets into its `scratch` runtime; the Node production stage is a builder. The frontend development Dockerfile produces a running Alpine image, while the backend development Dockerfile also retains Alpine. These zlib findings are not baselined: they remain visible as scanner evidence about the pinned base images, and the Docker build assertions separately verify the package installed in the resulting images. Do not treat either check as proof that the upstream base-image digest itself is fixed.
 
 ## Exception boundary
 
