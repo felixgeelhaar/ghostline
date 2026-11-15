@@ -2,12 +2,14 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
+import { fetchNoxReport } from '../application/fetchNoxReport'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
 import { fetchQodoReviewSession } from '../application/fetchQodoReviewSession'
 import { buildChangeActivity, countReviewsWithUnavailableDetails, describeCheckActivity } from '../domain/changeActivity'
 import { checkOutcome, checkSummaryPreview, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
 import { findRecurringFindings, qodoHeadCoverage, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import type { QodoStructuredReview } from '../domain/qodoReviewSession'
+import type { NoxReport } from '../domain/noxReport'
 import { buildFindingTrace } from '../domain/trace'
 import { isSamePullRequest, validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import { GhostlineApiError } from '../application/apiError'
@@ -25,6 +27,9 @@ const selectedRevision = ref('')
 const focusedChecks = ref<PullRequest['checks']>()
 const checksLoading = ref(false)
 const checksError = ref('')
+const focusedNoxReport = ref<NoxReport>()
+const noxLoading = ref(false)
+const noxError = ref('')
 const selectedTraceId = ref('')
 const copyResult = ref<CopyResult>()
 const qodoApiKey = ref('')
@@ -38,6 +43,7 @@ let authChannel: BroadcastChannel | undefined
 let revisionRequest = 0
 let importRequest = 0
 let qodoRequest = 0
+let noxRequest = 0
 const activeChecks = computed(() => selectedRevision.value ? focusedChecks.value : pr.value?.checks)
 const orderedChecks = computed(() => orderChecks(activeChecks.value?.availability === 'available' ? activeChecks.value.items : []))
 const checksSummary = computed(() => summarizeChecks(orderedChecks.value))
@@ -104,6 +110,7 @@ function clearWorkspace() {
   importRequest++
   revisionRequest++
   qodoRequest++
+  noxRequest++
   copyRequest++
   url.value = ''
   pr.value = undefined
@@ -113,6 +120,9 @@ function clearWorkspace() {
   focusedChecks.value = undefined
   checksLoading.value = false
   checksError.value = ''
+  focusedNoxReport.value = undefined
+  noxLoading.value = false
+  noxError.value = ''
   selectedTraceId.value = ''
   traceTrigger = undefined
   copyResult.value = undefined
@@ -140,12 +150,18 @@ async function loadPR() {
     focusedChecks.value = undefined
     checksError.value = ''
     checksLoading.value = false
+    focusedNoxReport.value = undefined
+    noxError.value = ''
+    noxLoading.value = false
     copyResult.value = undefined
     qodoStructuredReview.value = undefined
     qodoReviewError.value = ''
   }
   copyRequest++
-  if (!keepCurrentChange) revisionRequest++
+  if (!keepCurrentChange) {
+    revisionRequest++
+    noxRequest++
+  }
   qodoApiKey.value = ''
   if (!keepCurrentChange) {
     qodoRequest++
@@ -161,6 +177,10 @@ async function loadPR() {
         focusedChecks.value = undefined
         checksError.value = ''
         checksLoading.value = false
+        noxRequest++
+        focusedNoxReport.value = undefined
+        noxError.value = ''
+        noxLoading.value = false
       } else if (selectedRevision.value && selectedRevision.value === importedPR.checks.revisionSha) {
         revisionRequest++
         focusedChecks.value = importedPR.checks
@@ -168,6 +188,8 @@ async function loadPR() {
         checksLoading.value = false
       }
       pr.value = importedPR
+      if (selectedRevision.value) void loadNoxReport(importedPR, selectedRevision.value)
+      else if (importedPR.checks.revisionSha) void loadNoxReport(importedPR, importedPR.checks.revisionSha)
       showingPreviousSnapshot.value = false
     }
   } catch (e) {
@@ -205,10 +227,15 @@ async function focusRevision(sha: string) {
   const importedPR = pr.value
   if (!importedPR) return
   selectedRevision.value = sha
+  focusedNoxReport.value = undefined
+  noxError.value = ''
+  noxLoading.value = false
+  const noxRevisionRequest = ++noxRequest
   focusedChecks.value = undefined
   checksError.value = ''
   checksLoading.value = false
   const request = ++revisionRequest
+  void loadNoxReport(importedPR, sha, noxRevisionRequest)
   if (sha === importedPR.checks.revisionSha) {
     focusedChecks.value = importedPR.checks
     return
@@ -226,6 +253,26 @@ async function focusRevision(sha: string) {
     if (request === revisionRequest) checksLoading.value = false
   }
 }
+async function loadNoxReport(importedPR: PullRequest, sha: string, expectedRequest?: number) {
+  const request = expectedRequest ?? ++noxRequest
+  const requestedPRURL = importedPR.url
+  if (!sha) return
+  noxLoading.value = true
+  noxError.value = ''
+  try {
+    const report = await fetchNoxReport(requestedPRURL, sha)
+    if (request === noxRequest && pr.value?.url === requestedPRURL && (selectedRevision.value || pr.value.checks.revisionSha) === sha) {
+      focusedNoxReport.value = report
+    }
+  } catch (e) {
+    handleUnauthorized(e)
+    if (request === noxRequest && pr.value?.url === requestedPRURL && (selectedRevision.value || pr.value.checks.revisionSha) === sha) {
+      noxError.value = e instanceof Error ? e.message : 'Could not load the Nox report for this revision.'
+    }
+  } finally {
+    if (request === noxRequest) noxLoading.value = false
+  }
+}
 let copyRequest = 0
 async function copySha(sha: string) {
   const request = ++copyRequest
@@ -235,10 +282,15 @@ async function copySha(sha: string) {
 }
 function clearFocus() {
   revisionRequest++
+  noxRequest++
   selectedRevision.value = ''
   focusedChecks.value = undefined
   checksLoading.value = false
   checksError.value = ''
+  focusedNoxReport.value = undefined
+  noxLoading.value = false
+  noxError.value = ''
+  if (pr.value?.checks.revisionSha) void loadNoxReport(pr.value, pr.value.checks.revisionSha)
 }
 async function toggleTrace(id: string, event: MouseEvent) {
   if (selectedTraceId.value === id) {
@@ -306,6 +358,30 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
           <template v-else><p class="checks-summary" :class="checksSummary.tone" role="status"><span aria-hidden="true">{{ glyph[checksSummary.tone] }}</span>{{ checksSummary.label }}</p><ul class="check-list"><li v-for="(check, i) in orderedChecks" :key="`${check.kind}:${check.name}:${i}`"><span class="check-state" :class="checkOutcome(check).tone"><span aria-hidden="true">{{ glyph[checkOutcome(check).tone] }}</span>{{ checkOutcome(check).label }}</span><span class="check-name"><a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">{{ check.name }} <span aria-hidden="true">↗</span><span class="sr-only">(opens on GitHub)</span></a><span v-else>{{ check.name }}</span><small>{{ [check.source, check.url ? '' : 'no GitHub link reported'].filter(Boolean).join(' · ') }}</small><small v-if="check.outputTitle || check.outputSummary || check.outputSummaryTruncated" class="check-output"><strong v-if="check.outputTitle">{{ check.outputTitle }}</strong><span v-if="check.outputSummary">{{ checkSummaryPreview(check.outputSummary).text }}</span><span v-if="check.outputSummaryTruncated || checkSummaryPreview(check.outputSummary || '').truncated" class="check-output-note">Preview shortened · open the linked check for full output.</span></small></span></li></ul></template>
         </template>
         <p class="footnote">GitHub reported these checks for revision {{ activeChecks?.revisionShortSha || selectedRevision.slice(0, 7) }} at fetch time. Results apply only to that revision. Re-import to refresh PR head checks.</p>
+      </section>
+
+      <section class="nox-report" aria-labelledby="nox-report-title">
+        <h3 id="nox-report-title" class="section-title"><span>SECURITY SCAN · {{ selectedRevision ? 'FOCUSED REVISION' : 'PR HEAD' }}</span><span v-if="focusedNoxReport?.revisionSha"><a :href="`https://github.com/${pr.owner}/${pr.repo}/commit/${focusedNoxReport.revisionSha}`" target="_blank" rel="noreferrer" :aria-label="`Scanned revision ${focusedNoxReport.revisionSha.slice(0, 7)} on GitHub`">{{ focusedNoxReport.revisionSha.slice(0, 7) }} ↗</a></span></h3>
+        <p v-if="noxLoading" class="checks-note" role="status">Loading the published security report for revision {{ (selectedRevision || pr.checks.revisionSha).slice(0, 7) }}…</p>
+        <p v-else-if="noxError" class="checks-note warn" role="status"><strong>Security report unavailable.</strong> {{ noxError }}</p>
+        <template v-else-if="focusedNoxReport?.availability === 'unavailable'">
+          <p class="checks-note warn" role="status"><strong>Security report unavailable for revision {{ focusedNoxReport.revisionSha.slice(0, 7) || 'unknown' }}.</strong> {{ focusedNoxReport.reason }}</p>
+          <p v-if="focusedNoxReport.runUrl" class="checks-note"><a :href="focusedNoxReport.runUrl" target="_blank" rel="noreferrer">VIEW SOURCE WORKFLOW RUN ↗</a></p>
+        </template>
+        <template v-else-if="focusedNoxReport?.availability === 'available'">
+          <p class="nox-summary" :class="{ warn: focusedNoxReport.findings.length > 0 || focusedNoxReport.runConclusion !== 'success' }" role="status">
+            <strong>{{ focusedNoxReport.findings.length ? `${focusedNoxReport.totalCount} security finding${focusedNoxReport.totalCount === 1 ? '' : 's'} reported` : 'No security findings reported' }}</strong>
+            <span>Workflow {{ focusedNoxReport.runConclusion || 'status unavailable' }} · {{ focusedNoxReport.runName || 'Nox scan' }} · report from {{ date(focusedNoxReport.createdAt) }} · retained until {{ date(focusedNoxReport.expiresAt) }}</span>
+          </p>
+          <p v-if="focusedNoxReport.totalCount === 0" class="checks-note">This is the published Nox report for this exact revision. It is not an independent guarantee that the code is secure.</p>
+          <ol v-else class="nox-findings"><li v-for="(finding, index) in focusedNoxReport.findings" :key="`${finding.fingerprint || finding.ruleId}:${index}`">
+            <div class="nox-finding-heading"><strong>{{ finding.title }}</strong><span :class="`severity-${finding.severity}`">{{ finding.severity }}</span></div>
+            <p>{{ finding.message }}</p>
+            <p v-if="finding.path" class="nox-location">{{ finding.path }}<span v-if="finding.line">:{{ finding.line }}</span></p>
+          </li></ol>
+          <p v-if="focusedNoxReport.truncated" class="checks-note warn" role="status">Showing {{ focusedNoxReport.findings.length }} of {{ focusedNoxReport.totalCount }} findings. Open the source workflow for the full report.</p>
+          <p class="nox-source"><a :href="focusedNoxReport.runUrl" target="_blank" rel="noreferrer">OPEN SOURCE WORKFLOW RUN ↗</a><span> · Report and findings apply to revision {{ focusedNoxReport.revisionSha.slice(0, 7) }}.</span></p>
+        </template>
       </section>
 
       <section class="activity-index" aria-labelledby="activity-index-title">
@@ -380,6 +456,26 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
 </template>
 
 <style scoped>
+.nox-summary {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid rgba(0, 229, 255, .28);
+  color: #d2eaf2;
+  background: rgba(0, 229, 255, .035);
+}
+
+.nox-summary.warn { border-color: rgba(252, 238, 10, .35); }
+.nox-summary span, .nox-location, .nox-source { color: #8a91a7; font-size: .82rem; }
+.nox-findings { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 10px; }
+.nox-findings li { padding: 12px 14px; border: 1px solid rgba(255, 43, 214, .2); background: rgba(9, 11, 22, .55); }
+.nox-finding-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.nox-finding-heading > span { font: 600 .68rem/1.2 ui-monospace, monospace; text-transform: uppercase; color: #fcee0a; }
+.nox-finding-heading .severity-critical, .nox-finding-heading .severity-high { color: #ff708d; }
+.nox-findings p { margin: 8px 0 0; line-height: 1.5; }
+.nox-findings .nox-location { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.nox-source { margin-top: 12px; }
+
 .check-name .check-output {
   max-width: 760px;
   margin-top: 8px;
