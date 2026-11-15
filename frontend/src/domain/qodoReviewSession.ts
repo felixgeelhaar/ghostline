@@ -18,7 +18,7 @@ const QodoFindingEvidenceSchema = z.object({
 
 export const QodoReviewRunSchema = z.object({
   id: z.string().min(1),
-  status: z.string().min(1),
+  status: z.string().min(1).optional(),
   commitSha: fullSha.optional(),
   startedAt: z.string().optional(),
 })
@@ -130,7 +130,7 @@ export function reviewSessionFreshness(review: QodoStructuredReview, headSha: st
 function runningReviewRunForHead(review: QodoStructuredReview, headSha: string): QodoStructuredReview['reviewRuns'][number] | undefined {
   if (!fullSha.safeParse(headSha).success) return undefined
   return review.reviewRuns.find((run) => {
-    const status = run.status.trim().toLowerCase()
+    const status = (run.status ?? '').trim().toLowerCase()
     return (status === 'started' || status === 'running') && run.commitSha?.toLowerCase() === headSha.toLowerCase()
   })
 }
