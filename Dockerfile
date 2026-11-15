@@ -5,7 +5,7 @@ RUN npm ci
 COPY --chown=65532:65532 frontend/ ./
 RUN npm run build
 
-FROM golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS backend-build
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS backend-build
 WORKDIR /src
 COPY --chown=65532:65532 go.mod go.sum ./
 RUN go mod download

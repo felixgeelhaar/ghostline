@@ -1,10 +1,6 @@
-FROM golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea
 LABEL maintainer="Ghostline maintainers"
 WORKDIR /app
-# Upgrade the pinned image's package and ensure future rebuilds fail if the
-# fixed package is unavailable from the configured Alpine repositories.
-RUN apk add --no-cache 'zlib>=1.4-r0' curl \
-    && apk info -W /usr/lib/libz.so.1 | grep -Fq 'zlib-1.4-r0'
 COPY --chown=65532:65532 go.mod go.sum ./
 RUN go mod download
 COPY --chown=65532:65532 backend ./backend
@@ -13,5 +9,5 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/local/bin/ghostlin
 ENV HOST=0.0.0.0 PORT=8080 HOME=/tmp GOCACHE=/tmp/go-cache
 USER 65532:65532
 EXPOSE 8080
-HEALTHCHECK --interval=10s --timeout=3s --retries=6 --start-period=30s CMD curl -fsS http://localhost:8080/api/health || exit 1
+HEALTHCHECK --interval=10s --timeout=3s --retries=6 --start-period=30s CMD ["/usr/local/bin/ghostline", "healthcheck"]
 CMD ["/usr/local/bin/ghostline"]
