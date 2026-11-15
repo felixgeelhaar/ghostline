@@ -75,7 +75,7 @@ func registerStaticSite(router *gin.Engine, directory string) error {
 }
 
 func setStaticSecurityHeaders(c *gin.Context) {
-	c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
+	c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
 	c.Header("X-Frame-Options", "DENY")
 	c.Header("X-Content-Type-Options", "nosniff")
 }

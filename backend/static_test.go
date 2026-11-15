@@ -59,7 +59,7 @@ func TestRegisterStaticSiteServesBuildAndKeepsAPIAndAuthPathsOutOfFallback(t *te
 			}
 			if test.securityHeaders {
 				for name, want := range map[string]string{
-					"Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+					"Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
 					"X-Frame-Options":         "DENY",
 					"X-Content-Type-Options":  "nosniff",
 				} {
