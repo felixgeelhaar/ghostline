@@ -24,7 +24,9 @@ func TestLoadAuthConfig(t *testing.T) {
 		required bool
 	}{
 		{name: "disabled local demo", env: map[string]string{}, valid: true},
+		{name: "production rejects disabled auth", env: map[string]string{"GHOSTLINE_ENV": "production"}},
 		{name: "hosted auth configured", env: map[string]string{
+			"GHOSTLINE_ENV": "production",
 			"GHOSTLINE_AUTH_MODE": "required", "GITHUB_OAUTH_CLIENT_ID": "client-id",
 			"GITHUB_OAUTH_CLIENT_SECRET": "client-secret", "GITHUB_OAUTH_CALLBACK_URL": "https://ghostline.example/auth/callback",
 			"GHOSTLINE_SESSION_SECRET": strings.Repeat("s", 32), "GHOSTLINE_ALLOWED_GITHUB_IDS": "42, 43",

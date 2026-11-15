@@ -6,7 +6,7 @@
 
 Ghostline is a change-centric engineering control room. The first slice imports a public GitHub pull request and shows its commit timeline, with commit timestamps clearly distinguished from push or pull-request event chronology. It also shows the checks GitHub reports for the pull request's head commit — check runs and commit statuses, each with its status and GitHub link. For GitHub check runs it preserves the source-provided title and shows a bounded, readable text preview of the source summary, including repository security-scan summaries when available. Oversized summaries are labeled, and the linked GitHub check remains the source for full output. It says explicitly when that commit has no checks or when they could not be loaded. Checks from earlier commits are never shown as validation of the head revision. Checks belong in repository CI, where their results can be tied to the revision they actually scanned; Ghostline does not scan a developer's local filesystem.
 
-See the [project guide](docs/project-guide.md) for the product specification, architecture overview, and complete setup path. The [threat model](docs/threat-model.md) records current trust boundaries and hosting limitations.
+See the [project guide](docs/project-guide.md) for the product specification, architecture overview, and complete setup path. The [threat model](docs/threat-model.md) records current trust boundaries and hosting limitations. For a production-built single-container deployment, see the [hosted deployment guide](docs/hosted-deployment.md).
 
 ## Run locally
 
@@ -70,9 +70,9 @@ Compose defaults to an unauthenticated local demo. Protected-mode sign-in requir
 | `GITHUB_OAUTH_CALLBACK_URL` | Exact HTTPS callback, for example `https://ghostline.example/auth/callback`. |
 | `GHOSTLINE_SESSION_SECRET` | Random secret of at least 32 bytes used to sign state and sessions. |
 | `GHOSTLINE_ALLOWED_GITHUB_IDS` | Comma-separated numeric GitHub user IDs allowed to sign in. |
-| `GHOSTLINE_TRUSTED_PROXY_CIDRS` | Optional comma-separated CIDRs for ingress peers that are trusted to supply `X-Real-IP`; leave empty when clients connect directly to Vite. |
+| `GHOSTLINE_TRUSTED_PROXY_CIDRS` | Vite development proxy only: optional CIDRs for ingress peers trusted to supply `X-Real-IP`. The production Go service uses `RATE_LIMIT_CLIENT_IP_HEADER` and `RATE_LIMIT_TRUSTED_PROXIES`, documented in the hosted deployment guide. |
 
-The callback exchanges the temporary OAuth code, reads the account identity, and discards the GitHub token. Sessions last 12 hours. Use a secret manager for deployment credentials. Vite's development server and this Compose stack are for trusted demos, not production hosting; protected-mode sign-in alone does not make them production-ready. See the [threat model](docs/threat-model.md).
+The callback exchanges the temporary OAuth code, reads the account identity, and discards the GitHub token. Sessions last 12 hours. Use a secret manager for deployment credentials. This two-container Compose stack remains a Vite development environment for trusted demos. For the production-built single-container setup, see the [hosted deployment guide](docs/hosted-deployment.md). See the [threat model](docs/threat-model.md) for limits that still apply to either deployment.
 
 The protected-mode sign-in screen is shown in this [working-app screenshot](docs/feature-evidence/hosted-github-sign-in.jpg); completing sign-in requires configured GitHub OAuth credentials.
 

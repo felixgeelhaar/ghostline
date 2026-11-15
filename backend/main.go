@@ -331,7 +331,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	staticDirectory, err := loadStaticSiteConfig(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	r := newRouterWithAuth(newGitHubClient(), newQodoReviewClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity, slog.Default(), newAuthManager(auth, nil))
+	if err := registerStaticSite(r, staticDirectory); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

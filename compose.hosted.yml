@@ -1,0 +1,36 @@
+services:
+  ghostline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.hosted
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      GHOSTLINE_ENV: production
+      GHOSTLINE_AUTH_MODE: required
+      GHOSTLINE_STATIC_DIR: /app/frontend/dist
+      RATE_LIMIT_CLIENT_IP_HEADER: ${RATE_LIMIT_CLIENT_IP_HEADER:-}
+      RATE_LIMIT_TRUSTED_PROXIES: ${RATE_LIMIT_TRUSTED_PROXIES:-}
+    ports:
+      - "${GHOSTLINE_BIND_ADDRESS:-127.0.0.1}:${GHOSTLINE_PORT:-8080}:8080"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G

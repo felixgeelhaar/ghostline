@@ -56,3 +56,35 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+
+  production-container:
+    name: Production container smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Build production image
+        run: docker build --tag ghostline:ci .
+      - name: Start with required authentication
+        run: |
+          docker run --detach --name ghostline-ci \
+            --publish 127.0.0.1:18080:8080 \
+            --read-only --tmpfs /tmp --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --env GITHUB_OAUTH_CLIENT_ID=ci-client \
+            --env GITHUB_OAUTH_CLIENT_SECRET=ci-secret \
+            --env GITHUB_OAUTH_CALLBACK_URL=https://ghostline.example/auth/callback \
+            --env GHOSTLINE_SESSION_SECRET=ci-only-secret-with-at-least-32-bytes \
+            --env GHOSTLINE_ALLOWED_GITHUB_IDS=42 \
+            ghostline:ci
+      - name: Verify frontend and protected API
+        run: |
+          trap 'docker logs ghostline-ci; docker rm -f ghostline-ci >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:18080/api/health >/dev/null; then break; fi
+            sleep 2
+          done
+          curl --fail --silent http://127.0.0.1:18080/ | grep -q '<div id="app">'
+          curl --fail --silent http://127.0.0.1:18080/api/session | grep -q '"authRequired":true'
+          status=$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18080/api/import)
+          test "$status" = 401
