@@ -47,6 +47,38 @@ func TestParseNoxSARIFFindsRuleMetadataWhenRuleIndexIsOmitted(t *testing.T) {
 	}
 }
 
+func TestParseNoxSARIFUsesRuleIndexWhenResultOmitsRuleID(t *testing.T) {
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	data := []byte(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox","rules":[{"id":"SEC-003","name":"Missing id","shortDescription":{"text":"Indexed metadata"},"properties":{"severity":"critical"}}]}},"results":[{"ruleIndex":0,"level":"warning","message":{"text":"Indexed result."}}]}]}`)
+	report, err := parseNoxSARIF(data, sha, 123, "https://github.com/acme/app/actions/runs/123", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := report.Findings[0]; got.RuleID != "SEC-003" || got.Title != "Indexed metadata" || got.Severity != "critical" {
+		t.Fatalf("ruleIndex metadata was not applied: %+v", got)
+	}
+}
+
+func TestSARIFRuleLookupUsesIndexedMetadataAndFallsBackByID(t *testing.T) {
+	rules := []sarifRule{
+		{ID: "SEC-001", Name: "First definition"},
+		{ID: "SEC-001", Name: "Duplicate definition"},
+		{ID: "SEC-002", Name: "Second definition"},
+	}
+	byID := indexSARIFrules(rules)
+	index := 2
+	if got := sarifRuleForResult(sarifResult{RuleID: "SEC-002", RuleIndex: &index}, rules, byID); got.Name != "Second definition" {
+		t.Fatalf("valid rule index returned %+v", got)
+	}
+	index = 1
+	if got := sarifRuleForResult(sarifResult{RuleID: "SEC-001", RuleIndex: &index}, rules, byID); got.Name != "Duplicate definition" {
+		t.Fatalf("valid rule index should take precedence over ID fallback: %+v", got)
+	}
+	if got := sarifRuleForResult(sarifResult{RuleID: "SEC-001"}, rules, byID); got.Name != "First definition" {
+		t.Fatalf("ID fallback should preserve the first rule definition: %+v", got)
+	}
+}
+
 func TestParseNoxSARIFRejectsOtherScannerAndUnsafeLocations(t *testing.T) {
 	const sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	for name, data := range map[string][]byte{
@@ -118,7 +150,7 @@ func TestDownloadGitHubArtifactRestrictsRedirectsAndDoesNotForwardToken(t *testi
 
 func TestParseNoxSARIFKeepsSuppressedResultsVisibleAndSeparate(t *testing.T) {
 	const sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	data := []byte(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[{"ruleId":"SEC-001","message":{"text":"Known baseline item."},"suppressions":[{"kind":"external","justification":"Accepted baseline"}]}]}]}`)
+	data := []byte(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[{"ruleId":"SEC-001","message":{"text":"Known baseline item."},"suppressions":[{"kind":"external","status":"accepted","justification":"Accepted baseline"},{"kind":"inSource","status":"accepted","justification":"Second accepted reason"}]}]}]}`)
 	report, err := parseNoxSARIF(data, sha, 1, "https://github.com/acme/app/actions/runs/1", "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -127,8 +159,20 @@ func TestParseNoxSARIFKeepsSuppressedResultsVisibleAndSeparate(t *testing.T) {
 		t.Fatalf("suppressed result should remain visible and separately counted: %+v", report)
 	}
 	finding := report.Findings[0]
-	if !finding.Suppressed || finding.SuppressionKind != "external" || finding.SuppressionJustification != "Accepted baseline" {
+	if !finding.Suppressed || finding.SuppressionKind != "external" || finding.SuppressionJustification != "Accepted baseline" || len(finding.Suppressions) != 2 || finding.Suppressions[1].Justification != "Second accepted reason" {
 		t.Fatalf("suppression details were not preserved: %+v", finding)
+	}
+}
+
+func TestParseNoxSARIFDoesNotTreatRejectedOrUnderReviewSuppressionsAsAccepted(t *testing.T) {
+	const sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	data := []byte(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[{"ruleId":"REJECTED","message":{"text":"Rejected suppression."},"suppressions":[{"kind":"external","status":"rejected","justification":"Do not suppress"}]},{"ruleId":"REVIEW","message":{"text":"Pending suppression."},"suppressions":[{"kind":"external","status":"underReview","justification":"Discussing it"}]},{"ruleId":"ACCEPTED","message":{"text":"Accepted suppression."},"suppressions":[{"kind":"external","status":"accepted","justification":"Approved"}]}]}]}`)
+	report, err := parseNoxSARIF(data, sha, 1, "https://github.com/acme/app/actions/runs/1", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.TotalCount != 3 || report.ActiveCount != 2 || report.SuppressedCount != 1 || report.Findings[0].Suppressed || report.Findings[1].Suppressed || !report.Findings[2].Suppressed {
+		t.Fatalf("only accepted suppressions should count as suppressed: %+v", report)
 	}
 }
 

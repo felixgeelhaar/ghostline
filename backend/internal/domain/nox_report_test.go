@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseNoxFindingNormalizesSourceAndSeverity(t *testing.T) {
 	finding, include := ParseNoxFinding(NoxSARIFFinding{
@@ -18,9 +21,32 @@ func TestParseNoxFindingRejectsUnsafePathsAndPreservesSuppression(t *testing.T) 
 	if !include || finding.Path != "" || finding.Line != 0 {
 		t.Fatalf("unsafe location should be omitted: %+v, include=%v", finding, include)
 	}
-	finding, include = ParseNoxFinding(NoxSARIFFinding{RuleID: "SEC-1", Suppressed: true, SuppressionKind: "external", SuppressionJustification: "Accepted baseline"})
+	finding, include = ParseNoxFinding(NoxSARIFFinding{RuleID: "SEC-1", Suppressed: true, SuppressionKind: "external", SuppressionJustification: "Accepted baseline", Suppressions: []NoxSuppression{{Status: "accepted", Kind: "external", Justification: "Accepted baseline"}, {Status: "rejected", Kind: "inSource", Justification: "Rejected example"}}})
 	if !include || !finding.Suppressed || finding.SuppressionKind != "external" || finding.SuppressionJustification != "Accepted baseline" {
 		t.Fatalf("suppression evidence should remain visible: %+v, include=%v", finding, include)
+	}
+	if len(finding.Suppressions) != 2 || finding.Suppressions[1].Status != "rejected" {
+		t.Fatalf("all suppression source details should be retained: %+v", finding.Suppressions)
+	}
+}
+
+func TestParseNoxFindingDecodesEncodedRepositoryPaths(t *testing.T) {
+	for encoded, want := range map[string]string{
+		"frontend/src/My%20Component.vue": "frontend/src/My Component.vue",
+		"frontend%2Fsrc%2FApp.vue":        "frontend/src/App.vue",
+	} {
+		finding, include := ParseNoxFinding(NoxSARIFFinding{RuleID: "SEC-1", Path: encoded, Line: 3})
+		if !include || finding.Path != want || finding.Line != 3 {
+			t.Errorf("encoded path %q = %+v, include=%v; want %q", encoded, finding, include, want)
+		}
+	}
+}
+
+func TestSafeNoxPathRejectsEncodedTraversalAndNonPathComponents(t *testing.T) {
+	for _, value := range []string{"%2e%2e/secrets.txt", "src/%2E%2e/secrets.txt", "src/file.go?download=1", "src/file.go#section"} {
+		if got := SafeNoxPath(value); got != "" {
+			t.Errorf("SafeNoxPath(%q) = %q, want empty", value, got)
+		}
 	}
 }
 
@@ -28,6 +54,25 @@ func TestParseNoxFindingUsesSARIFRuleDefinitionWhenResultOmitsRuleID(t *testing.
 	finding, include := ParseNoxFinding(NoxSARIFFinding{RuleDefinitionID: "SEC-2", RuleName: "Rule fallback"})
 	if !include || finding.RuleID != "SEC-2" || finding.Title != "Rule fallback" {
 		t.Fatalf("SARIF rule definition fallback was lost: %+v, include=%v", finding, include)
+	}
+}
+
+func TestParseNoxFindingBoundsRuleIdentifiersAndTitles(t *testing.T) {
+	long := strings.Repeat("x", 5000)
+	finding, include := ParseNoxFinding(NoxSARIFFinding{RuleID: long, RuleTitle: long})
+	if !include || len([]rune(finding.RuleID)) > 200 || len([]rune(finding.Title)) > 1000 {
+		t.Fatalf("rule metadata was not bounded: id=%d title=%d include=%v", len([]rune(finding.RuleID)), len([]rune(finding.Title)), include)
+	}
+}
+
+func TestParseNoxFindingCapsSuppressionEvidenceAndMarksTruncation(t *testing.T) {
+	suppressions := make([]NoxSuppression, MaxNoxSuppressionsPerFinding+1)
+	for i := range suppressions {
+		suppressions[i] = NoxSuppression{Status: "accepted", Kind: "external"}
+	}
+	finding, include := ParseNoxFinding(NoxSARIFFinding{RuleID: "SEC-1", Suppressions: suppressions})
+	if !include || !finding.Suppressed || len(finding.Suppressions) != MaxNoxSuppressionsPerFinding || !finding.SuppressionsTruncated {
+		t.Fatalf("suppression evidence should be bounded and marked truncated: count=%d truncated=%v suppressed=%v include=%v", len(finding.Suppressions), finding.SuppressionsTruncated, finding.Suppressed, include)
 	}
 }
 

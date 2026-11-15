@@ -8,6 +8,14 @@ import (
 )
 
 const NoxSecurityWorkflowPath = ".github/workflows/nox.yml"
+const MaxNoxSuppressionsPerFinding = 20
+
+// NoxSuppression preserves one source-provided SARIF suppression record.
+type NoxSuppression struct {
+	Status        string
+	Kind          string
+	Justification string
+}
 
 // IsNoxWorkflowRun reports whether GitHub identified this run as the repository's
 // Nox pull-request workflow for the requested revision.
@@ -88,6 +96,8 @@ type NoxFinding struct {
 	Suppressed               bool
 	SuppressionKind          string
 	SuppressionJustification string
+	Suppressions             []NoxSuppression
+	SuppressionsTruncated    bool
 }
 
 // NoxReport is the domain representation of one Nox result set.
@@ -116,6 +126,8 @@ type NoxSARIFFinding struct {
 	Suppressed               bool
 	SuppressionKind          string
 	SuppressionJustification string
+	Suppressions             []NoxSuppression
+	SuppressionsTruncated    bool
 }
 
 // ParseNoxFinding converts one Nox SARIF result to Ghostline's domain model.
@@ -126,24 +138,39 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 		line = value.Line
 	}
 	finding := NoxFinding{
-		RuleID:                   value.RuleID,
-		Title:                    value.RuleTitle,
+		RuleID:                   BoundedNoxText(value.RuleID, 200),
+		Title:                    BoundedNoxText(value.RuleTitle, 1000),
 		Severity:                 NoxSeverity(value.ResultLevel),
 		Message:                  BoundedNoxText(value.Message, 2000),
 		Path:                     path,
 		Line:                     line,
-		Suppressed:               value.Suppressed,
+		Suppressed:               value.Suppressed || HasAcceptedNoxSuppression(value.Suppressions),
 		SuppressionKind:          BoundedNoxText(value.SuppressionKind, 100),
 		SuppressionJustification: BoundedNoxText(value.SuppressionJustification, 1000),
+		SuppressionsTruncated:    value.SuppressionsTruncated || len(value.Suppressions) > MaxNoxSuppressionsPerFinding,
+	}
+	if finding.RuleID == "" {
+		finding.RuleID = BoundedNoxText(value.RuleDefinitionID, 200)
+	}
+	if finding.Title == "" {
+		finding.Title = BoundedNoxText(value.RuleName, 1000)
+	}
+	if len(value.Suppressions) > MaxNoxSuppressionsPerFinding {
+		value.Suppressions = value.Suppressions[:MaxNoxSuppressionsPerFinding]
+	}
+	finding.Suppressions = make([]NoxSuppression, 0, len(value.Suppressions))
+	for _, suppression := range value.Suppressions {
+		finding.Suppressions = append(finding.Suppressions, NoxSuppression{
+			Status: BoundedNoxText(suppression.Status, 100), Kind: BoundedNoxText(suppression.Kind, 100),
+			Justification: BoundedNoxText(suppression.Justification, 1000),
+		})
+		if finding.SuppressionKind == "" && suppression.Status == "accepted" {
+			finding.SuppressionKind = BoundedNoxText(suppression.Kind, 100)
+			finding.SuppressionJustification = BoundedNoxText(suppression.Justification, 1000)
+		}
 	}
 	if finding.Message == "" {
 		finding.Message = BoundedNoxText(value.Markdown, 2000)
-	}
-	if finding.RuleID == "" {
-		finding.RuleID = value.RuleDefinitionID
-	}
-	if finding.Title == "" {
-		finding.Title = value.RuleName
 	}
 	if finding.Title == "" {
 		finding.Title = finding.RuleID
@@ -161,6 +188,16 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 		}
 	}
 	return finding, true
+}
+
+// HasAcceptedNoxSuppression reports whether SARIF records an accepted suppression.
+func HasAcceptedNoxSuppression(suppressions []NoxSuppression) bool {
+	for _, suppression := range suppressions {
+		if suppression.Status == "accepted" {
+			return true
+		}
+	}
+	return false
 }
 
 // NoxSeverity normalizes SARIF severity labels for the interface.
@@ -188,16 +225,15 @@ func SafeNoxPath(value string) string {
 		return ""
 	}
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.IsAbs() || parsed.Host != "" || strings.HasPrefix(value, "/") {
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.Opaque != "" || strings.HasPrefix(parsed.Path, "/") || strings.Contains(parsed.Path, "\\") {
 		return ""
 	}
-	for _, segment := range strings.Split(value, "/") {
-		decoded, decodeErr := url.PathUnescape(segment)
-		if decodeErr != nil || decoded == ".." || decoded == "." {
+	for _, segment := range strings.Split(parsed.Path, "/") {
+		if segment == ".." || segment == "." {
 			return ""
 		}
 	}
-	clean := path.Clean(value)
+	clean := path.Clean(parsed.Path)
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return ""
 	}

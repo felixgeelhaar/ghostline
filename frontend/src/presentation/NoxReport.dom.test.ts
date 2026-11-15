@@ -4,11 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PullRequest } from '../domain/pullRequest'
 import type { NoxReport } from '../domain/noxReport'
 import { importPullRequest } from '../application/importPullRequest'
+import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { fetchNoxReport } from '../application/fetchNoxReport'
 import App from './App.vue'
 
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
 vi.mock('../application/fetchNoxReport', () => ({ fetchNoxReport: vi.fn() }))
+vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
 vi.mock('../application/fetchGhostlineSession', () => ({ fetchGhostlineSession: vi.fn().mockResolvedValue({ authRequired: false, authenticated: true }) }))
 
 const headSha = 'a'.repeat(40)
@@ -30,7 +32,7 @@ function report(revisionSha: string, count = 0, runConclusion = 'success'): NoxR
     runUrl: 'https://github.com/acme/app/actions/runs/12', artifactId: 3, artifactUrl: 'https://github.com/acme/app/actions/runs/12',
     artifactDigest: 'sha256:abc', createdAt: '2026-11-15T13:58:17Z', expiresAt: '2026-11-22T13:58:16Z',
     totalCount: count, activeCount: count, suppressedCount: 0, truncated: false,
-    findings: count ? [{ ruleId: 'SEC-1', title: 'Validate input', severity: 'high', message: 'Untrusted input reaches a command.', path: 'backend/server.go', line: 42, suppressed: false }] : [],
+    findings: count ? [{ ruleId: 'SEC-1', title: 'Validate input', severity: 'high', message: 'Untrusted input reaches a command.', path: 'backend/server.go', line: 42, suppressed: false, suppressions: [], suppressionsTruncated: false }] : [],
   }
 }
 
@@ -45,8 +47,8 @@ let host: HTMLDivElement | undefined
 
 async function settle() { await Promise.resolve(); await nextTick(); await nextTick() }
 
-async function importPR() {
-  vi.mocked(importPullRequest).mockResolvedValue(pr)
+async function importPR(importedPR: PullRequest = pr) {
+  vi.mocked(importPullRequest).mockResolvedValue(importedPR)
   host = document.createElement('div')
   document.body.append(host)
   app = createApp(App)
@@ -83,15 +85,36 @@ describe('revision-linked Nox report', () => {
   it('shows suppressed reports and explains suppression is not a repair', async () => {
     vi.mocked(fetchNoxReport).mockResolvedValue({
       ...report(headSha), totalCount: 1, activeCount: 0, suppressedCount: 1,
-      findings: [{ ruleId: 'SEC-BASELINE', title: 'Known issue', severity: 'medium', message: 'Still reported by Nox.', suppressed: true, suppressionKind: 'external', suppressionJustification: 'Accepted baseline' }],
+      findings: [{ ruleId: 'SEC-BASELINE', title: 'Known issue', severity: 'medium', message: 'Still reported by Nox.', suppressed: true, suppressionKind: 'external', suppressionJustification: 'Accepted baseline', suppressions: [{ status: 'accepted', kind: 'external', justification: 'Accepted baseline' }, { status: 'accepted', kind: 'inSource', justification: 'Second accepted reason' }] }],
     })
     await importPR()
     await vi.waitFor(() => expect(host!.querySelector('.nox-suppression')).not.toBeNull())
     const panel = host!.querySelector('.nox-report')!
     expect(panel.textContent).toContain('No active findings · 1 suppressed result')
     expect(panel.textContent).toContain('Accepted baseline')
+    expect(panel.textContent).toContain('Second accepted reason')
     expect(panel.textContent).toContain('does not mean it was fixed or verified')
     expect(panel.textContent).not.toContain('No security findings reported')
+  })
+
+  it('restores the missing revision explanation after clearing focused history', async () => {
+    const missingHead: PullRequest = {
+      ...pr,
+      checks: { availability: 'unavailable', reason: 'GitHub did not provide a pull request revision.', revisionSha: '', revisionShortSha: '', revisionUrl: '', items: [] },
+    }
+    vi.mocked(fetchNoxReport).mockResolvedValue(report(earlierSha))
+    vi.mocked(fetchRevisionChecks).mockResolvedValue({
+      availability: 'unavailable', reason: 'Checks unavailable for this commit.', revisionSha: earlierSha,
+      revisionShortSha: earlierSha.slice(0, 7), revisionUrl: `https://github.com/acme/app/commit/${earlierSha}`, items: [],
+    })
+    await importPR(missingHead)
+    await vi.waitFor(() => expect(host!.querySelector('.nox-report')?.textContent).toContain('GitHub did not provide a pull request revision'))
+
+    host!.querySelector<HTMLButtonElement>('.commit-actions .focus-revision')!.click()
+    await vi.waitFor(() => expect(host!.querySelector('.nox-report')?.textContent).toContain('No security findings reported'))
+    host!.querySelector<HTMLButtonElement>('.clear-focus')!.click()
+
+    await vi.waitFor(() => expect(host!.querySelector('.nox-report')?.textContent).toContain('GitHub did not provide a pull request revision'))
   })
 
   it('ignores an earlier focused revision request that resolves last', async () => {

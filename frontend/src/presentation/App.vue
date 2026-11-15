@@ -307,7 +307,11 @@ function clearFocus() {
   focusedNoxReport.value = undefined
   noxLoading.value = false
   noxError.value = ''
-  if (pr.value?.checks.revisionSha) void loadNoxReport(pr.value, pr.value.checks.revisionSha)
+  if (pr.value?.checks.revisionSha) {
+    void loadNoxReport(pr.value, pr.value.checks.revisionSha)
+  } else {
+    noxError.value = 'GitHub did not provide a pull request revision, so Ghostline cannot load its security report.'
+  }
 }
 async function toggleTrace(id: string, event: MouseEvent) {
   if (selectedTraceId.value === id) {
@@ -395,7 +399,9 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
             <div class="nox-finding-heading"><strong>{{ finding.title }}</strong><span v-if="finding.suppressed" class="suppression-label">SUPPRESSED BY SOURCE</span><span v-else :class="`severity-${finding.severity}`">{{ finding.severity }}</span></div>
             <p>{{ finding.message }}</p>
             <p v-if="finding.path" class="nox-location">{{ finding.path }}<span v-if="finding.line">:{{ finding.line }}</span></p>
-            <p v-if="finding.suppressed" class="nox-suppression"><span v-if="finding.suppressionKind">Suppression type: {{ finding.suppressionKind }}. </span><span v-if="finding.suppressionJustification">Source justification: {{ finding.suppressionJustification }}. </span>The source marks this result suppressed; that does not mean it was fixed or verified.</p>
+            <p v-if="finding.suppressed" class="nox-suppression">The source marks this result as suppressed; that does not mean it was fixed or verified.</p>
+            <ul v-if="finding.suppressions.length" class="nox-suppression-details"><li v-for="(suppression, suppressionIndex) in finding.suppressions" :key="suppressionIndex">Suppression status: {{ suppression.status || 'unspecified' }}<span v-if="suppression.kind"> · {{ suppression.kind }}</span><span v-if="suppression.justification"> · {{ suppression.justification }}</span></li></ul>
+            <p v-if="finding.suppressionsTruncated" class="checks-note warn">Some suppression records were omitted at the report parsing limit.</p>
           </li></ol>
           <p v-if="focusedNoxReport.truncated" class="checks-note warn" role="status">Showing {{ focusedNoxReport.findings.length }} of {{ focusedNoxReport.totalCount }} report results ({{ focusedNoxReport.activeCount }} active, {{ focusedNoxReport.suppressedCount }} suppressed). Open the source workflow for the full report.</p>
           <p class="nox-source"><a :href="focusedNoxReport.runUrl" target="_blank" rel="noreferrer">OPEN SOURCE WORKFLOW RUN ↗</a><span> · Report and findings apply to revision {{ focusedNoxReport.revisionSha.slice(0, 7) }}.</span></p>

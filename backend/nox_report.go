@@ -85,20 +85,32 @@ type noxReport struct {
 }
 
 type noxFinding struct {
-	RuleID                   string `json:"ruleId"`
-	Title                    string `json:"title"`
-	Severity                 string `json:"severity"`
-	Message                  string `json:"message"`
-	Path                     string `json:"path,omitempty"`
-	Line                     int    `json:"line,omitempty"`
-	Fingerprint              string `json:"fingerprint,omitempty"`
-	Suppressed               bool   `json:"suppressed"`
-	SuppressionKind          string `json:"suppressionKind,omitempty"`
-	SuppressionJustification string `json:"suppressionJustification,omitempty"`
+	RuleID                   string           `json:"ruleId"`
+	Title                    string           `json:"title"`
+	Severity                 string           `json:"severity"`
+	Message                  string           `json:"message"`
+	Path                     string           `json:"path,omitempty"`
+	Line                     int              `json:"line,omitempty"`
+	Fingerprint              string           `json:"fingerprint,omitempty"`
+	Suppressed               bool             `json:"suppressed"`
+	SuppressionKind          string           `json:"suppressionKind,omitempty"`
+	SuppressionJustification string           `json:"suppressionJustification,omitempty"`
+	Suppressions             []noxSuppression `json:"suppressions"`
+	SuppressionsTruncated    bool             `json:"suppressionsTruncated,omitempty"`
+}
+
+type noxSuppression struct {
+	Status        string `json:"status"`
+	Kind          string `json:"kind"`
+	Justification string `json:"justification,omitempty"`
 }
 
 func noxFindingFromDomain(finding domain.NoxFinding) noxFinding {
-	return noxFinding{RuleID: finding.RuleID, Title: finding.Title, Severity: finding.Severity, Message: finding.Message, Path: finding.Path, Line: finding.Line, Fingerprint: finding.Fingerprint, Suppressed: finding.Suppressed, SuppressionKind: finding.SuppressionKind, SuppressionJustification: finding.SuppressionJustification}
+	suppressions := make([]noxSuppression, 0, len(finding.Suppressions))
+	for _, suppression := range finding.Suppressions {
+		suppressions = append(suppressions, noxSuppression{Status: suppression.Status, Kind: suppression.Kind, Justification: suppression.Justification})
+	}
+	return noxFinding{RuleID: finding.RuleID, Title: finding.Title, Severity: finding.Severity, Message: finding.Message, Path: finding.Path, Line: finding.Line, Fingerprint: finding.Fingerprint, Suppressed: finding.Suppressed, SuppressionKind: finding.SuppressionKind, SuppressionJustification: finding.SuppressionJustification, Suppressions: suppressions, SuppressionsTruncated: finding.SuppressionsTruncated}
 }
 
 type workflowRunsResponse struct {
@@ -195,6 +207,7 @@ type sarifResult struct {
 
 type sarifSuppression struct {
 	Kind          string `json:"kind"`
+	Status        string `json:"status"`
 	Justification string `json:"justification"`
 }
 
@@ -504,13 +517,17 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 		if run.Results == nil {
 			return noxReport{}, errors.New("Nox SARIF run has no results array")
 		}
+		ruleByID := indexSARIFrules(run.Tool.Driver.Rules)
 		for _, result := range *run.Results {
-			rule := sarifRuleForResult(result, run.Tool.Driver.Rules)
-			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, ResultLevel: result.Level, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressed: len(result.Suppressions) > 0}
-			if value.Suppressed {
-				value.SuppressionKind = result.Suppressions[0].Kind
-				value.SuppressionJustification = result.Suppressions[0].Justification
+			rule := sarifRuleForResult(result, run.Tool.Driver.Rules, ruleByID)
+			suppressions := make([]domain.NoxSuppression, 0, min(len(result.Suppressions), domain.MaxNoxSuppressionsPerFinding))
+			for index, suppression := range result.Suppressions {
+				if index >= domain.MaxNoxSuppressionsPerFinding {
+					break
+				}
+				suppressions = append(suppressions, domain.NoxSuppression{Status: suppression.Status, Kind: suppression.Kind, Justification: suppression.Justification})
 			}
+			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, ResultLevel: result.Level, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressions: suppressions, SuppressionsTruncated: len(result.Suppressions) > domain.MaxNoxSuppressionsPerFinding}
 			if len(result.Locations) > 0 {
 				location := result.Locations[0].PhysicalLocation
 				value.Path = location.ArtifactLocation.URI
@@ -539,17 +556,28 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 	return report, nil
 }
 
-func sarifRuleForResult(result sarifResult, rules []sarifRule) sarifRule {
+func indexSARIFrules(rules []sarifRule) map[string]sarifRule {
+	byID := make(map[string]sarifRule, len(rules))
+	for _, rule := range rules {
+		if rule.ID == "" {
+			continue
+		}
+		if _, exists := byID[rule.ID]; !exists {
+			byID[rule.ID] = rule
+		}
+	}
+	return byID
+}
+
+func sarifRuleForResult(result sarifResult, rules []sarifRule, ruleByID map[string]sarifRule) sarifRule {
 	if result.RuleIndex != nil && *result.RuleIndex >= 0 && *result.RuleIndex < len(rules) {
 		indexed := rules[*result.RuleIndex]
-		if indexed.ID == result.RuleID {
+		if indexed.ID != "" && (result.RuleID == "" || indexed.ID == result.RuleID) {
 			return indexed
 		}
 	}
-	for _, rule := range rules {
-		if rule.ID != "" && rule.ID == result.RuleID {
-			return rule
-		}
+	if rule, exists := ruleByID[result.RuleID]; exists {
+		return rule
 	}
 	return sarifRule{}
 }

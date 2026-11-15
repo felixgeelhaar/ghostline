@@ -3,6 +3,12 @@ import { z } from 'zod'
 const webURL = z.url({ protocol: /^https?$/ })
 const fullSha = z.string().regex(/^[0-9a-f]{40}$/)
 
+export const NoxSuppressionSchema = z.object({
+  status: z.string().max(100),
+  kind: z.string().max(100),
+  justification: z.string().max(1000).optional(),
+})
+
 export const NoxFindingSchema = z.object({
   ruleId: z.string().min(1),
   title: z.string().min(1),
@@ -14,6 +20,8 @@ export const NoxFindingSchema = z.object({
   suppressed: z.boolean(),
   suppressionKind: z.string().max(100).optional(),
   suppressionJustification: z.string().max(1000).optional(),
+  suppressions: z.array(NoxSuppressionSchema).default([]),
+  suppressionsTruncated: z.boolean().optional(),
 })
 
 export const NoxReportSchema = z.discriminatedUnion('availability', [
