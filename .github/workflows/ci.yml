@@ -84,7 +84,16 @@ jobs:
             if curl --silent --fail http://127.0.0.1:18080/api/health >/dev/null; then break; fi
             sleep 2
           done
-          curl --fail --silent http://127.0.0.1:18080/ | grep -q '<div id="app">'
+          html=$(curl --fail --silent http://127.0.0.1:18080/)
+          printf '%s' "$html" | grep -q '<div id="app">'
+          js_asset=$(printf '%s' "$html" | grep -oE '/assets/[^" ]+\.js' | head -n 1)
+          css_asset=$(printf '%s' "$html" | grep -oE '/assets/[^" ]+\.css' | head -n 1)
+          test -n "$js_asset"
+          test -n "$css_asset"
+          curl --fail --silent "http://127.0.0.1:18080$js_asset" --output /tmp/ghostline-app.js
+          curl --fail --silent "http://127.0.0.1:18080$css_asset" --output /tmp/ghostline-app.css
+          test -s /tmp/ghostline-app.js
+          test -s /tmp/ghostline-app.css
           curl --fail --silent http://127.0.0.1:18080/api/session | grep -q '"authRequired":true'
           status=$(curl --silent --output /dev/null --write-out '%{http_code}' --request POST --header 'Content-Type: application/json' --data '{}' http://127.0.0.1:18080/api/import)
           test "$status" = 401

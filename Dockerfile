@@ -1,19 +1,12 @@
-FROM node:24.22.3-alpine3.24@sha256:116b800c3754b440ee0aa3ed2f20f5bf3d99a554bfd9adeea09ea8017f6e85f5 AS frontend-build
+FROM node:24.22.3-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54 AS frontend-build
 WORKDIR /src/frontend
-# The pinned upstream image predates the fix; fail the build if the repository
-# cannot provide the fixed package.
-RUN apk add --no-cache 'zlib>=1.4-r0' \
-    && apk info -W /usr/lib/libz.so.1 | grep -Fq 'zlib-1.4-r0'
 COPY --chown=65532:65532 frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY --chown=65532:65532 frontend/ ./
 RUN npm run build
 
-FROM golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS backend-build
+FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS backend-build
 WORKDIR /src
-# Keep build tooling on the fixed package and fail closed if it is unavailable.
-RUN apk add --no-cache 'zlib>=1.4-r0' \
-    && apk info -W /usr/lib/libz.so.1 | grep -Fq 'zlib-1.4-r0'
 COPY --chown=65532:65532 go.mod go.sum ./
 RUN go mod download
 COPY --chown=65532:65532 backend ./backend
