@@ -12,8 +12,6 @@ services:
       GHOSTLINE_ENV: production
       GHOSTLINE_AUTH_MODE: required
       GHOSTLINE_STATIC_DIR: /app/frontend/dist
-      RATE_LIMIT_CLIENT_IP_HEADER: ${RATE_LIMIT_CLIENT_IP_HEADER:-}
-      RATE_LIMIT_TRUSTED_PROXIES: ${RATE_LIMIT_TRUSTED_PROXIES:-}
     ports:
       - "${GHOSTLINE_BIND_ADDRESS:-127.0.0.1}:${GHOSTLINE_PORT:-8080}:8080"
     restart: unless-stopped

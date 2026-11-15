@@ -50,11 +50,15 @@ func registerStaticSite(router *gin.Engine, directory string) error {
 		if filePath == "" {
 			filePath = "index.html"
 		}
+		setStaticSecurityHeaders(c)
 		file, err := root.Open(filePath)
 		if err == nil {
 			info, statErr := file.Stat()
 			_ = file.Close()
 			if statErr == nil && !info.IsDir() {
+				if filePath == "index.html" {
+					c.Header("Cache-Control", "no-cache")
+				}
 				files.ServeHTTP(c.Writer, c.Request)
 				return
 			}
@@ -64,9 +68,16 @@ func registerStaticSite(router *gin.Engine, directory string) error {
 			return
 		}
 
+		c.Header("Cache-Control", "no-cache")
 		http.ServeFile(c.Writer, c.Request, filepath.Join(directory, "index.html"))
 	})
 	return nil
+}
+
+func setStaticSecurityHeaders(c *gin.Context) {
+	c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
+	c.Header("X-Frame-Options", "DENY")
+	c.Header("X-Content-Type-Options", "nosniff")
 }
 
 func validateStaticSite(directory string) error {

@@ -28,14 +28,16 @@ func TestRegisterStaticSiteServesBuildAndKeepsAPIAndAuthPathsOutOfFallback(t *te
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
-		path       string
-		status     int
-		contains   string
-		notContain string
+		path            string
+		status          int
+		contains        string
+		notContain      string
+		cacheControl    string
+		securityHeaders bool
 	}{
-		{path: "/", status: http.StatusOK, contains: "Ghostline"},
+		{path: "/", status: http.StatusOK, contains: "Ghostline", cacheControl: "no-cache", securityHeaders: true},
 		{path: "/assets/app.js", status: http.StatusOK, contains: "window.ghostline"},
-		{path: "/deep/client/route", status: http.StatusOK, contains: "Ghostline"},
+		{path: "/deep/client/route", status: http.StatusOK, contains: "Ghostline", cacheControl: "no-cache", securityHeaders: true},
 		{path: "/assets/missing.js", status: http.StatusNotFound, notContain: "Ghostline"},
 		{path: "/api/not-found", status: http.StatusNotFound, notContain: "Ghostline"},
 		{path: "/auth/not-found", status: http.StatusNotFound, notContain: "Ghostline"},
@@ -51,6 +53,20 @@ func TestRegisterStaticSiteServesBuildAndKeepsAPIAndAuthPathsOutOfFallback(t *te
 			}
 			if test.notContain != "" && strings.Contains(response.Body.String(), test.notContain) {
 				t.Fatalf("body unexpectedly contains %q: %s", test.notContain, response.Body.String())
+			}
+			if test.cacheControl != "" && response.Header().Get("Cache-Control") != test.cacheControl {
+				t.Errorf("Cache-Control = %q, want %q", response.Header().Get("Cache-Control"), test.cacheControl)
+			}
+			if test.securityHeaders {
+				for name, want := range map[string]string{
+					"Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+					"X-Frame-Options":         "DENY",
+					"X-Content-Type-Options":  "nosniff",
+				} {
+					if got := response.Header().Get(name); got != want {
+						t.Errorf("%s = %q, want %q", name, got, want)
+					}
+				}
 			}
 		})
 	}
