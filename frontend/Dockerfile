@@ -1,8 +1,9 @@
-FROM node:22.23.5-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
+FROM node:22.23.5-alpine3.23@sha256:bfaaaafa771b20f6c9cd237f175fa1a4ae3c99b1fe5237cbfac92c472ad44a3c
 LABEL maintainer="Ghostline maintainers"
 WORKDIR /app
-# zlib: ALPINE-CVE-2026-4738 is fixed in 1.4-r0; fail the image build if unavailable.
-RUN apk add --no-cache 'zlib>=1.4-r0'
+# Upgrade the pinned builder's Alpine package before running npm scripts.
+RUN apk add --no-cache 'zlib>=1.4-r0' \
+    && apk version -t "$(apk info -v zlib | sed 's/^zlib-//')" 1.4-r0 | grep -Eq '^(>|=)$'
 COPY --chown=node:node package*.json ./
 RUN chown node:node /app
 USER node

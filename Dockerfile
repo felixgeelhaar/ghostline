@@ -1,16 +1,18 @@
-FROM node:22.23.5-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS frontend-build
+FROM node:22.23.5-alpine3.23@sha256:bfaaaafa771b20f6c9cd237f175fa1a4ae3c99b1fe5237cbfac92c472ad44a3c AS frontend-build
 WORKDIR /src/frontend
-# zlib: ALPINE-CVE-2026-4738 is fixed in 1.4-r0; fail the image build if unavailable.
-RUN apk add --no-cache 'zlib>=1.4-r0'
+# Upgrade the builder's Alpine package; the pinned upstream image predates the fix.
+RUN apk add --no-cache 'zlib>=1.4-r0' \
+    && apk version -t "$(apk info -v zlib | sed 's/^zlib-//')" 1.4-r0 | grep -Eq '^(>|=)$'
 COPY --chown=65532:65532 frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY --chown=65532:65532 frontend/ ./
 RUN npm run build
 
-FROM golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS backend-build
+FROM golang:1.27.4-alpine3.23@sha256:146e3b9c7c1e2ec3d3f5348c8a686151a75e1976e50efac9fc022ebe446a9a82 AS backend-build
 WORKDIR /src
-# zlib: ALPINE-CVE-2026-4738 is fixed in 1.4-r0; fail the image build if unavailable.
-RUN apk add --no-cache 'zlib>=1.4-r0'
+# Upgrade the builder's Alpine package; the pinned upstream image predates the fix.
+RUN apk add --no-cache 'zlib>=1.4-r0' \
+    && apk version -t "$(apk info -v zlib | sed 's/^zlib-//')" 1.4-r0 | grep -Eq '^(>|=)$'
 COPY --chown=65532:65532 go.mod go.sum ./
 RUN go mod download
 COPY --chown=65532:65532 backend ./backend
