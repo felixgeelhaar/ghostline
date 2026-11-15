@@ -66,6 +66,20 @@ describe('structured Qodo review presentation', () => {
     expect(host.querySelector('.qodo-attention')?.textContent).toContain(currentSha.slice(0, 7))
   })
 
+  it('keeps recorded review-run statuses uppercase', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review,
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    expect(host.textContent).toContain('COMPLETED · run-2')
+  })
+
   it('shows review runs even when Qodo omitted their status', async () => {
     host = document.createElement('div')
     document.body.append(host)

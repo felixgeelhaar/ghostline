@@ -64,7 +64,7 @@ function reviewRunStatus(run: { status?: string } | undefined): string {
     </ol>
     <section v-if="review.reviewRuns.length" class="qodo-runs" aria-label="Qodo review runs">
         <h5>RECORDED QODO REVIEW RUNS</h5>
-        <ol><li v-for="run in review.reviewRuns" :key="run.id"><span>{{ reviewRunStatus(run) }} · {{ run.id }}</span><a v-if="run.commitSha && qodoRevisionURL(pullRequestUrl, run.commitSha)" :href="qodoRevisionURL(pullRequestUrl, run.commitSha)" target="_blank" rel="noreferrer">{{ run.commitSha.slice(0, 7) }} ↗</a><span v-else-if="run.commitSha">{{ run.commitSha.slice(0, 7) }} · SOURCE LINK UNAVAILABLE</span><span v-else>REVISION NOT RETURNED</span></li></ol>
+        <ol><li v-for="run in review.reviewRuns" :key="run.id"><span>{{ reviewRunStatus(run).toUpperCase() }} · {{ run.id }}</span><a v-if="run.commitSha && qodoRevisionURL(pullRequestUrl, run.commitSha)" :href="qodoRevisionURL(pullRequestUrl, run.commitSha)" target="_blank" rel="noreferrer">{{ run.commitSha.slice(0, 7) }} ↗</a><span v-else-if="run.commitSha">{{ run.commitSha.slice(0, 7) }} · SOURCE LINK UNAVAILABLE</span><span v-else>REVISION NOT RETURNED</span></li></ol>
     </section>
     <p class="footnote">Statuses and run links are reported by Qodo. Ghostline does not independently verify that a finding was fixed, nor infer causation from commit order.</p>
   </section>
