@@ -24,7 +24,7 @@ npm ci
 npm run dev
 ```
 
-Open the URL printed by Vite. Public GitHub API requests work without a token; set `GITHUB_TOKEN` to increase the unauthenticated rate limit.
+Open the URL printed by Vite. Public pull-request metadata and checks work without a token; set the backend’s `GITHUB_TOKEN` to increase the GitHub API quota. Downloading a published Actions artifact for a Nox report requires a token authorized to read Actions artifacts in the target repository. Without that access, Ghostline reports the Nox evidence as unavailable rather than clean.
 
 ## Request rate limit
 

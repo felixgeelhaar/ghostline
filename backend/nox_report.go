@@ -491,8 +491,13 @@ func noxUnavailableReason(err error) string {
 		return "GitHub’s API rate limit was reached before the Nox report could be loaded. Try again later or configure GITHUB_TOKEN."
 	}
 	var statusErr statusError
-	if errors.As(err, &statusErr) && statusErr.code == http.StatusForbidden {
-		return "GitHub denied access to this Nox workflow artifact."
+	if errors.As(err, &statusErr) {
+		if statusErr.code == http.StatusUnauthorized {
+			return "GitHub requires a server token with Actions read access to download this workflow artifact."
+		}
+		if statusErr.code == http.StatusForbidden {
+			return "GitHub denied access to this Nox workflow artifact."
+		}
 	}
 	return "The Nox report could not be loaded from GitHub. Try again later."
 }

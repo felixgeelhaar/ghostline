@@ -173,6 +173,14 @@ func TestLoadNoxReportRejectsArtifactWithDifferentRevisionProvenance(t *testing.
 	}
 }
 
+func TestNoxUnavailableReasonExplainsMissingActionsReadAccess(t *testing.T) {
+	got := noxUnavailableReason(statusError{code: http.StatusUnauthorized})
+	want := "GitHub requires a server token with Actions read access to download this workflow artifact."
+	if got != want {
+		t.Fatalf("401 reason = %q, want %q", got, want)
+	}
+}
+
 func makeNoxArchive(t *testing.T, sarif string) []byte {
 	t.Helper()
 	var buffer bytes.Buffer
