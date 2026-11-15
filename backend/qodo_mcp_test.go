@@ -229,6 +229,47 @@ func TestQodoReviewClientRejectsNonIntegerResponseID(t *testing.T) {
 	}
 }
 
+func TestMCPResponseIDMatchesRejectsHugeExponentWithoutExpansion(t *testing.T) {
+	if mcpResponseIDMatches(json.RawMessage(`1e1000000000`), 1) {
+		t.Fatal("out-of-range response id matched")
+	}
+	if mcpResponseIDMatches(json.RawMessage(`1e-1000000000`), 0) {
+		t.Fatal("fractional response id matched zero")
+	}
+	if !mcpResponseIDMatches(json.RawMessage(`0e1000000000`), 0) {
+		t.Fatal("zero response id with a large exponent did not match zero")
+	}
+}
+
+func TestJSONNumberAsInt64(t *testing.T) {
+	tests := []struct {
+		name  string
+		raw   string
+		want  int64
+		valid bool
+	}{
+		{name: "integer", raw: "2", want: 2, valid: true},
+		{name: "decimal integer", raw: "2.0", want: 2, valid: true},
+		{name: "negative scale", raw: "20e-1", want: 2, valid: true},
+		{name: "positive scale", raw: "2e1", want: 20, valid: true},
+		{name: "fractional", raw: "2.5"},
+		{name: "fraction below one", raw: "2e-1"},
+		{name: "int64 maximum", raw: "9223372036854775807", want: 9223372036854775807, valid: true},
+		{name: "int64 minimum", raw: "-9223372036854775808", want: -9223372036854775808, valid: true},
+		{name: "int64 overflow", raw: "9223372036854775808"},
+		{name: "leading zero", raw: "02"},
+		{name: "missing exponent", raw: "2e"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, valid := jsonNumberAsInt64(test.raw)
+			if got != test.want || valid != test.valid {
+				t.Fatalf("jsonNumberAsInt64(%q) = (%d, %t), want (%d, %t)", test.raw, got, valid, test.want, test.valid)
+			}
+		})
+	}
+}
+
 func TestMergeQodoReviewDataCombinesDuplicateFindingEvidenceAndRejectsConflicts(t *testing.T) {
 	citation := qodoFindingCitation{Source: "backend/retry.go", Text: "retry()"}
 	first := qodoReviewData{Findings: []qodoManagedFinding{{ID: "f-1", Title: "Guard retries", Evidence: &qodoFindingEvidence{Citations: []qodoFindingCitation{citation}}}}, ReviewRuns: []qodoManagedReviewRun{}}
@@ -854,6 +895,17 @@ func TestDecodeMCPEnvelopeRejectsRepeatedJSONRPCResponseID(t *testing.T) {
 	payload := []byte(`{"jsonrpc":"2.0","id":1,"id":2,"result":{"ok":true}}`)
 	if _, err := decodeMCPEnvelope(payload, "application/json", 2); err == nil {
 		t.Fatal("response with repeated JSON-RPC ids was accepted")
+	}
+}
+
+func TestDecodeMCPEnvelopePreservesLargeValidMetadataNumbers(t *testing.T) {
+	payload := []byte(`{"jsonrpc":"2.0","id":2,"result":{"citation":{"metadata":{"value":1e400}}}}`)
+	var envelope mcpEnvelope
+	if err := decodeFirstMCPJSON(payload, &envelope); err != nil {
+		t.Fatalf("valid metadata number was rejected: %v", err)
+	}
+	if !strings.Contains(string(envelope.Result), `1e400`) {
+		t.Fatalf("result metadata number was changed: %s", envelope.Result)
 	}
 }
 

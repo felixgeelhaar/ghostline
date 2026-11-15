@@ -9,11 +9,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/big"
 	"mime"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -922,19 +922,135 @@ func decodeFirstMCPJSON(data []byte, envelope *mcpEnvelope) error {
 }
 
 func mcpResponseIDMatches(encoded json.RawMessage, expectedID int64) bool {
-	var number json.Number
-	if err := json.Unmarshal(encoded, &number); err != nil {
-		return false
+	value, ok := jsonNumberAsInt64(string(encoded))
+	return ok && value == expectedID
+}
+
+func jsonNumberAsInt64(number string) (int64, bool) {
+	if len(number) == 0 {
+		return 0, false
 	}
-	value, ok := new(big.Rat).SetString(number.String())
-	if !ok || value.Denom().Cmp(big.NewInt(1)) != 0 || !value.Num().IsInt64() {
-		return false
+	index := 0
+	negative := false
+	if number[index] == '-' {
+		negative = true
+		index++
+		if index == len(number) {
+			return 0, false
+		}
 	}
-	return value.Num().Int64() == expectedID
+
+	integerStart := index
+	if number[index] == '0' {
+		index++
+		if index < len(number) && number[index] >= '0' && number[index] <= '9' {
+			return 0, false
+		}
+	} else if number[index] >= '1' && number[index] <= '9' {
+		for index < len(number) && number[index] >= '0' && number[index] <= '9' {
+			index++
+		}
+	} else {
+		return 0, false
+	}
+	integerEnd := index
+
+	fractionStart, fractionEnd := index, index
+	if index < len(number) && number[index] == '.' {
+		index++
+		fractionStart = index
+		for index < len(number) && number[index] >= '0' && number[index] <= '9' {
+			index++
+		}
+		fractionEnd = index
+		if fractionStart == fractionEnd {
+			return 0, false
+		}
+	}
+
+	exponentSign := int64(1)
+	var exponent int64
+	if index < len(number) && (number[index] == 'e' || number[index] == 'E') {
+		index++
+		if index < len(number) && (number[index] == '+' || number[index] == '-') {
+			if number[index] == '-' {
+				exponentSign = -1
+			}
+			index++
+		}
+		exponentStart := index
+		limit := int64(len(number)) + 20
+		for index < len(number) && number[index] >= '0' && number[index] <= '9' {
+			digit := int64(number[index] - '0')
+			if exponent <= (limit-digit)/10 {
+				exponent = exponent*10 + digit
+			} else {
+				exponent = limit
+			}
+			index++
+		}
+		if index == exponentStart {
+			return 0, false
+		}
+	}
+	if index != len(number) {
+		return 0, false
+	}
+
+	digits := number[integerStart:integerEnd] + number[fractionStart:fractionEnd]
+	allZero := true
+	for i := 0; i < len(digits); i++ {
+		if digits[i] != '0' {
+			allZero = false
+			break
+		}
+	}
+	if allZero {
+		return 0, true
+	}
+
+	if exponentSign < 0 {
+		exponent = -exponent
+	}
+	scale := exponent - int64(fractionEnd-fractionStart)
+	integerDigits := digits
+	if scale < 0 {
+		remove := -scale
+		if remove > int64(len(integerDigits)) {
+			return 0, false
+		}
+		for i := len(integerDigits) - int(remove); i < len(integerDigits); i++ {
+			if integerDigits[i] != '0' {
+				return 0, false
+			}
+		}
+		integerDigits = integerDigits[:len(integerDigits)-int(remove)]
+	} else if scale > 0 {
+		if scale > 19 {
+			return 0, false
+		}
+		integerDigits += strings.Repeat("0", int(scale))
+	}
+	integerDigits = strings.TrimLeft(integerDigits, "0")
+	if len(integerDigits) == 0 {
+		return 0, true
+	}
+	if len(integerDigits) > 19 {
+		return 0, false
+	}
+	if negative {
+		integerDigits = "-" + integerDigits
+	}
+	value, err := strconv.ParseInt(integerDigits, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 func rejectDuplicateJSONKeys(payload []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
 	if err := consumeJSONValue(decoder); err != nil {
 		return err
 	}
