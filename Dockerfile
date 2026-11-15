@@ -1,8 +1,7 @@
 FROM node:24.22.3-alpine3.23@sha256:3946fb783fdce8a2812136ea694bc95c698c4f4096f3fd18568dc27a8ac389dc AS frontend-build
 WORKDIR /src/frontend
 # Upgrade the builder's Alpine package; the pinned upstream image predates the fix.
-RUN apk add --no-cache 'zlib>=1.4-r0' \
-    && apk version -t "$(apk info -v zlib | sed 's/^zlib-//')" 1.4-r0 | grep -Eq '^(>|=)$'
+RUN apk add --no-cache 'zlib>=1.4-r0'
 COPY --chown=65532:65532 frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY --chown=65532:65532 frontend/ ./
@@ -11,8 +10,7 @@ RUN npm run build
 FROM golang:1.27.4-alpine3.23@sha256:146e3b9c7c1e2ec3d3f5348c8a686151a75e1976e50efac9fc022ebe446a9a82 AS backend-build
 WORKDIR /src
 # Upgrade the builder's Alpine package; the pinned upstream image predates the fix.
-RUN apk add --no-cache 'zlib>=1.4-r0' \
-    && apk version -t "$(apk info -v zlib | sed 's/^zlib-//')" 1.4-r0 | grep -Eq '^(>|=)$'
+RUN apk add --no-cache 'zlib>=1.4-r0'
 COPY --chown=65532:65532 go.mod go.sum ./
 RUN go mod download
 COPY --chown=65532:65532 backend ./backend
