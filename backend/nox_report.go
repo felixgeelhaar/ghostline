@@ -26,7 +26,6 @@ const (
 	noxReportUnavailable = "unavailable"
 	maxNoxArtifactBytes  = 10 << 20
 	maxNoxSARIFBytes     = 4 << 20
-	maxNoxFindings       = 100
 	noxPageSize          = 100
 	maxNoxPages          = 10
 	maxNoxGitHubRequests = 32
@@ -71,6 +70,7 @@ type noxReport struct {
 	RunID           int64        `json:"runId,omitempty"`
 	RunName         string       `json:"runName,omitempty"`
 	RunConclusion   string       `json:"runConclusion,omitempty"`
+	ScanSuccessful  *bool        `json:"scanSuccessful,omitempty"`
 	RunURL          string       `json:"runUrl,omitempty"`
 	ArtifactID      int64        `json:"artifactId,omitempty"`
 	ArtifactURL     string       `json:"artifactUrl,omitempty"`
@@ -169,6 +169,9 @@ type sarifRun struct {
 			Rules []sarifRule `json:"rules"`
 		} `json:"driver"`
 	} `json:"tool"`
+	Invocations []struct {
+		ExecutionSuccessful *bool `json:"executionSuccessful"`
+	} `json:"invocations"`
 	Results *[]sarifResult `json:"results"`
 }
 
@@ -510,12 +513,19 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 		return noxReport{}, errors.New("unsupported or empty SARIF log")
 	}
 	report := noxReport{Availability: noxReportAvailable, RevisionSHA: sha, RunID: runID, RunURL: safeURL(runURL), CreatedAt: createdAt, ExpiresAt: expiresAt, Findings: []noxFinding{}}
+	var findings []domain.NoxFinding
 	for _, run := range log.Runs {
 		if !domain.IsNoxScannerName(run.Tool.Driver.Name) {
 			return noxReport{}, errors.New("artifact contains a report from a different scanner")
 		}
 		if run.Results == nil {
 			return noxReport{}, errors.New("Nox SARIF run has no results array")
+		}
+		for _, invocation := range run.Invocations {
+			if invocation.ExecutionSuccessful != nil {
+				scanSuccessful := *invocation.ExecutionSuccessful
+				report.ScanSuccessful = &scanSuccessful
+			}
 		}
 		ruleByID := indexSARIFrules(run.Tool.Driver.Rules)
 		for _, result := range *run.Results {
@@ -534,21 +544,19 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 			if !include {
 				continue
 			}
-			report.TotalCount++
-			if finding.Suppressed {
-				report.SuppressedCount++
-			} else {
-				report.ActiveCount++
-			}
-			if len(report.Findings) >= maxNoxFindings {
-				report.Truncated = true
-				continue
-			}
-			report.Findings = append(report.Findings, noxFindingFromDomain(finding))
+			findings = append(findings, finding)
 		}
 	}
 	if len(log.Runs) == 0 {
 		return noxReport{}, errors.New("SARIF contains no runs")
+	}
+	summary := domain.SummarizeNoxFindings(findings)
+	report.TotalCount = summary.TotalCount
+	report.ActiveCount = summary.ActiveCount
+	report.SuppressedCount = summary.SuppressedCount
+	report.Truncated = summary.Truncated
+	for _, finding := range summary.Findings {
+		report.Findings = append(report.Findings, noxFindingFromDomain(finding))
 	}
 	return report, nil
 }

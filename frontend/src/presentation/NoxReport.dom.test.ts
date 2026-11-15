@@ -26,9 +26,10 @@ const pr: PullRequest = {
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] }, referencedIssues: { availability: 'available', items: [] },
 }
 
-function report(revisionSha: string, count = 0, runConclusion = 'success'): NoxReport {
+function report(revisionSha: string, count = 0, runConclusion = 'success', scanSuccessful?: boolean): NoxReport {
   return {
     availability: 'available', revisionSha, runId: 12, runName: 'Nox Security', runConclusion,
+    ...(scanSuccessful === undefined ? {} : { scanSuccessful }),
     runUrl: 'https://github.com/acme/app/actions/runs/12', artifactId: 3, artifactUrl: 'https://github.com/acme/app/actions/runs/12',
     artifactDigest: 'sha256:abc', createdAt: '2026-11-15T13:58:17Z', expiresAt: '2026-11-22T13:58:16Z',
     totalCount: count, activeCount: count, suppressedCount: 0, truncated: false,
@@ -76,10 +77,17 @@ describe('revision-linked Nox report', () => {
   })
 
   it('does not show a clean headline when the scan did not succeed', async () => {
-    vi.mocked(fetchNoxReport).mockResolvedValue(report(headSha, 0, 'failure'))
+    vi.mocked(fetchNoxReport).mockResolvedValue(report(headSha, 0, 'failure', false))
     await importPR()
     await vi.waitFor(() => expect(host!.querySelector('.nox-summary strong')?.textContent).toContain('results may be incomplete'))
     expect(host!.querySelector('.nox-summary strong')?.textContent).not.toContain('No security findings reported')
+  })
+
+  it('explains when Nox completed but its workflow gate failed', async () => {
+    vi.mocked(fetchNoxReport).mockResolvedValue(report(headSha, 0, 'failure', true))
+    await importPR()
+    await vi.waitFor(() => expect(host!.querySelector('.nox-summary strong')?.textContent).toContain('scan completed; workflow failed'))
+    expect(host!.querySelector('.nox-summary strong')?.textContent).not.toContain('results may be incomplete')
   })
 
   it('shows suppressed reports and explains suppression is not a repair', async () => {

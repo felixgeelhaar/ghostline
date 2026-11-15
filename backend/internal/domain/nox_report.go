@@ -9,6 +9,7 @@ import (
 
 const NoxSecurityWorkflowPath = ".github/workflows/nox.yml"
 const MaxNoxSuppressionsPerFinding = 20
+const MaxNoxFindings = 100
 
 // NoxSuppression preserves one source-provided SARIF suppression record.
 type NoxSuppression struct {
@@ -155,6 +156,20 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 	if finding.Title == "" {
 		finding.Title = BoundedNoxText(value.RuleName, 1000)
 	}
+	for _, suppression := range value.Suppressions {
+		if suppression.Status != "accepted" {
+			continue
+		}
+		if finding.SuppressionKind == "" {
+			finding.SuppressionKind = BoundedNoxText(suppression.Kind, 100)
+		}
+		if finding.SuppressionJustification == "" {
+			finding.SuppressionJustification = BoundedNoxText(suppression.Justification, 1000)
+		}
+		if finding.SuppressionKind != "" && finding.SuppressionJustification != "" {
+			break
+		}
+	}
 	if len(value.Suppressions) > MaxNoxSuppressionsPerFinding {
 		value.Suppressions = value.Suppressions[:MaxNoxSuppressionsPerFinding]
 	}
@@ -164,10 +179,6 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 			Status: BoundedNoxText(suppression.Status, 100), Kind: BoundedNoxText(suppression.Kind, 100),
 			Justification: BoundedNoxText(suppression.Justification, 1000),
 		})
-		if finding.SuppressionKind == "" && suppression.Status == "accepted" {
-			finding.SuppressionKind = BoundedNoxText(suppression.Kind, 100)
-			finding.SuppressionJustification = BoundedNoxText(suppression.Justification, 1000)
-		}
 	}
 	if finding.Message == "" {
 		finding.Message = BoundedNoxText(value.Markdown, 2000)
@@ -188,6 +199,25 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 		}
 	}
 	return finding, true
+}
+
+// SummarizeNoxFindings keeps the visible result list bounded while preserving
+// exact report counts and suppression classifications from every finding.
+func SummarizeNoxFindings(findings []NoxFinding) NoxReport {
+	report := NoxReport{Findings: make([]NoxFinding, 0, min(len(findings), MaxNoxFindings))}
+	for _, finding := range findings {
+		report.TotalCount++
+		if finding.Suppressed {
+			report.SuppressedCount++
+		} else {
+			report.ActiveCount++
+		}
+		if len(report.Findings) < MaxNoxFindings {
+			report.Findings = append(report.Findings, finding)
+		}
+	}
+	report.Truncated = report.TotalCount > len(report.Findings)
+	return report
 }
 
 // HasAcceptedNoxSuppression reports whether SARIF records an accepted suppression.

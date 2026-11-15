@@ -76,6 +76,33 @@ func TestParseNoxFindingCapsSuppressionEvidenceAndMarksTruncation(t *testing.T) 
 	}
 }
 
+func TestParseNoxFindingPreservesAcceptedSuppressionRationaleAfterDisplayLimit(t *testing.T) {
+	suppressions := make([]NoxSuppression, MaxNoxSuppressionsPerFinding+1)
+	for index := range suppressions {
+		suppressions[index] = NoxSuppression{Status: "underReview", Kind: "external"}
+	}
+	suppressions[len(suppressions)-1] = NoxSuppression{Status: "accepted", Kind: "external", Justification: "Approved baseline"}
+
+	finding, include := ParseNoxFinding(NoxSARIFFinding{RuleID: "SEC-1", Suppressions: suppressions})
+	if !include || !finding.Suppressed || finding.SuppressionKind != "external" || finding.SuppressionJustification != "Approved baseline" {
+		t.Fatalf("late accepted suppression rationale was lost: %+v, include=%v", finding, include)
+	}
+	if len(finding.Suppressions) != MaxNoxSuppressionsPerFinding || !finding.SuppressionsTruncated {
+		t.Fatalf("suppression details should remain bounded: count=%d truncated=%v", len(finding.Suppressions), finding.SuppressionsTruncated)
+	}
+}
+
+func TestSummarizeNoxFindingsOwnsCountsAndDisplayLimit(t *testing.T) {
+	findings := make([]NoxFinding, MaxNoxFindings+1)
+	for index := range findings {
+		findings[index] = NoxFinding{Suppressed: index%2 == 0}
+	}
+	report := SummarizeNoxFindings(findings)
+	if len(report.Findings) != MaxNoxFindings || report.TotalCount != MaxNoxFindings+1 || report.ActiveCount != MaxNoxFindings/2 || report.SuppressedCount != MaxNoxFindings/2+1 || !report.Truncated {
+		t.Fatalf("unexpected summary: %+v", report)
+	}
+}
+
 func TestNoxWorkflowRunMustMatchTheRepositoryWorkflowAndRevision(t *testing.T) {
 	for name, input := range map[string]struct {
 		path, event, runSHA, requestedSHA string

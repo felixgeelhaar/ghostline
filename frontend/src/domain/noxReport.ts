@@ -31,6 +31,7 @@ export const NoxReportSchema = z.discriminatedUnion('availability', [
     runId: z.number().int().positive(),
     runName: z.string(),
     runConclusion: z.string(),
+    scanSuccessful: z.boolean().optional(),
     runUrl: webURL,
     artifactId: z.number().int().positive(),
     artifactUrl: webURL,
@@ -50,6 +51,7 @@ export const NoxReportSchema = z.discriminatedUnion('availability', [
     runId: z.number().int().positive().optional(),
     runName: z.string().optional(),
     runConclusion: z.string().optional(),
+    scanSuccessful: z.boolean().optional(),
     runUrl: webURL.optional(),
     artifactId: z.number().int().positive().optional(),
     artifactUrl: webURL.optional(),
@@ -78,22 +80,29 @@ export function noxReportNeedsAttention(report: NoxReport): boolean {
     || report.findings.length > 0
     || report.suppressedCount > 0
     || report.runConclusion !== 'success'
+    || report.scanSuccessful === false
+}
+
+function scanStatusSuffix(report: Extract<NoxReport, { availability: 'available' }>): string {
+  if (report.scanSuccessful === false) return 'scan did not complete successfully'
+  if (report.runConclusion !== 'success' && report.scanSuccessful === true) return 'scan completed; workflow failed'
+  if (report.runConclusion !== 'success' && report.scanSuccessful === undefined) return 'workflow failed; scan completeness unknown'
+  return ''
 }
 
 export function noxReportHeadline(report: NoxReport): string {
   if (report.availability === 'unavailable') return 'Nox report unavailable'
+  const status = scanStatusSuffix(report)
 
   if (report.activeCount === 0 && report.suppressedCount > 0) {
     const suppressed = `${report.suppressedCount} suppressed result${report.suppressedCount === 1 ? '' : 's'}`
-    return report.runConclusion === 'success'
-      ? `No active findings · ${suppressed}`
-      : `No active findings · ${suppressed} · scan did not complete successfully`
+    return [`No active findings · ${suppressed}`, status].filter(Boolean).join(' · ')
   }
 
   if (report.totalCount === 0) {
-    return report.runConclusion === 'success'
-      ? 'No security findings reported'
-      : 'Scan did not complete successfully · results may be incomplete'
+    if (status === 'scan did not complete successfully') return 'Scan did not complete successfully · results may be incomplete'
+    if (status === 'workflow failed; scan completeness unknown') return 'Workflow failed · scan completeness unknown'
+    return ['No security findings reported', status].filter(Boolean).join(' · ')
   }
 
   const active = `${report.activeCount} active security finding${report.activeCount === 1 ? '' : 's'} reported`
@@ -101,5 +110,5 @@ export function noxReportHeadline(report: NoxReport): string {
     ? ` · ${report.suppressedCount} suppressed result${report.suppressedCount === 1 ? '' : 's'}`
     : ''
   const count = `${active}${suppressed}`
-  return report.runConclusion === 'success' ? count : `${count} · scan did not complete successfully`
+  return [count, status].filter(Boolean).join(' · ')
 }

@@ -33,9 +33,13 @@ describe('Nox report evidence schema', () => {
 
   it('does not describe an unsuccessful scan with no findings as clean', () => {
     const failed = NoxReportSchema.parse({ ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [], runConclusion: 'failure' })
-    expect(noxReportHeadline(failed)).toBe('Scan did not complete successfully · results may be incomplete')
+    expect(noxReportHeadline(failed)).toBe('Workflow failed · scan completeness unknown')
     expect(noxReportHeadline(NoxReportSchema.parse({ ...valid, totalCount: 2, activeCount: 2, findings: [valid.findings[0], { ...valid.findings[0], ruleId: 'SEC-2' }], runConclusion: 'failure' })))
-      .toBe('2 active security findings reported · scan did not complete successfully')
+      .toBe('2 active security findings reported · workflow failed; scan completeness unknown')
+    expect(noxReportHeadline(NoxReportSchema.parse({ ...failed, scanSuccessful: true })))
+      .toBe('No security findings reported · scan completed; workflow failed')
+    expect(noxReportHeadline(NoxReportSchema.parse({ ...failed, scanSuccessful: false })))
+      .toBe('Scan did not complete successfully · results may be incomplete')
     expect(noxReportHeadline(NoxReportSchema.parse({ ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [] })))
       .toBe('No security findings reported')
     expect(noxReportHeadline(NoxReportSchema.parse({ availability: 'unavailable', revisionSha: sha, reason: 'Artifact expired', totalCount: 0, activeCount: 0, suppressedCount: 0, truncated: false, findings: [] })))

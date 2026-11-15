@@ -32,6 +32,36 @@ func TestParseNoxSARIFBindsFindingsToReportRevision(t *testing.T) {
 	}
 }
 
+func TestParseNoxSARIFPreservesScannerExecutionStatus(t *testing.T) {
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	for _, test := range []struct {
+		name       string
+		invocation string
+		want       *bool
+	}{
+		{name: "completed", invocation: `"invocations":[{"executionSuccessful":true}]`, want: boolPointer(true)},
+		{name: "incomplete", invocation: `"invocations":[{"executionSuccessful":false}]`, want: boolPointer(false)},
+		{name: "unknown when omitted"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			invocation := ""
+			if test.invocation != "" {
+				invocation = "," + test.invocation
+			}
+			data := `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}}` + invocation + `,"results":[]}]}`
+			report, err := parseNoxSARIF([]byte(data), sha, 1, "https://github.com/acme/app/actions/runs/1", "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.want == nil && report.ScanSuccessful != nil || test.want != nil && (report.ScanSuccessful == nil || *report.ScanSuccessful != *test.want) {
+				t.Fatalf("scan status = %v, want %v", report.ScanSuccessful, test.want)
+			}
+		})
+	}
+}
+
+func boolPointer(value bool) *bool { return &value }
+
 func TestParseNoxSARIFFindsRuleMetadataWhenRuleIndexIsOmitted(t *testing.T) {
 	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	data := []byte(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox","rules":[{"id":"SEC-002","name":"Unsafe configuration","shortDescription":{"text":"Review exposed configuration"},"properties":{"severity":"critical"}}]}},"results":[{"ruleId":"SEC-002","level":"warning","message":{"text":"A configuration value is exposed."}}]}]}`)
@@ -204,7 +234,7 @@ func TestParseNoxSARIFMarksFindingsTruncatedAtDisplayLimit(t *testing.T) {
 	const sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	var data strings.Builder
 	data.WriteString(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[`)
-	for index := 0; index <= maxNoxFindings; index++ {
+	for index := 0; index <= domain.MaxNoxFindings; index++ {
 		if index > 0 {
 			data.WriteByte(',')
 		}
@@ -216,7 +246,7 @@ func TestParseNoxSARIFMarksFindingsTruncatedAtDisplayLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Findings) != maxNoxFindings || report.TotalCount != maxNoxFindings+1 || report.ActiveCount != maxNoxFindings+1 || report.SuppressedCount != 0 || !report.Truncated {
+	if len(report.Findings) != domain.MaxNoxFindings || report.TotalCount != domain.MaxNoxFindings+1 || report.ActiveCount != domain.MaxNoxFindings+1 || report.SuppressedCount != 0 || !report.Truncated {
 		t.Fatalf("report limit should be visible while totals retain every result: %+v", report)
 	}
 }
