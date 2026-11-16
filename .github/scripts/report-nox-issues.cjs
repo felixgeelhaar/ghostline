@@ -159,7 +159,12 @@ function replaceReportSection(body, section) {
 function evidenceSha(body, fingerprint) {
   const escapedFingerprint = fingerprint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const marker = new RegExp(`<!-- nox-fingerprint:${escapedFingerprint} -->([\\s\\S]*?)(?=<!-- nox-fingerprint:|${REPORT_END}|$)`, 'i');
-  const match = (body || '').match(marker);
+  const start = body?.indexOf(REPORT_START) ?? -1;
+  const end = body?.indexOf(REPORT_END) ?? -1;
+  const source = start >= 0 && end >= start
+    ? body.slice(start + REPORT_START.length, end)
+    : body || '';
+  const match = source.match(marker);
   return match?.[1]?.match(/\*\*Source revision:\*\*\s*\[[^\]]*\]\([^\s)]*\/commit\/([a-f\d]{7,64})\)/i)?.[1];
 }
 
