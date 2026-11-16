@@ -11,10 +11,10 @@ flowchart TD
     B --> C[Check ticket readiness, clean base, baseline, and criterion checks]
     C --> D[Write a focused failing test]
     D --> E[Implement within domain, application, and edge boundaries]
-    E --> F[Run focused tests, then required Go and frontend checks]
+    E --> F[Run focused tests, Go checks, frontend checks, and Nox]
     F --> G[Review uncommitted changes with Qodo and ticket context]
     G --> H{Confirmed High or Medium finding?}
-    H -- Yes --> VL{Will another local cycle make progress?}
+    H -- Yes --> VL{Has the same confirmed finding recurred after one focused repair?}
     VL -- Yes --> I[Fix with a focused test or direct check]
     VL -- No --> W[Stop and ask engineer for a decision]
     I --> F
@@ -27,7 +27,7 @@ flowchart TD
     Q --> L
     N -- Yes --> R{Review and checks cover latest head?}
     M --> O{Confirmed High or Medium finding?}
-    O -- Yes --> VP{Will another PR review cycle make progress?}
+    O -- Yes --> VP{Has the same confirmed finding recurred after one focused repair?}
     VP -- Yes --> I2[Fix with a focused regression test]
     VP -- No --> W
     I2 --> P2[Run local checks and Warden gates]
@@ -57,16 +57,23 @@ flowchart TD
   and Medium findings (including Medium Bugs) with a direct test or check; flag
   each Low for the engineer. For disagreements, record source, reproduction,
   or test evidence and get a human decision.
+- Include the repository's tracked-file Nox scan in local verification, and require
+  the hosted Nox check on the PR head alongside Go, frontend, and Warden gates.
+  Name the revision each result covers; a pass on an earlier head does not
+  verify a later head.
 - Rerun checks after changes and request a new review. A review of an older head,
   an incomplete review, or a failed required check does not pass the gate.
-- If a fix-and-review cycle stops making progress, stop and report the remaining
-  evidence and decision needed. Agents do not merge; the engineer makes that
-  decision after the latest head is reviewed and verified.
+- Stop for an engineer if the same confirmed High or Medium finding remains
+  after one focused repair attempt, if a required check cannot be made to pass,
+  or if evidence is insufficient to resolve a disagreement. Report the finding,
+  attempted repair, revisions reviewed, and decision needed. Agents do not merge;
+  the engineer decides after the latest head is reviewed and verified.
 
 The repository's current commands and Warden gate are listed in
-[`AGENTS.md`](../AGENTS.md). A screenshot is required in the delivery when a
-feature changes the running UI; this document-only change has no changed UI to
-capture.
+[`AGENTS.md`](../AGENTS.md). For every release, capture the actual release
+candidate in working software and include screenshot evidence in the release
+notes or delivery. A feature delivery also includes a screenshot of its changed
+UI; a documentation-only change has no changed UI to capture.
 
 ## Walk-through against a real ticket
 
@@ -77,20 +84,29 @@ earlier success or failure settled last. The ticket linked the project rules
 and asked for TDD, Qodo review, and no merge by the agent.
 
 Its implementation PR, [#44](https://github.com/felixgeelhaar/ghostline/pull/44),
-closed the issue and recorded:
+closed the issue. The PR record was checked on 2026-11-16 and identifies
+`ec64bb18acf0129c96cfda19762f568109cb2276` as its head revision. The PR body
+records:
 
 - DOM tests for an earlier success and failure settling last, plus an invalid
   latest import.
-- Warden pre-commit and pre-push checks, Docker Compose startup, and an
-  attended Chrome check of the changed behavior.
-- A local full Qodo review of the current diff with no findings.
+- Warden pre-commit and pre-push checks, including Go tests, `go vet`, frontend
+  tests/build, and Nox, reported as passing on
+  `ec64bb18acf0129c96cfda19762f568109cb2276`; Docker Compose startup and an
+  attended Chrome check of the changed behavior (reported in the PR body, with
+  no separate run log attached).
+- A local full Qodo review of the current diff with no findings, reported in
+  the PR body for that change. The record does not include a separate Qodo
+  review artifact or reviewed SHA.
 - A screenshot of the running app showing the latest import still displayed
-  after the slower response settled.
-- A successful `warden/gate` status on PR head
+  after the slower response settled. The image is linked from the PR body at
+  `docs/evidence/latest-import-race.jpg` in that exact commit.
+- A successful `warden/gate` status on
   `ec64bb18acf0129c96cfda19762f568109cb2276`; the PR is merged.
 
-That record exercises ticket criteria, race-test coverage, local review,
-quality gates, real UI verification, evidence capture, and a human merge. It
+The issue and PR were also checked in GitHub on 2026-11-16. That record
+exercises ticket criteria, race-test coverage, local review, quality gates,
+real UI verification, evidence capture, and a human merge. It
 does **not** show a submitted GitHub PR review from Qodo: GitHub has no formal
 review submission recorded for PR #44. The intended Qodo PR-feedback and
 finding-repair path above is therefore documented but was not exercised by
@@ -99,5 +115,6 @@ claim that the PR received feedback it did not receive.
 
 The available PR record confirms the race tests, but does not show that they
 were observed failing before implementation; it also does not record a
-pre-change baseline or duplicate-work check. Those remain workflow steps to
-capture explicitly on a future run.
+pre-change baseline or duplicate-work check. It records Warden's Nox gate, but
+does not establish a separate hosted Nox result. Those remain workflow steps
+and evidence to capture explicitly on a future run.
