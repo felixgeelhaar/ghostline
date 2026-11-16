@@ -199,6 +199,23 @@ test('does not replace issue evidence with a divergent revision that happens to 
   assert.match(issue.body, new RegExp(`commit/${currentSha}`));
 });
 
+test('uses the managed revision after upgrading a legacy Nox issue', async () => {
+  const fingerprint = 'a'.repeat(64);
+  const legacySha = 'b'.repeat(40);
+  const firstNewSha = 'c'.repeat(40);
+  const secondNewSha = 'd'.repeat(40);
+  const finding = { RuleID: 'RULE-1', Severity: 'high', Message: 'finding', Fingerprint: fingerprint, Location: { FilePath: 'a.go' } };
+  const issue = { number: 10, state: 'open', title: 'Nox RULE-1 high: finding', labels: [{ name: 'nox-finding' }], body: issueBody({ fingerprint, ruleID: 'RULE-1', severity: 'high', message: 'finding', locations: [{ file: 'a.go' }] }, { repositoryURL: 'https://github.com/owner/repo', sha: legacySha, runURL: 'https://github.com/owner/repo/actions/runs/1' }) };
+  const ancestry = { olderSha: legacySha, newerSha: firstNewSha };
+  const github = fakeGithub([issue], ancestry);
+  await reportNoxIssues({ github, context: context({ sha: firstNewSha }), report: { findings: [finding] }, baseline: { entries: [] } });
+  ancestry.olderSha = firstNewSha;
+  ancestry.newerSha = secondNewSha;
+  const result = await reportNoxIssues({ github, context: context({ sha: secondNewSha }), report: { findings: [finding] }, baseline: { entries: [] } });
+  assert.equal(result.updated, 1);
+  assert.match(issue.body, new RegExp(`commit/${secondNewSha}`));
+});
+
 test('reads the source revision field instead of commit links in finding text', async () => {
   const fingerprint = 'd'.repeat(64);
   const olderSha = 'b'.repeat(40);
