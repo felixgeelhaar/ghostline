@@ -15,8 +15,8 @@ flowchart TD
     F --> G[Review uncommitted changes with Qodo and ticket context]
     G --> H{Confirmed High or Medium finding?}
     H -- Yes --> VL{Has the same confirmed finding recurred after one focused repair?}
-    VL -- Yes --> I[Fix with a focused test or direct check]
-    VL -- No --> W[Stop and ask engineer for a decision]
+    VL -- Yes --> W[Stop and ask engineer for a decision]
+    VL -- No --> I[Fix with a focused test or direct check]
     I --> F
     H -- No --> J[Report every Low; support disagreements with evidence]
     J --> K[Open one focused PR; request Qodo review]
@@ -28,8 +28,8 @@ flowchart TD
     N -- Yes --> R{Review and checks cover latest head?}
     M --> O{Confirmed High or Medium finding?}
     O -- Yes --> VP{Has the same confirmed finding recurred after one focused repair?}
-    VP -- Yes --> I2[Fix with a focused regression test]
-    VP -- No --> W
+    VP -- Yes --> W
+    VP -- No --> I2[Fix with a focused regression test]
     I2 --> P2[Run local checks and Warden gates]
     P2 --> K2[Push update to same PR; request fresh Qodo review]
     K2 --> K
