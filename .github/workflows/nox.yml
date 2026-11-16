@@ -8,12 +8,84 @@ on:
 permissions:
   contents: read
   security-events: write
-  pull-requests: write
 
 jobs:
   nox:
-    # Pinned to a reviewed commit: a reusable workflow runs with this repository's
-    # token and the permissions above, so a change to the fleet's branch must not
-    # reach this scan without a reviewed change here. Move the pin deliberately.
-    # ef33ad2 is the head of klarlabs-studio/.github#92 (Nox 1.63.0, `nox ci-gate`).
-    uses: klarlabs-studio/.github/.github/workflows/nox.yml@ef33ad24b9f534fd8bfa5aa2ace0c9b9cbab07eb
+    # Preserve the required branch-protection check name from the former reusable workflow.
+    name: nox / Security (nox)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      security-events: write
+    steps:
+      - name: Check out revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Scan with Nox Marketplace action
+        id: scan
+        uses: nox-hq/nox@6bb8ca8c4da7dc87a0ef6d87d7f3a5d3ec1bc432 # v1.68.0
+        with:
+          path: .
+          format: json,sarif
+          output: nox-results
+          version: 1.68.0
+          # The baseline-aware gate below decides which findings fail CI.
+          fail-on-findings: false
+          # Keep degraded lookup details visible without replacing the gate's policy.
+          fail-on-degraded: false
+          annotate: true
+
+      - name: Upload SARIF to code scanning
+        if: always() && hashFiles('nox-results/results.sarif') != ''
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: nox-results/results.sarif
+
+      - name: Gate on repository baseline
+        if: always()
+        run: nox ci-gate --input nox-results/findings.json --baseline .nox/baseline.json --github
+
+      - name: Upload Nox reports
+        if: always() && hashFiles('nox-results/**') != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nox-results
+          path: nox-results/
+          retention-days: 7
+
+  report-nox-issues:
+    name: nox / Report findings
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.nox.result != 'cancelled'
+    needs: [nox]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: nox-issue-sync-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Check out revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download Nox report
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nox-results
+          path: nox-results
+
+      - name: Create or reopen finding issues
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('node:fs');
+            const { reportNoxIssues } = require('./.github/scripts/report-nox-issues.cjs');
+            const report = JSON.parse(fs.readFileSync('nox-results/findings.json', 'utf8'));
+            const baseline = JSON.parse(fs.readFileSync('.nox/baseline.json', 'utf8'));
+            const counts = await reportNoxIssues({ github, context, report, baseline });
+            core.info(`Nox issue sync: ${JSON.stringify(counts)}`);
