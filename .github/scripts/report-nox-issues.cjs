@@ -1,6 +1,9 @@
 const crypto = require('node:crypto');
 
 const ISSUE_LABEL = 'nox-finding';
+const REPORT_START = '<!-- nox-report:start -->';
+const REPORT_END = '<!-- nox-report:end -->';
+const REPORT_DISCLAIMER = 'These reports record what Nox observed at each linked revision. They are not independent proof of exploitability or claims that findings persist in later revisions.';
 
 function field(value, ...names) {
   for (const name of names) {
@@ -105,6 +108,61 @@ function issueBody(finding, evidence) {
   ].join('\n');
 }
 
+function managedFindingBody(finding, evidence) {
+  const locations = finding.locations
+    .map(({ file, line }) => `- ${escapeIssueText(file)}${line ? `:${line}` : ''}`)
+    .join('\n');
+  return [
+    `<!-- nox-fingerprint:${finding.fingerprint} -->`,
+    `### ${escapeIssueText(finding.ruleID)} · ${escapeIssueText(finding.severity)}`,
+    '',
+    `**Finding:** ${escapeIssueText(finding.message)}`,
+    '',
+    '**Locations:**',
+    locations,
+    '',
+    `**Source revision:** [\`${evidence.sha}\`](${evidence.repositoryURL}/commit/${evidence.sha})  `,
+    `**Nox scan:** [workflow run](${evidence.runURL})`,
+  ].join('\n');
+}
+
+function existingFindingBlocks(body) {
+  const blocks = new Map();
+  const start = body?.indexOf(REPORT_START) ?? -1;
+  const end = body?.indexOf(REPORT_END) ?? -1;
+  if (start < 0 || end < start) return blocks;
+  const fullSection = body.slice(start + REPORT_START.length, end);
+  const disclaimerAt = fullSection.indexOf(REPORT_DISCLAIMER);
+  const section = disclaimerAt >= 0 ? fullSection.slice(0, disclaimerAt) : fullSection;
+  const markers = [...section.matchAll(/<!-- nox-fingerprint:([a-f\d]{32,128}) -->/gi)];
+  for (let index = 0; index < markers.length; index += 1) {
+    const marker = markers[index];
+    const blockEnd = markers[index + 1]?.index ?? section.length;
+    blocks.set(marker[1].toLowerCase(), section.slice(marker.index, blockEnd).trim());
+  }
+  return blocks;
+}
+
+function reportSection(blocks) {
+  return [REPORT_START, '## Nox security findings', '', ...blocks, '',
+    REPORT_DISCLAIMER, REPORT_END].join('\n');
+}
+
+function replaceReportSection(body, section) {
+  const original = typeof body === 'string' ? body : '';
+  const start = original.indexOf(REPORT_START);
+  const end = original.indexOf(REPORT_END);
+  if (start >= 0 && end >= start) return `${original.slice(0, start).trimEnd()}\n\n${section}${original.slice(end + REPORT_END.length)}`.trim();
+  return `${original.trim()}${original.trim() ? '\n\n' : ''}${section}`;
+}
+
+function evidenceSha(body, fingerprint) {
+  const escapedFingerprint = fingerprint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const marker = new RegExp(`<!-- nox-fingerprint:${escapedFingerprint} -->([\\s\\S]*?)(?=<!-- nox-fingerprint:|${REPORT_END}|$)`, 'i');
+  const match = (body || '').match(marker);
+  return match?.[1]?.match(/\*\*Source revision:\*\*\s*\[[^\]]*\]\([^\s)]*\/commit\/([a-f\d]{7,64})\)/i)?.[1];
+}
+
 function issueTitle(finding) {
   const title = `Nox ${plainIssueText(finding.ruleID)} ${plainIssueText(finding.severity)}: ${plainIssueText(finding.message)}`;
   return title.length <= 240 ? title : `${title.slice(0, 237)}...`;
@@ -131,11 +189,18 @@ async function reportNoxIssues({ github, context, report, baseline }) {
   });
   const byFingerprint = new Map();
   const byIssueNumber = new Map();
+  const reporterIssues = new Set();
   for (const issue of issues) {
     if (issue.pull_request) continue;
     byIssueNumber.set(issue.number, issue);
-    const marker = issue.body?.match(/<!-- nox-fingerprint:([a-f\d]{32,128}) -->/i)?.[1];
-    if (marker && !byFingerprint.has(marker.toLowerCase())) byFingerprint.set(marker.toLowerCase(), issue);
+    const hasReporterLabel = (issue.labels || []).some((label) => (typeof label === 'string' ? label : label.name) === ISSUE_LABEL);
+    if (hasReporterLabel) reporterIssues.add(issue.number);
+    if (hasReporterLabel) {
+      for (const match of issue.body?.matchAll(/<!-- nox-fingerprint:([a-f\d]{32,128}) -->/gi) || []) {
+        const fingerprint = match[1].toLowerCase();
+        if (!byFingerprint.has(fingerprint)) byFingerprint.set(fingerprint, issue);
+      }
+    }
   }
 
   const evidence = {
@@ -144,29 +209,56 @@ async function reportNoxIssues({ github, context, report, baseline }) {
     runURL: `${context.serverUrl}/${repository.owner}/${repository.repo}/actions/runs/${context.runId}`,
   };
   const counts = { created: 0, updated: 0, reopened: 0, existing: 0 };
+  const groupedByIssue = new Map();
+  const unlinked = [];
   for (const finding of findings) {
     const existing = byFingerprint.get(finding.fingerprint)
       || byIssueNumber.get(baselineIssues.get(finding.fingerprint));
-    if (existing) {
-      const body = issueBody(finding, evidence);
-      const title = issueTitle(finding);
-      if (existing.state === 'closed') {
-        await github.rest.issues.update({ ...repository, issue_number: existing.number, state: 'open', title, body });
-        counts.reopened += 1;
-      } else if (existing.body !== body || existing.title !== title) {
-        // Keep the issue's displayed evidence bound to the latest observed revision.
-        // GitHub retains the issue edit history for earlier scan snapshots.
-        await github.rest.issues.update({ ...repository, issue_number: existing.number, title, body });
-        counts.updated += 1;
-      } else {
-        counts.existing += 1;
+    if (existing) groupedByIssue.set(existing.number, { issue: existing, findings: [...(groupedByIssue.get(existing.number)?.findings || []), finding] });
+    else unlinked.push(finding);
+  }
+
+  for (const { issue, findings: linkedFindings } of groupedByIssue.values()) {
+    const activeFindings = existingFindingBlocks(issue.body);
+    let staleScan = false;
+    for (const finding of linkedFindings) {
+      const previousSha = evidenceSha(issue.body, finding.fingerprint);
+      if (previousSha && previousSha !== evidence.sha) {
+        const comparison = await github.rest.repos.compareCommitsWithBasehead({ ...repository, basehead: `${previousSha}...${evidence.sha}` });
+        if (comparison.data.status !== 'ahead') {
+          staleScan = true;
+          break;
+        }
       }
+      activeFindings.set(finding.fingerprint, managedFindingBody(finding, evidence));
+    }
+    // An issue can aggregate multiple fingerprints. Skip it as a unit so evidence
+    // for a stale fingerprint is never relabeled with another finding's newer SHA.
+    if (staleScan) {
+      counts.existing += linkedFindings.length;
       continue;
     }
+    const nextBody = replaceReportSection(issue.body, reportSection([...activeFindings.values()]));
+    const title = linkedFindings.length === 1 ? issueTitle(linkedFindings[0]) : issue.title;
+    const nextLabels = reporterIssues.has(issue.number) ? undefined : [...new Set([...(issue.labels || []).map((label) => typeof label === 'string' ? label : label.name), ISSUE_LABEL])];
+    const changes = { title, body: nextBody, ...(nextLabels ? { labels: nextLabels } : {}) };
+    if (issue.state === 'closed') changes.state = 'open';
+    const wasClosed = issue.state === 'closed';
+    const changed = issue.title !== title || issue.body !== nextBody || wasClosed || Boolean(nextLabels);
+    if (changed) {
+      await github.rest.issues.update({ ...repository, issue_number: issue.number, ...changes });
+      if (wasClosed) counts.reopened += 1;
+      else counts.updated += 1;
+      reporterIssues.add(issue.number);
+      for (const finding of linkedFindings) byFingerprint.set(finding.fingerprint, issue);
+    } else counts.existing += linkedFindings.length;
+  }
+
+  for (const finding of unlinked) {
     const created = await github.rest.issues.create({
       ...repository,
       title: issueTitle(finding),
-      body: issueBody(finding, evidence),
+      body: replaceReportSection('', reportSection([managedFindingBody(finding, evidence)])),
       labels: [ISSUE_LABEL],
     });
     byFingerprint.set(finding.fingerprint, created.data);
