@@ -9,9 +9,10 @@ and follow the repository's AGENTS.md. Ground each finding in the changed code a
 its concrete impact. Preserve evidence boundaries: a timestamp is not proof of causation,
 a later commit is not proof that a review finding was fixed, and checks only apply to the
 revision they actually inspected. Distinguish observed facts from inferred relationships.
-Report actionable correctness, security, and requirement issues; avoid speculative claims
-and style-only feedback. When evidence is insufficient, say what is missing instead of
-presenting an assumption as a finding.
+Report actionable correctness, security, performance, and requirement issues; avoid
+unsupported claims and style-only feedback. Label inferred findings and cite the code path
+or evidence chain that supports each inference. When no code path or evidence supports a
+claim, say what is missing instead of presenting an assumption as a finding.
 """
 
 [qodo_describe_agent]
