@@ -29,7 +29,6 @@ func TestValidateQodoReviewSnapshot(t *testing.T) {
 		{"end before start", func(snapshot *QodoReviewSnapshot) { snapshot.Findings[0].EndLine = 11 }},
 		{"run without id", func(snapshot *QodoReviewSnapshot) { snapshot.ReviewRuns[0].ID = "" }},
 		{"run with blank id", func(snapshot *QodoReviewSnapshot) { snapshot.ReviewRuns[0].ID = " \t " }},
-		{"run without status", func(snapshot *QodoReviewSnapshot) { snapshot.ReviewRuns[0].Status = " " }},
 		{"invalid run revision", func(snapshot *QodoReviewSnapshot) { snapshot.ReviewRuns[0].CommitSHA = "short" }},
 	}
 	for _, tt := range tests {
@@ -44,6 +43,16 @@ func TestValidateQodoReviewSnapshot(t *testing.T) {
 				t.Fatal("invalid Qodo snapshot was accepted")
 			}
 		})
+	}
+}
+
+func TestValidateQodoReviewSnapshotAllowsRunWithoutStatus(t *testing.T) {
+	snapshot := QodoReviewSnapshot{
+		Findings:   []QodoReviewFinding{{ID: "finding-1", Title: "Preserve findings"}},
+		ReviewRuns: []QodoReviewRun{{ID: "run-1"}},
+	}
+	if err := ValidateQodoReviewSnapshot(snapshot); err != nil {
+		t.Fatalf("run without source status hid otherwise useful findings: %v", err)
 	}
 }
 
@@ -95,6 +104,19 @@ func TestMergeQodoReviewRunsCombinesMatchingIdentity(t *testing.T) {
 	}
 	if len(merged) != 2 || merged[0].ID != "r-1" || merged[1].ID != "r-2" || merged[0].CommitSHA != strings.Repeat("b", 40) {
 		t.Fatalf("merged runs = %+v", merged)
+	}
+}
+
+func TestMergeQodoReviewRunsTreatsWhitespaceStatusAsMissing(t *testing.T) {
+	merged, err := MergeQodoReviewRuns([]QodoReviewRun{
+		{ID: "r-1", Status: " \t "},
+		{ID: "r-1", Status: "completed", CommitSHA: strings.Repeat("b", 40)},
+	})
+	if err != nil {
+		t.Fatalf("whitespace-only status conflicted with a reported status: %v", err)
+	}
+	if len(merged) != 1 || merged[0].Status != "completed" || merged[0].CommitSHA != strings.Repeat("b", 40) {
+		t.Fatalf("merged run did not preserve the nonblank status and revision: %+v", merged)
 	}
 }
 
