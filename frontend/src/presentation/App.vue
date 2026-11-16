@@ -11,7 +11,7 @@ import { checkOutcome, checkSummaryPreview, headCommitLabel, orderChecks, summar
 import { findRecurringFindings, qodoHeadCoverage, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import type { QodoStructuredReview } from '../domain/qodoReviewSession'
 import type { NoxReport } from '../domain/noxReport'
-import { noxReportHeadline, noxReportNeedsAttention } from '../domain/noxReport'
+import { noxReportCanShowZeroFindingNote, noxReportHeadline, noxReportNeedsAttention } from '../domain/noxReport'
 import { buildFindingTrace } from '../domain/trace'
 import { isSamePullRequest, validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import { GhostlineApiError } from '../application/apiError'
@@ -333,6 +333,7 @@ async function clearTrace() {
   traceTrigger = undefined
 }
 function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
+function optionalDate(value?: string) { return value ? date(value) : 'not reported' }
 </script>
 
 <template>
@@ -392,19 +393,20 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         <template v-else-if="focusedNoxReport?.availability === 'available'">
           <p class="nox-summary" :class="{ warn: noxReportNeedsAttention(focusedNoxReport) }" role="status">
             <strong>{{ noxReportHeadline(focusedNoxReport) }}</strong>
-            <span>Workflow {{ focusedNoxReport.runConclusion || 'status unavailable' }} · {{ focusedNoxReport.runName || 'Nox scan' }} · report from {{ date(focusedNoxReport.createdAt) }} · retained until {{ date(focusedNoxReport.expiresAt) }}</span>
+            <span>Workflow {{ focusedNoxReport.runConclusion || focusedNoxReport.runStatus?.replaceAll('_', ' ') || 'status unavailable' }} · {{ focusedNoxReport.runName || 'Nox scan' }} · report from {{ optionalDate(focusedNoxReport.createdAt) }} · retained until {{ optionalDate(focusedNoxReport.expiresAt) }}</span>
           </p>
-          <p v-if="focusedNoxReport.totalCount === 0" class="checks-note">This is the published Nox report for this exact revision. It is not an independent guarantee that the code is secure.</p>
+          <p v-if="noxReportCanShowZeroFindingNote(focusedNoxReport)" class="checks-note">This is the published Nox report for this exact revision. It is not an independent guarantee that the code is secure.</p>
           <ol v-else class="nox-findings"><li v-for="(finding, index) in focusedNoxReport.findings" :key="`${finding.fingerprint || finding.ruleId}:${index}`" :class="{ suppressed: finding.suppressed }">
             <div class="nox-finding-heading"><strong>{{ finding.title }}</strong><span v-if="finding.suppressed" class="suppression-label">SUPPRESSED BY SOURCE</span><span v-else :class="`severity-${finding.severity}`">{{ finding.severity }}</span></div>
             <p>{{ finding.message }}</p>
             <p v-if="finding.path" class="nox-location">{{ finding.path }}<span v-if="finding.line">:{{ finding.line }}</span></p>
             <p v-if="finding.suppressed" class="nox-suppression">The source marks this result as suppressed; that does not mean it was fixed or verified.</p>
+            <p v-if="finding.suppressionKind || finding.suppressionJustification" class="nox-suppression">Source detail<span v-if="finding.suppressionKind"> · {{ finding.suppressionKind }}</span><span v-if="finding.suppressionJustification"> · {{ finding.suppressionJustification }}</span></p>
             <ul v-if="finding.suppressions.length" class="nox-suppression-details"><li v-for="(suppression, suppressionIndex) in finding.suppressions" :key="suppressionIndex">Suppression status: {{ suppression.status || 'unspecified' }}<span v-if="suppression.kind"> · {{ suppression.kind }}</span><span v-if="suppression.justification"> · {{ suppression.justification }}</span></li></ul>
             <p v-if="finding.suppressionsTruncated" class="checks-note warn">Some suppression records were omitted at the report parsing limit.</p>
           </li></ol>
           <p v-if="focusedNoxReport.truncated" class="checks-note warn" role="status">Showing {{ focusedNoxReport.findings.length }} of {{ focusedNoxReport.totalCount }} report results ({{ focusedNoxReport.activeCount }} active, {{ focusedNoxReport.suppressedCount }} suppressed). Open the source workflow for the full report.</p>
-          <p class="nox-source"><a :href="focusedNoxReport.runUrl" target="_blank" rel="noreferrer">OPEN SOURCE WORKFLOW RUN ↗</a><span> · Report and findings apply to revision {{ focusedNoxReport.revisionSha.slice(0, 7) }}.</span></p>
+          <p class="nox-source"><a v-if="focusedNoxReport.runUrl" :href="focusedNoxReport.runUrl" target="_blank" rel="noreferrer">OPEN SOURCE WORKFLOW RUN ↗</a><span v-else>Source workflow link not reported</span><span> · Report and findings apply to revision {{ focusedNoxReport.revisionSha.slice(0, 7) }}.</span></p>
         </template>
       </section>
 

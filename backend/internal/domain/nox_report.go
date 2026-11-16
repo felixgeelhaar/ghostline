@@ -9,6 +9,7 @@ import (
 
 const NoxSecurityWorkflowPath = ".github/workflows/nox.yml"
 const MaxNoxSuppressionsPerFinding = 20
+const MaxNoxFindings = 100
 
 // NoxSuppression preserves one source-provided SARIF suppression record.
 type NoxSuppression struct {
@@ -47,6 +48,22 @@ func IsNoxScannerName(value string) bool {
 	default:
 		return false
 	}
+}
+
+// IsTrustedNoxWorkflowRevision reports whether the Nox workflow file at the
+// scanned revision is byte-identical to the pull request's trusted base copy.
+func IsTrustedNoxWorkflowRevision(baseBlobSHA, revisionBlobSHA string) bool {
+	return len(baseBlobSHA) == 40 && len(revisionBlobSHA) == 40 &&
+		isHexSHA(baseBlobSHA) && isHexSHA(revisionBlobSHA) && baseBlobSHA == revisionBlobSHA
+}
+
+func isHexSHA(value string) bool {
+	for _, char := range value {
+		if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f' || char >= 'A' && char <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // NoxArtifactCandidate contains only source identity needed to choose a report
@@ -110,6 +127,42 @@ type NoxReport struct {
 	Truncated       bool
 }
 
+// NoxFindingSummary holds bounded display findings and exact totals.
+type NoxFindingSummary struct {
+	Findings        []NoxFinding
+	TotalCount      int
+	ActiveCount     int
+	SuppressedCount int
+	Truncated       bool
+}
+
+// NoxFindingSummaryBuilder counts results incrementally without retaining every finding.
+type NoxFindingSummaryBuilder struct {
+	summary NoxFindingSummary
+}
+
+func NewNoxFindingSummaryBuilder() *NoxFindingSummaryBuilder {
+	return &NoxFindingSummaryBuilder{summary: NoxFindingSummary{Findings: make([]NoxFinding, 0, MaxNoxFindings)}}
+}
+
+func (builder *NoxFindingSummaryBuilder) Add(finding NoxFinding) {
+	builder.summary.TotalCount++
+	if finding.Suppressed {
+		builder.summary.SuppressedCount++
+	} else {
+		builder.summary.ActiveCount++
+	}
+	if len(builder.summary.Findings) < MaxNoxFindings {
+		builder.summary.Findings = append(builder.summary.Findings, finding)
+	} else {
+		builder.summary.Truncated = true
+	}
+}
+
+func (builder *NoxFindingSummaryBuilder) Build() NoxFindingSummary {
+	return builder.summary
+}
+
 // NoxSARIFFinding preserves normalized finding data from SARIF.
 type NoxSARIFFinding struct {
 	RuleID                   string
@@ -155,6 +208,18 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 	if finding.Title == "" {
 		finding.Title = BoundedNoxText(value.RuleName, 1000)
 	}
+	for _, suppression := range value.Suppressions {
+		if suppression.Status != "accepted" || finding.SuppressionKind != "" || finding.SuppressionJustification != "" {
+			continue
+		}
+		kind := BoundedNoxText(suppression.Kind, 100)
+		justification := BoundedNoxText(suppression.Justification, 1000)
+		if kind != "" || justification != "" {
+			finding.SuppressionKind = kind
+			finding.SuppressionJustification = justification
+			break
+		}
+	}
 	if len(value.Suppressions) > MaxNoxSuppressionsPerFinding {
 		value.Suppressions = value.Suppressions[:MaxNoxSuppressionsPerFinding]
 	}
@@ -188,6 +253,17 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 		}
 	}
 	return finding, true
+}
+
+// SummarizeNoxFindings keeps the visible result list bounded while preserving
+// exact report counts and suppression classifications from every finding.
+func SummarizeNoxFindings(findings []NoxFinding) NoxReport {
+	builder := NewNoxFindingSummaryBuilder()
+	for _, finding := range findings {
+		builder.Add(finding)
+	}
+	summary := builder.Build()
+	return NoxReport{Findings: summary.Findings, TotalCount: summary.TotalCount, ActiveCount: summary.ActiveCount, SuppressedCount: summary.SuppressedCount, Truncated: summary.Truncated}
 }
 
 // HasAcceptedNoxSuppression reports whether SARIF records an accepted suppression.

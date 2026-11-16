@@ -70,7 +70,9 @@ type noxReport struct {
 	RevisionSHA     string       `json:"revisionSha"`
 	RunID           int64        `json:"runId,omitempty"`
 	RunName         string       `json:"runName,omitempty"`
+	RunStatus       string       `json:"runStatus,omitempty"`
 	RunConclusion   string       `json:"runConclusion,omitempty"`
+	ScanSuccessful  *bool        `json:"scanSuccessful,omitempty"`
 	RunURL          string       `json:"runUrl,omitempty"`
 	ArtifactID      int64        `json:"artifactId,omitempty"`
 	ArtifactURL     string       `json:"artifactUrl,omitempty"`
@@ -118,18 +120,23 @@ type workflowRunsResponse struct {
 }
 
 type workflowRun struct {
-	ID           int64  `json:"id"`
-	Path         string `json:"path"`
-	Name         string `json:"name"`
-	Event        string `json:"event"`
-	HeadSHA      string `json:"head_sha"`
-	Status       string `json:"status"`
-	Conclusion   string `json:"conclusion"`
-	HTMLURL      string `json:"html_url"`
-	CreatedAt    string `json:"created_at"`
-	PullRequests []struct {
-		Number int `json:"number"`
-	} `json:"pull_requests"`
+	ID           int64                    `json:"id"`
+	Path         string                   `json:"path"`
+	Name         string                   `json:"name"`
+	Event        string                   `json:"event"`
+	HeadSHA      string                   `json:"head_sha"`
+	Status       string                   `json:"status"`
+	Conclusion   string                   `json:"conclusion"`
+	HTMLURL      string                   `json:"html_url"`
+	CreatedAt    string                   `json:"created_at"`
+	PullRequests []workflowRunPullRequest `json:"pull_requests"`
+}
+
+type workflowRunPullRequest struct {
+	Number int `json:"number"`
+	Base   struct {
+		SHA string `json:"sha"`
+	} `json:"base"`
 }
 
 type workflowArtifactsResponse struct {
@@ -169,7 +176,10 @@ type sarifRun struct {
 			Rules []sarifRule `json:"rules"`
 		} `json:"driver"`
 	} `json:"tool"`
-	Results *[]sarifResult `json:"results"`
+	Invocations []struct {
+		ExecutionSuccessful *bool `json:"executionSuccessful"`
+	} `json:"invocations"`
+	Results *json.RawMessage `json:"results"`
 }
 
 type sarifRule struct {
@@ -235,7 +245,6 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		result.Reason = "Security reports are only available for public pull requests."
 		return result
 	}
-
 	if pr.Head.SHA != sha {
 		found, err := pullRequestContainsRevision(ctx, budget, owner, repo, number, sha)
 		if err != nil {
@@ -283,12 +292,34 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		}
 		return result
 	}
+	revisionWorkflowSHA, err := noxWorkflowBlobSHA(ctx, budget, owner, repo, sha)
+	if err != nil {
+		result.Reason = "GitHub could not verify the Nox workflow at the scanned revision."
+		return result
+	}
 
 	var latestExpired *noxArtifactCandidate
 	expiredArtifactFound := false
 	candidateFailureRecorded := false
 	for i := range matchingRuns {
 		run := &matchingRuns[i]
+		// GitHub's workflow-run PR association includes a base SHA, but does not
+		// promise it is immutable historical execution provenance. Do not use it
+		// to claim that the workflow definition was trusted at run time.
+		baseSHA := noxWorkflowRunBaseSHA(*run, number)
+		if fullSHA.MatchString(baseSHA) {
+			baseWorkflowSHA, baseErr := noxWorkflowBlobSHA(ctx, budget, owner, repo, baseSHA)
+			// A mismatch is useful to reject an obviously changed workflow, but
+			// a match is still only corroborating context, not attestation.
+			if baseErr == nil && !domain.IsTrustedNoxWorkflowRevision(baseWorkflowSHA, revisionWorkflowSHA) {
+				result.Reason = "The Nox workflow definition differs from the base revision associated with this run; its report is not trusted."
+				continue
+			}
+			if errors.Is(baseErr, errNoxInspectionLimit) || errors.Is(baseErr, errRateLimit) {
+				result.Reason = noxRequestFailureReason(baseErr)
+				return result
+			}
+		}
 		artifactsForRun := make([]workflowArtifact, 0)
 		for page := 1; page <= maxNoxPages; page++ {
 			var response workflowArtifactsResponse
@@ -348,7 +379,12 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 					}
 					continue
 				}
-				result.Reason = noxRequestFailureReason(err)
+				if result.Reason == "" {
+					result.Reason = noxRequestFailureReason(err)
+				}
+				if canTryOlderNoxArtifact(err) {
+					continue
+				}
 				return result
 			}
 			if reason != "" {
@@ -380,6 +416,15 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 	return result
 }
 
+func noxWorkflowRunBaseSHA(run workflowRun, pullRequestNumber int) string {
+	for _, pullRequest := range run.PullRequests {
+		if pullRequest.Number == pullRequestNumber {
+			return pullRequest.Base.SHA
+		}
+	}
+	return ""
+}
+
 func findWorkflowArtifact(artifacts []workflowArtifact, id int64) workflowArtifact {
 	for _, artifact := range artifacts {
 		if artifact.ID == id {
@@ -389,9 +434,35 @@ func findWorkflowArtifact(artifacts []workflowArtifact, id int64) workflowArtifa
 	return workflowArtifact{}
 }
 
+func canTryOlderNoxArtifact(err error) bool {
+	if errors.Is(err, errRateLimit) || errors.Is(err, errNoxInspectionLimit) {
+		return false
+	}
+	var responseError statusError
+	if errors.As(err, &responseError) {
+		return responseError.code >= http.StatusInternalServerError && responseError.code <= 599
+	}
+	return true
+}
+
+func noxWorkflowBlobSHA(ctx context.Context, budget *noxGitHubRequestBudget, owner, repo, ref string) (string, error) {
+	var content struct {
+		SHA string `json:"sha"`
+	}
+	requestPath := fmt.Sprintf("/repos/%s/%s/contents/%s?ref=%s", url.PathEscape(owner), url.PathEscape(repo), domain.NoxSecurityWorkflowPath, url.QueryEscape(ref))
+	if err := budget.get(ctx, requestPath, &content); err != nil {
+		return "", err
+	}
+	if !fullSHA.MatchString(content.SHA) {
+		return "", errors.New("GitHub did not return a valid Nox workflow blob SHA")
+	}
+	return strings.ToLower(content.SHA), nil
+}
+
 func setNoxArtifactProvenance(report *noxReport, candidate noxArtifactCandidate) {
 	report.RunID = candidate.run.ID
 	report.RunName = candidate.run.Name
+	report.RunStatus = candidate.run.Status
 	report.RunConclusion = candidate.run.Conclusion
 	report.RunURL = safeGitHubWebURL(candidate.run.HTMLURL)
 	report.ArtifactID = candidate.artifact.ID
@@ -429,6 +500,7 @@ func loadNoxArtifact(ctx context.Context, budget *noxGitHubRequestBudget, candid
 		return noxReport{}, "GitHub’s Nox artifact did not contain a valid Nox SARIF report.", nil
 	}
 	parsed.RunName = run.Name
+	parsed.RunStatus = run.Status
 	parsed.RunConclusion = run.Conclusion
 	parsed.ArtifactID = artifact.ID
 	parsed.ArtifactURL = safeGitHubAPIURL(artifact.URL)
@@ -510,6 +582,7 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 		return noxReport{}, errors.New("unsupported or empty SARIF log")
 	}
 	report := noxReport{Availability: noxReportAvailable, RevisionSHA: sha, RunID: runID, RunURL: safeURL(runURL), CreatedAt: createdAt, ExpiresAt: expiresAt, Findings: []noxFinding{}}
+	findingSummary := domain.NewNoxFindingSummaryBuilder()
 	for _, run := range log.Runs {
 		if !domain.IsNoxScannerName(run.Tool.Driver.Name) {
 			return noxReport{}, errors.New("artifact contains a report from a different scanner")
@@ -517,8 +590,23 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 		if run.Results == nil {
 			return noxReport{}, errors.New("Nox SARIF run has no results array")
 		}
+		for _, invocation := range run.Invocations {
+			if invocation.ExecutionSuccessful != nil && (*invocation.ExecutionSuccessful == false || report.ScanSuccessful == nil) {
+				scanSuccessful := *invocation.ExecutionSuccessful
+				report.ScanSuccessful = &scanSuccessful
+			}
+		}
 		ruleByID := indexSARIFrules(run.Tool.Driver.Rules)
-		for _, result := range *run.Results {
+		resultsDecoder := json.NewDecoder(bytes.NewReader(*run.Results))
+		opening, err := resultsDecoder.Token()
+		if err != nil || opening != json.Delim('[') {
+			return noxReport{}, errors.New("Nox SARIF run results are not an array")
+		}
+		for resultsDecoder.More() {
+			var result sarifResult
+			if err := resultsDecoder.Decode(&result); err != nil {
+				return noxReport{}, errors.New("Nox SARIF run contains an invalid result")
+			}
 			rule := sarifRuleForResult(result, run.Tool.Driver.Rules, ruleByID)
 			suppressions := make([]domain.NoxSuppression, 0, min(len(result.Suppressions), domain.MaxNoxSuppressionsPerFinding))
 			for index, suppression := range result.Suppressions {
@@ -537,21 +625,23 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 			if !include {
 				continue
 			}
-			report.TotalCount++
-			if finding.Suppressed {
-				report.SuppressedCount++
-			} else {
-				report.ActiveCount++
-			}
-			if len(report.Findings) >= maxNoxFindings {
-				report.Truncated = true
-				continue
-			}
-			report.Findings = append(report.Findings, noxFindingFromDomain(finding))
+			findingSummary.Add(finding)
+		}
+		closing, err := resultsDecoder.Token()
+		if err != nil || closing != json.Delim(']') {
+			return noxReport{}, errors.New("Nox SARIF run results array is incomplete")
 		}
 	}
 	if len(log.Runs) == 0 {
 		return noxReport{}, errors.New("SARIF contains no runs")
+	}
+	summary := findingSummary.Build()
+	report.TotalCount = summary.TotalCount
+	report.ActiveCount = summary.ActiveCount
+	report.SuppressedCount = summary.SuppressedCount
+	report.Truncated = summary.Truncated
+	for _, finding := range summary.Findings {
+		report.Findings = append(report.Findings, noxFindingFromDomain(finding))
 	}
 	return report, nil
 }

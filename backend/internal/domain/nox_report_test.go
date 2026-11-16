@@ -16,6 +16,18 @@ func TestParseNoxFindingNormalizesSourceAndSeverity(t *testing.T) {
 	}
 }
 
+func TestIsTrustedNoxWorkflowRevisionRequiresExactBaseDefinition(t *testing.T) {
+	const base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if !IsTrustedNoxWorkflowRevision(base, base) {
+		t.Fatal("unchanged workflow should match the trusted base definition")
+	}
+	for _, revision := range []string{"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "", "not-a-blob-sha"} {
+		if IsTrustedNoxWorkflowRevision(base, revision) {
+			t.Errorf("workflow blob %q should not be trusted against base %q", revision, base)
+		}
+	}
+}
+
 func TestParseNoxFindingRejectsUnsafePathsAndPreservesSuppression(t *testing.T) {
 	finding, include := ParseNoxFinding(NoxSARIFFinding{RuleID: "SEC-1", Path: "../../secret", Line: 10})
 	if !include || finding.Path != "" || finding.Line != 0 {
@@ -27,6 +39,31 @@ func TestParseNoxFindingRejectsUnsafePathsAndPreservesSuppression(t *testing.T) 
 	}
 	if len(finding.Suppressions) != 2 || finding.Suppressions[1].Status != "rejected" {
 		t.Fatalf("all suppression source details should be retained: %+v", finding.Suppressions)
+	}
+}
+
+func TestParseNoxFindingDoesNotCombineSuppressionMetadataFromDifferentSources(t *testing.T) {
+	finding, include := ParseNoxFinding(NoxSARIFFinding{
+		RuleID: "SEC-1",
+		Suppressions: []NoxSuppression{
+			{Status: "accepted", Kind: "external"},
+			{Status: "accepted", Justification: "Approved baseline"},
+		},
+	})
+	if !include || !finding.Suppressed {
+		t.Fatalf("accepted source records should still mark the result suppressed: %+v, include=%v", finding, include)
+	}
+	if finding.SuppressionKind != "external" || finding.SuppressionJustification != "" {
+		t.Fatalf("summary should preserve one source record without combining another: %+v", finding)
+	}
+}
+
+func TestParseNoxFindingPreservesOneSidedAcceptedSuppressionDetail(t *testing.T) {
+	finding, include := ParseNoxFinding(NoxSARIFFinding{RuleID: "SEC-1", Suppressions: []NoxSuppression{
+		{Status: "accepted", Justification: "Temporary exception approved"},
+	}})
+	if !include || !finding.Suppressed || finding.SuppressionJustification != "Temporary exception approved" {
+		t.Fatalf("accepted one-sided suppression detail was lost: %+v, include=%v", finding, include)
 	}
 }
 

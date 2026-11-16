@@ -55,6 +55,7 @@ type githubPR struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
 	Base struct {
+		SHA  string `json:"sha"`
 		Repo struct {
 			Name     string `json:"name"`
 			FullName string `json:"full_name"`

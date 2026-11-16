@@ -11,11 +11,37 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/felixgeelhaar/ghostline/backend/internal/domain"
 )
+
+const noxTrustedWorkflowBlobSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+type noxWorkflowTestTransport struct {
+	fallback http.RoundTripper
+}
+
+func (transport noxWorkflowTestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.URL.Path == "/repos/acme/app/contents/.github/workflows/nox.yml" {
+		return &http.Response{
+			StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"sha":"` + noxTrustedWorkflowBlobSHA + `"}`)), Request: request,
+		}, nil
+	}
+	return transport.fallback.RoundTrip(request)
+}
+
+func noxTestGitHubClient(server *httptest.Server) *githubClient {
+	client := server.Client()
+	fallback := client.Transport
+	if fallback == nil {
+		fallback = http.DefaultTransport
+	}
+	client.Transport = noxWorkflowTestTransport{fallback: fallback}
+	return &githubClient{baseURL: server.URL, http: client}
+}
 
 func TestParseNoxSARIFBindsFindingsToReportRevision(t *testing.T) {
 	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -31,6 +57,63 @@ func TestParseNoxSARIFBindsFindingsToReportRevision(t *testing.T) {
 		t.Fatalf("unexpected finding: %+v", got)
 	}
 }
+
+func TestParseNoxSARIFBoundsMemoryForLargeResultArrays(t *testing.T) {
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const resultCount = 250_000
+	var data bytes.Buffer
+	data.WriteString(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[`)
+	for index := 0; index < resultCount; index++ {
+		if index > 0 {
+			data.WriteByte(',')
+		}
+		data.WriteString(`{}`)
+	}
+	data.WriteString(`]}]}`)
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	report, err := parseNoxSARIF(data.Bytes(), sha, 1, "https://github.com/acme/app/actions/runs/1", "", "")
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.TotalCount != resultCount || len(report.Findings) != domain.MaxNoxFindings || !report.Truncated {
+		t.Fatalf("large SARIF report was not summarized with bounded findings: total=%d visible=%d truncated=%v", report.TotalCount, len(report.Findings), report.Truncated)
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 96<<20 {
+		t.Fatalf("large SARIF parsing allocated %d MiB; expected bounded parsing below 96 MiB", allocated>>20)
+	}
+}
+
+func TestParseNoxSARIFPreservesScannerExecutionStatus(t *testing.T) {
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	for _, test := range []struct {
+		name string
+		runs string
+		want *bool
+	}{
+		{name: "completed", runs: `[{"tool":{"driver":{"name":"Nox"}},"invocations":[{"executionSuccessful":true}],"results":[]}]`, want: boolPointer(true)},
+		{name: "incomplete", runs: `[{"tool":{"driver":{"name":"Nox"}},"invocations":[{"executionSuccessful":false}],"results":[]}]`, want: boolPointer(false)},
+		{name: "unknown when omitted", runs: `[{"tool":{"driver":{"name":"Nox"}},"results":[]}]`},
+		{name: "failed invocation remains failed when followed by success", runs: `[{"tool":{"driver":{"name":"Nox"}},"invocations":[{"executionSuccessful":false},{"executionSuccessful":true}],"results":[]}]`, want: boolPointer(false)},
+		{name: "failed later run keeps aggregate failed", runs: `[{"tool":{"driver":{"name":"Nox"}},"results":[],"invocations":[{"executionSuccessful":true}]},{"tool":{"driver":{"name":"Nox"}},"results":[],"invocations":[{"executionSuccessful":false}]}]`, want: boolPointer(false)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			data := `{"version":"2.1.0","runs":` + test.runs + `}`
+			report, err := parseNoxSARIF([]byte(data), sha, 1, "https://github.com/acme/app/actions/runs/1", "", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.want == nil && report.ScanSuccessful != nil || test.want != nil && (report.ScanSuccessful == nil || *report.ScanSuccessful != *test.want) {
+				t.Fatalf("scan status = %v, want %v", report.ScanSuccessful, test.want)
+			}
+		})
+	}
+}
+
+func boolPointer(value bool) *bool { return &value }
 
 func TestParseNoxSARIFFindsRuleMetadataWhenRuleIndexIsOmitted(t *testing.T) {
 	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -231,14 +314,16 @@ func TestLoadNoxReportUsesOnlyArtifactForExactPullRequestRevision(t *testing.T) 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/acme/app/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+			// The PR base has moved since this workflow run. Trust is checked
+			// against the run's associated base revision, not this current value.
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("c", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case "/repos/acme/app/actions/workflows/nox.yml/runs":
 			if r.URL.Query().Get("head_sha") != sha || r.URL.Query().Get("event") != "pull_request" {
 				t.Errorf("workflow query not scoped to requested revision and PR event: %s", r.URL.RawQuery)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{
-				map[string]any{"id": 12, "path": domain.NoxSecurityWorkflowPath, "name": "Security", "event": "pull_request", "head_sha": "dddddddddddddddddddddddddddddddddddddddd", "html_url": "https://github.com/acme/app/actions/runs/12", "created_at": "2026-11-15T13:59:00Z", "pull_requests": []any{map[string]any{"number": 7}}},
-				map[string]any{"id": 11, "path": domain.NoxSecurityWorkflowPath + "@refs/pull/7/merge", "name": "Security", "event": "pull_request", "head_sha": sha, "conclusion": "success", "html_url": "https://github.com/acme/app/actions/runs/11", "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7}}},
+				map[string]any{"id": 12, "path": domain.NoxSecurityWorkflowPath, "name": "Security", "event": "pull_request", "head_sha": "dddddddddddddddddddddddddddddddddddddddd", "html_url": "https://github.com/acme/app/actions/runs/12", "created_at": "2026-11-15T13:59:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}},
+				map[string]any{"id": 11, "path": domain.NoxSecurityWorkflowPath + "@refs/pull/7/merge", "name": "Security", "event": "pull_request", "head_sha": sha, "conclusion": "success", "html_url": "https://github.com/acme/app/actions/runs/11", "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}},
 			}})
 		case "/repos/acme/app/actions/runs/11/artifacts":
 			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{
@@ -255,7 +340,7 @@ func TestLoadNoxReportUsesOnlyArtifactForExactPullRequestRevision(t *testing.T) 
 		}
 	}))
 	defer srv.Close()
-	gh := &githubClient{baseURL: srv.URL, http: srv.Client()}
+	gh := noxTestGitHubClient(srv)
 	report := loadNoxReport(context.Background(), gh, "acme", "app", 7, sha)
 	if report.Availability != noxReportAvailable || report.RevisionSHA != sha || report.RunID != 11 || report.RunConclusion != "success" || report.TotalCount != 0 {
 		t.Fatalf("unexpected Nox report: %+v", report)
@@ -271,7 +356,9 @@ func TestLoadNoxReportDoesNotAttributeSharedCommitRunToAnotherPullRequest(t *tes
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/acme/app/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+			// The current base now contains the changed workflow, but this old
+			// run records the earlier trusted base and must remain unavailable.
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("c", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case "/repos/acme/app/actions/workflows/nox.yml/runs":
 			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{
 				"id": 29, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha,
@@ -286,7 +373,7 @@ func TestLoadNoxReportDoesNotAttributeSharedCommitRunToAnotherPullRequest(t *tes
 	}))
 	defer server.Close()
 
-	report := loadNoxReport(context.Background(), &githubClient{baseURL: server.URL, http: server.Client()}, "acme", "app", 7, sha)
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(server), "acme", "app", 7, sha)
 	if report.Availability != noxReportUnavailable || report.Reason != "GitHub has no pull-request workflow run for this revision." || artifactRequests != 0 {
 		t.Fatalf("another pull request's run was attributed to this PR: %+v, artifact requests=%d", report, artifactRequests)
 	}
@@ -300,11 +387,11 @@ func TestLoadNoxReportFallsBackToOlderRetainedArtifactWhenNewestExpired(t *testi
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/acme/app/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case "/repos/acme/app/actions/workflows/nox.yml/runs":
 			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{
-				map[string]any{"id": 22, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T14:00:00Z", "pull_requests": []any{map[string]any{"number": 7}}, "html_url": "https://github.com/acme/app/actions/runs/test"},
-				map[string]any{"id": 21, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:00:00Z", "pull_requests": []any{map[string]any{"number": 7}}, "html_url": "https://github.com/acme/app/actions/runs/test"},
+				map[string]any{"id": 22, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T14:00:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"},
+				map[string]any{"id": 21, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:00:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"},
 			}})
 		case "/repos/acme/app/actions/runs/22/artifacts":
 			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{
@@ -326,7 +413,7 @@ func TestLoadNoxReportFallsBackToOlderRetainedArtifactWhenNewestExpired(t *testi
 	}))
 	defer srv.Close()
 
-	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
 	if report.Availability != noxReportAvailable || report.RunID != 21 || report.ArtifactID != 121 || downloadedArtifactID != "121" {
 		t.Fatalf("newest expired report hid the older retained report: %+v, downloaded artifact=%q", report, downloadedArtifactID)
 	}
@@ -340,11 +427,11 @@ func TestLoadNoxReportFallsBackToOlderRetainedArtifactWhenNewestInvalid(t *testi
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/acme/app/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case "/repos/acme/app/actions/workflows/nox.yml/runs":
 			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{
-				map[string]any{"id": 22, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T14:00:00Z", "pull_requests": []any{map[string]any{"number": 7}}, "html_url": "https://github.com/acme/app/actions/runs/test"},
-				map[string]any{"id": 21, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:00:00Z", "pull_requests": []any{map[string]any{"number": 7}}, "html_url": "https://github.com/acme/app/actions/runs/test"},
+				map[string]any{"id": 22, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T14:00:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"},
+				map[string]any{"id": 21, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:00:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"},
 			}})
 		case "/repos/acme/app/actions/runs/22/artifacts":
 			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{
@@ -366,9 +453,50 @@ func TestLoadNoxReportFallsBackToOlderRetainedArtifactWhenNewestInvalid(t *testi
 	}))
 	defer srv.Close()
 
-	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
 	if report.Availability != noxReportAvailable || report.RunID != 21 || report.ArtifactID != 121 || len(downloaded) != 2 || downloaded[0] != "122" || downloaded[1] != "121" {
 		t.Fatalf("newest invalid report hid the older valid report: %+v, downloads=%v", report, downloaded)
+	}
+}
+
+func TestLoadNoxReportFallsBackToOlderArtifactAfterTemporaryDownloadFailure(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	digest := sha256.Sum256(archive)
+	var downloaded []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/app/pulls/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+		case "/repos/acme/app/actions/workflows/nox.yml/runs":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{
+				map[string]any{"id": 22, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T14:00:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"},
+				map[string]any{"id": 21, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:00:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"},
+			}})
+		case "/repos/acme/app/actions/runs/22/artifacts", "/repos/acme/app/actions/runs/21/artifacts":
+			runID, artifactID, createdAt := int64(22), int64(122), "2026-11-15T14:00:17Z"
+			if strings.Contains(r.URL.Path, "/21/") {
+				runID, artifactID, createdAt = 21, 121, "2026-11-15T13:00:17Z"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{
+				"id": artifactID, "name": noxArtifactName, "size_in_bytes": len(archive), "digest": "sha256:" + hex.EncodeToString(digest[:]),
+				"created_at": createdAt, "workflow_run": map[string]any{"id": runID, "head_sha": sha},
+			}}})
+		case "/repos/acme/app/actions/artifacts/122/zip":
+			downloaded = append(downloaded, "122")
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case "/repos/acme/app/actions/artifacts/121/zip":
+			downloaded = append(downloaded, "121")
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
+	if report.Availability != noxReportAvailable || report.RunID != 21 || report.ArtifactID != 121 || len(downloaded) != 2 || downloaded[0] != "122" || downloaded[1] != "121" {
+		t.Fatalf("temporary failure on newest report hid an older valid report: %+v, downloads=%v", report, downloaded)
 	}
 }
 
@@ -380,11 +508,11 @@ func TestLoadNoxReportFallsBackWhenNewestArtifactDisappears(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/acme/app/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case "/repos/acme/app/actions/workflows/nox.yml/runs":
 			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{
-				map[string]any{"id": 22, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T14:00:00Z", "pull_requests": []any{map[string]any{"number": 7}}, "html_url": "https://github.com/acme/app/actions/runs/test"},
-				map[string]any{"id": 21, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:00:00Z", "pull_requests": []any{map[string]any{"number": 7}}, "html_url": "https://github.com/acme/app/actions/runs/test"},
+				map[string]any{"id": 22, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T14:00:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"},
+				map[string]any{"id": 21, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:00:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"},
 			}})
 		case "/repos/acme/app/actions/runs/22/artifacts", "/repos/acme/app/actions/runs/21/artifacts":
 			runID := int64(22)
@@ -409,7 +537,7 @@ func TestLoadNoxReportFallsBackWhenNewestArtifactDisappears(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
 	if report.Availability != noxReportAvailable || report.RunID != 21 || report.ArtifactID != 121 || len(downloaded) != 2 || downloaded[0] != "122" || downloaded[1] != "121" {
 		t.Fatalf("disappeared artifact prevented fallback to an older valid report: %+v, downloads=%v", report, downloaded)
 	}
@@ -423,12 +551,12 @@ func TestLoadNoxReportDownloadsNewestValidReportBeforeInspectingOlderRuns(t *tes
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/acme/app/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case "/repos/acme/app/actions/workflows/nox.yml/runs":
 			runs := make([]any, 31)
 			for index := range runs {
 				id := 100 - index
-				runs[index] = map[string]any{"id": id, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": fmt.Sprintf("2026-11-15T%02d:00:00Z", 23-index), "pull_requests": []any{map[string]any{"number": 7}}, "html_url": "https://github.com/acme/app/actions/runs/test"}
+				runs[index] = map[string]any{"id": id, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": fmt.Sprintf("2026-11-15T%02d:00:00Z", 23-index), "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": runs})
 		case "/repos/acme/app/actions/runs/100/artifacts":
@@ -448,7 +576,7 @@ func TestLoadNoxReportDownloadsNewestValidReportBeforeInspectingOlderRuns(t *tes
 	}))
 	defer srv.Close()
 
-	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
 	if report.Availability != noxReportAvailable || report.RunID != 100 || len(artifactLists) != 1 || artifactLists[0] != "/repos/acme/app/actions/runs/100/artifacts" {
 		t.Fatalf("older runs were inspected before the newest valid report was downloaded: %+v, artifact queries=%v", report, artifactLists)
 	}
@@ -459,9 +587,9 @@ func TestLoadNoxReportRejectsArtifactWithDifferentRevisionProvenance(t *testing.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/acme/app/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case "/repos/acme/app/actions/workflows/nox.yml/runs":
-			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 20, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:00:00Z", "pull_requests": []any{map[string]any{"number": 7}}, "html_url": "https://github.com/acme/app/actions/runs/test"}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 20, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:00:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}}})
 		case "/repos/acme/app/actions/runs/20/artifacts":
 			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{"id": 45, "name": noxArtifactName, "workflow_run": map[string]any{"id": 20, "head_sha": "ffffffffffffffffffffffffffffffffffffffff"}}}})
 		default:
@@ -469,7 +597,7 @@ func TestLoadNoxReportRejectsArtifactWithDifferentRevisionProvenance(t *testing.
 		}
 	}))
 	defer srv.Close()
-	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
 	if report.Availability != noxReportUnavailable || report.Reason != "No retained Nox report was published for this revision." {
 		t.Fatalf("mismatched artifact should not be presented as evidence: %+v", report)
 	}
@@ -486,10 +614,10 @@ func TestLoadNoxReportRejectsPrivatePullRequestBeforeReadingActions(t *testing.T
 			http.NotFound(w, r)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "private": true, "owner": map[string]string{"login": "acme"}}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "private": true, "owner": map[string]string{"login": "acme"}}}})
 	}))
 	defer srv.Close()
-	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
 	if report.Availability != noxReportUnavailable || report.Reason != "Security reports are only available for public pull requests." || actionsRequests != 0 {
 		t.Fatalf("private report was not rejected before Actions access: %+v, actions requests=%d", report, actionsRequests)
 	}
@@ -503,11 +631,11 @@ func TestLoadNoxReportRequiresTheRepositorySecurityWorkflow(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/acme/app/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "private": false, "owner": map[string]string{"login": "acme"}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "private": false, "owner": map[string]string{"login": "acme"}}}})
 		case "/repos/acme/app/actions/workflows/nox.yml/runs":
 			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{
-				map[string]any{"id": 12, "path": "attacker.yml", "event": "pull_request", "head_sha": sha, "html_url": "https://github.com/acme/app/actions/runs/12", "created_at": "2026-11-15T13:59:00Z", "pull_requests": []any{map[string]any{"number": 7}}},
-				map[string]any{"id": 11, "path": ".github/workflows/nox.yml", "event": "pull_request", "head_sha": sha, "html_url": "https://github.com/acme/app/actions/runs/11", "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7}}},
+				map[string]any{"id": 12, "path": "attacker.yml", "event": "pull_request", "head_sha": sha, "html_url": "https://github.com/acme/app/actions/runs/12", "created_at": "2026-11-15T13:59:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}},
+				map[string]any{"id": 11, "path": ".github/workflows/nox.yml", "event": "pull_request", "head_sha": sha, "html_url": "https://github.com/acme/app/actions/runs/11", "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}},
 			}})
 		case "/repos/acme/app/actions/runs/11/artifacts":
 			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{"id": 44, "name": noxArtifactName, "digest": "sha256:" + hex.EncodeToString(digest[:]), "workflow_run": map[string]any{"id": 11, "head_sha": sha}}}})
@@ -521,9 +649,38 @@ func TestLoadNoxReportRequiresTheRepositorySecurityWorkflow(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
 	if report.Availability != noxReportAvailable || report.RunID != 11 || artifactRequests != 0 {
 		t.Fatalf("report did not come from the repository security workflow: %+v, rejected-workflow artifact requests=%d", report, artifactRequests)
+	}
+}
+
+func TestLoadNoxReportRejectsWorkflowMismatchWithAssociatedBase(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	var artifactRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/app/pulls/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+		case "/repos/acme/app/contents/.github/workflows/nox.yml":
+			blob := strings.Repeat("a", 40)
+			if r.URL.Query().Get("ref") == sha {
+				blob = strings.Repeat("c", 40)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"sha": blob})
+		case "/repos/acme/app/actions/workflows/nox.yml/runs":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 11, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}}}})
+		case "/repos/acme/app/actions/runs/11/artifacts":
+			artifactRequests++
+			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{"id": 44, "name": noxArtifactName}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	report := loadNoxReport(context.Background(), &githubClient{baseURL: server.URL, http: server.Client()}, "acme", "app", 7, sha)
+	if report.Availability != noxReportUnavailable || !strings.Contains(report.Reason, "workflow definition differs") || artifactRequests != 0 {
+		t.Fatalf("an observed workflow mismatch must not supply scan evidence: %+v, artifact requests=%d", report, artifactRequests)
 	}
 }
 
@@ -533,9 +690,9 @@ func TestLoadNoxReportRequiresArtifactDigest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/acme/app/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case "/repos/acme/app/actions/workflows/nox.yml/runs":
-			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 11, "path": ".github/workflows/nox.yml", "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7}}, "html_url": "https://github.com/acme/app/actions/runs/test"}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 11, "path": ".github/workflows/nox.yml", "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}}})
 		case "/repos/acme/app/actions/runs/11/artifacts":
 			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{"id": 44, "name": noxArtifactName, "workflow_run": map[string]any{"id": 11, "head_sha": sha}}}})
 		case "/repos/acme/app/actions/artifacts/44/zip":
@@ -545,7 +702,7 @@ func TestLoadNoxReportRequiresArtifactDigest(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
 	if report.Availability != noxReportUnavailable || report.Reason != "GitHub did not provide a verifiable SHA-256 digest for the Nox artifact." {
 		t.Fatalf("artifact without digest should fail closed: %+v", report)
 	}
@@ -559,16 +716,16 @@ func TestLoadNoxReportFindsSecurityWorkflowBeyondFirstPage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/repos/acme/app/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case r.URL.Path == "/repos/acme/app/actions/workflows/nox.yml/runs" && r.URL.Query().Get("page") == "1":
 			runs := make([]map[string]any, noxPageSize)
 			for index := range runs {
-				runs[index] = map[string]any{"id": index + 100, "path": "other.yml", "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7}}, "html_url": "https://github.com/acme/app/actions/runs/test"}
+				runs[index] = map[string]any{"id": index + 100, "path": "other.yml", "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": runs})
 		case r.URL.Path == "/repos/acme/app/actions/workflows/nox.yml/runs" && r.URL.Query().Get("page") == "2":
 			requestedPageTwo = true
-			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 11, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:57:00Z", "pull_requests": []any{map[string]any{"number": 7}}, "html_url": "https://github.com/acme/app/actions/runs/test"}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 11, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:57:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}}})
 		case r.URL.Path == "/repos/acme/app/actions/runs/11/artifacts":
 			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{"id": 44, "name": noxArtifactName, "digest": "sha256:" + hex.EncodeToString(digest[:]), "workflow_run": map[string]any{"id": 11, "head_sha": sha}}}})
 		case r.URL.Path == "/repos/acme/app/actions/artifacts/44/zip":
@@ -578,7 +735,7 @@ func TestLoadNoxReportFindsSecurityWorkflowBeyondFirstPage(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
 	if !requestedPageTwo || report.Availability != noxReportAvailable || report.RunID != 11 {
 		t.Fatalf("later workflow page was not inspected: %+v, page two=%v", report, requestedPageTwo)
 	}
@@ -589,9 +746,9 @@ func TestLoadNoxReportDoesNotCallCappedArtifactHistoryMissing(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/repos/acme/app/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case r.URL.Path == "/repos/acme/app/actions/workflows/nox.yml/runs":
-			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 11, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7}}, "html_url": "https://github.com/acme/app/actions/runs/test"}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 11, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}}})
 		case r.URL.Path == "/repos/acme/app/actions/runs/11/artifacts":
 			artifacts := make([]map[string]any, noxPageSize)
 			for index := range artifacts {
@@ -604,7 +761,7 @@ func TestLoadNoxReportDoesNotCallCappedArtifactHistoryMissing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := &githubClient{baseURL: srv.URL, http: srv.Client()}
+	client := noxTestGitHubClient(srv)
 	report := loadNoxReport(context.Background(), client, "acme", "app", 7, sha)
 	if report.Availability != noxReportUnavailable || report.Reason != noxInspectionIncompleteReason {
 		t.Fatalf("capped artifact history was presented as a definitive miss: %+v", report)
@@ -616,7 +773,7 @@ func TestLoadNoxReportDoesNotCallTruncatedWorkflowHistoryMissing(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/acme/app/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case "/repos/acme/app/actions/workflows/nox.yml/runs":
 			runs := make([]map[string]any, noxPageSize)
 			for index := range runs {
@@ -624,7 +781,7 @@ func TestLoadNoxReportDoesNotCallTruncatedWorkflowHistoryMissing(t *testing.T) {
 				if r.URL.Query().Get("page") == "1" && index == 0 {
 					path = domain.NoxSecurityWorkflowPath
 				}
-				runs[index] = map[string]any{"id": index + 100, "path": path, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7}}, "html_url": "https://github.com/acme/app/actions/runs/test"}
+				runs[index] = map[string]any{"id": index + 100, "path": path, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": runs})
 		case "/repos/acme/app/actions/runs/100/artifacts":
@@ -638,7 +795,7 @@ func TestLoadNoxReportDoesNotCallTruncatedWorkflowHistoryMissing(t *testing.T) {
 	}))
 	defer server.Close()
 
-	report := loadNoxReport(context.Background(), &githubClient{baseURL: server.URL, http: server.Client()}, "acme", "app", 7, sha)
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(server), "acme", "app", 7, sha)
 	if report.Availability != noxReportUnavailable || report.Reason != noxInspectionIncompleteReason {
 		t.Fatalf("truncated workflow history was presented as a definitive miss: %+v", report)
 	}
@@ -651,11 +808,11 @@ func TestLoadNoxReportCapsTotalGitHubRequests(t *testing.T) {
 		requests++
 		switch {
 		case r.URL.Path == "/repos/acme/app/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case r.URL.Path == "/repos/acme/app/actions/workflows/nox.yml/runs":
 			runs := make([]map[string]any, noxPageSize)
 			for index := range runs {
-				runs[index] = map[string]any{"id": index + 100, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7}}, "html_url": "https://github.com/acme/app/actions/runs/test"}
+				runs[index] = map[string]any{"id": index + 100, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": runs})
 		case strings.Contains(r.URL.Path, "/actions/runs/") && strings.HasSuffix(r.URL.Path, "/artifacts"):
@@ -666,7 +823,7 @@ func TestLoadNoxReportCapsTotalGitHubRequests(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := &githubClient{baseURL: srv.URL, http: srv.Client()}
+	client := noxTestGitHubClient(srv)
 	report := loadNoxReport(context.Background(), client, "acme", "app", 7, sha)
 	if requests > maxNoxGitHubRequests {
 		t.Fatalf("report lookup used %d GitHub requests; limit is %d", requests, maxNoxGitHubRequests)
@@ -682,7 +839,7 @@ func TestLoadNoxReportDoesNotSayRevisionIsAbsentAfterCommitHistoryCap(t *testing
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/repos/acme/app/pulls/7":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": currentSHA}, "base": map[string]any{"repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": currentSHA}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case r.URL.Path == "/repos/acme/app/pulls/7/commits":
 			commits := make([]map[string]any, noxPageSize)
 			for index := range commits {
@@ -695,7 +852,7 @@ func TestLoadNoxReportDoesNotSayRevisionIsAbsentAfterCommitHistoryCap(t *testing
 	}))
 	defer srv.Close()
 
-	client := &githubClient{baseURL: srv.URL, http: srv.Client()}
+	client := noxTestGitHubClient(srv)
 	report := loadNoxReport(context.Background(), client, "acme", "app", 7, requestedSHA)
 	if report.Availability != noxReportUnavailable || report.Reason != noxInspectionIncompleteReason {
 		t.Fatalf("capped commit history was presented as a definitive revision mismatch: %+v", report)

@@ -31,4 +31,14 @@ describe('fetchNoxReport', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'bad revision' }), { status: 400 })))
     await expect(fetchNoxReport('https://github.com/acme/app/pull/7', sha)).rejects.toThrow('bad revision')
   })
+
+  it('preserves the HTTP status and retry guidance for an empty gateway error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 429, headers: { 'Retry-After': '17' } })))
+    await expect(fetchNoxReport('https://github.com/acme/app/pull/7', sha)).rejects.toThrow('Try again in 17 seconds')
+  })
+
+  it('preserves the HTTP status for a non-JSON gateway error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>gateway unavailable</html>', { status: 503 })))
+    await expect(fetchNoxReport('https://github.com/acme/app/pull/7', sha)).rejects.toMatchObject({ status: 503 })
+  })
 })

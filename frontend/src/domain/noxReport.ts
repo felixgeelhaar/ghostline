@@ -30,13 +30,15 @@ export const NoxReportSchema = z.discriminatedUnion('availability', [
     revisionSha: fullSha,
     runId: z.number().int().positive(),
     runName: z.string(),
-    runConclusion: z.string(),
-    runUrl: webURL,
+    runStatus: z.string().optional(),
+    runConclusion: z.string().optional(),
+    scanSuccessful: z.boolean().optional(),
+    runUrl: webURL.optional(),
     artifactId: z.number().int().positive(),
-    artifactUrl: webURL,
+    artifactUrl: webURL.optional(),
     artifactDigest: z.string(),
-    createdAt: z.string().datetime(),
-    expiresAt: z.string().datetime(),
+    createdAt: z.string().datetime().optional(),
+    expiresAt: z.string().datetime().optional(),
     totalCount: z.number().int().nonnegative(),
     activeCount: z.number().int().nonnegative(),
     suppressedCount: z.number().int().nonnegative(),
@@ -49,6 +51,7 @@ export const NoxReportSchema = z.discriminatedUnion('availability', [
     revisionSha: z.union([fullSha, z.literal('')]),
     runId: z.number().int().positive().optional(),
     runName: z.string().optional(),
+    runStatus: z.string().optional(),
     runConclusion: z.string().optional(),
     runUrl: webURL.optional(),
     artifactId: z.number().int().positive().optional(),
@@ -78,28 +81,72 @@ export function noxReportNeedsAttention(report: NoxReport): boolean {
     || report.findings.length > 0
     || report.suppressedCount > 0
     || report.runConclusion !== 'success'
+    || report.scanSuccessful === false
+    || report.runStatus === 'queued'
+    || report.runStatus === 'in_progress'
+}
+
+export function noxReportCanShowZeroFindingNote(report: NoxReport): boolean {
+  return report.availability === 'available'
+    && report.totalCount === 0
+    && report.runConclusion === 'success'
+    && report.runStatus !== 'queued'
+    && report.runStatus !== 'in_progress'
+    && report.scanSuccessful !== false
+}
+
+function workflowOutcome(conclusion: string): string {
+  switch (conclusion) {
+    case 'failure': return 'failed'
+    case 'cancelled': return 'cancelled'
+    case 'skipped': return 'skipped'
+    case 'timed_out': return 'timed out'
+    default: return `outcome ${conclusion.replaceAll('_', ' ')}`
+  }
+}
+
+function scanStatusSuffix(report: Extract<NoxReport, { availability: 'available' }>): string {
+  if (report.runStatus === 'queued' || report.runStatus === 'in_progress') return 'workflow still running; scan may be incomplete'
+  if (report.scanSuccessful === false) return 'scan did not complete successfully'
+  if (!report.runConclusion) {
+    return report.scanSuccessful === true
+      ? 'scan completed; workflow outcome unavailable'
+      : 'workflow outcome unavailable; scan completeness unknown'
+  }
+  if (report.runConclusion !== 'success' && report.scanSuccessful === true) return `scan completed; workflow ${workflowOutcome(report.runConclusion)}`
+  if (report.runConclusion !== 'success' && report.scanSuccessful === undefined) return `workflow ${workflowOutcome(report.runConclusion)}; scan completeness unknown`
+  return ''
+}
+
+function statusLabel(status: string): string {
+  if (status === 'workflow still running; scan may be incomplete') return 'Workflow still running · scan may be incomplete'
+  if (status === 'scan did not complete successfully') return 'Scan did not complete successfully · results may be incomplete'
+  if (status.endsWith('; scan completeness unknown')) {
+    const outcome = status.replace(/^workflow /, '').replace(/; scan completeness unknown$/, '')
+    return `Workflow ${outcome} · scan completeness unknown`
+  }
+  if (status === 'scan completed; workflow outcome unavailable') return 'Scan completed · workflow outcome unavailable'
+  return status
 }
 
 export function noxReportHeadline(report: NoxReport): string {
   if (report.availability === 'unavailable') return 'Nox report unavailable'
 
+  const status = scanStatusSuffix(report)
   if (report.activeCount === 0 && report.suppressedCount > 0) {
     const suppressed = `${report.suppressedCount} suppressed result${report.suppressedCount === 1 ? '' : 's'}`
-    return report.runConclusion === 'success'
-      ? `No active findings · ${suppressed}`
-      : `No active findings · ${suppressed} · scan did not complete successfully`
+    return ['No active findings', suppressed, status].filter(Boolean).join(' · ')
   }
 
   if (report.totalCount === 0) {
-    return report.runConclusion === 'success'
-      ? 'No security findings reported'
-      : 'Scan did not complete successfully · results may be incomplete'
+    return status
+      ? statusLabel(status)
+      : 'No security findings reported'
   }
 
   const active = `${report.activeCount} active security finding${report.activeCount === 1 ? '' : 's'} reported`
   const suppressed = report.suppressedCount > 0
-    ? ` · ${report.suppressedCount} suppressed result${report.suppressedCount === 1 ? '' : 's'}`
+    ? `${report.suppressedCount} suppressed result${report.suppressedCount === 1 ? '' : 's'}`
     : ''
-  const count = `${active}${suppressed}`
-  return report.runConclusion === 'success' ? count : `${count} · scan did not complete successfully`
+  return [active, suppressed, status].filter(Boolean).join(' · ')
 }

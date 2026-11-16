@@ -103,4 +103,33 @@ describe('copy full commit SHA from the revision timeline', () => {
     expect(host!.querySelector('.copy-status')?.textContent).toContain('Copied full SHA for revision bbbbbbb.')
     expect(host!.querySelector('.copy-status')?.textContent).not.toContain('a1b2c3d')
   })
+
+  it('discards an in-flight copy result when a different PR is imported', async () => {
+    let finishCopy: () => void = () => {}
+    const writeText = vi.fn().mockImplementation(() => new Promise<void>((resolve) => { finishCopy = resolve }))
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    await importFixture()
+
+    host!.querySelector<HTMLButtonElement>(`[aria-label="Copy full SHA for revision a1b2c3d"]`)!.click()
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledOnce())
+
+    const otherPR: PullRequest = {
+      ...pullRequest,
+      repository: 'other/app', owner: 'other', number: 8, title: 'Other pull request',
+      url: 'https://github.com/other/app/pull/8',
+    }
+    vi.mocked(importPullRequest).mockResolvedValueOnce(otherPR)
+    const input = host!.querySelector<HTMLInputElement>('#pr-url')!
+    input.value = otherPR.url
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(importPullRequest).toHaveBeenCalledTimes(2))
+
+    finishCopy()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await nextTick()
+    expect(host!.querySelector('.copy-status')?.textContent).toBe('')
+    await vi.waitFor(() => expect(host!.textContent).toContain('Other pull request'))
+  })
 })

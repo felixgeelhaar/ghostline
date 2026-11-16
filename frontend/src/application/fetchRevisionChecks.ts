@@ -1,4 +1,4 @@
-import { ghostlineApiError } from './apiError'
+import { ghostlineApiError, readResponsePayload } from './apiError'
 import { RevisionChecksSchema } from '../domain/checks'
 
 export async function fetchRevisionChecks(url: string, sha: string) {
@@ -7,7 +7,7 @@ export async function fetchRevisionChecks(url: string, sha: string) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url, sha }),
   })
-  const payload: unknown = await response.json()
+  const payload = await readResponsePayload(response)
   if (!response.ok) throw ghostlineApiError(response, payload, 'Unable to load checks for this revision.')
   const checks = RevisionChecksSchema.parse(payload)
   if (checks.revisionSha !== sha) throw new Error('GitHub returned checks for a different revision.')

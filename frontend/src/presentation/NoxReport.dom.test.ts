@@ -26,7 +26,7 @@ const pr: PullRequest = {
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] }, referencedIssues: { availability: 'available', items: [] },
 }
 
-function report(revisionSha: string, count = 0, runConclusion = 'success'): NoxReport {
+function report(revisionSha: string, count = 0, runConclusion = 'success'): Extract<NoxReport, { availability: 'available' }> {
   return {
     availability: 'available', revisionSha, runId: 12, runName: 'Nox Security', runConclusion,
     runUrl: 'https://github.com/acme/app/actions/runs/12', artifactId: 3, artifactUrl: 'https://github.com/acme/app/actions/runs/12',
@@ -75,11 +75,30 @@ describe('revision-linked Nox report', () => {
     expect(host!.querySelector('.nox-source a')?.getAttribute('href')).toBe('https://github.com/acme/app/actions/runs/12')
   })
 
+  it('explains when optional source links and artifact dates were not reported', async () => {
+    vi.mocked(fetchNoxReport).mockResolvedValue({
+      ...report(headSha), runUrl: undefined, artifactUrl: undefined, createdAt: undefined, expiresAt: undefined,
+    })
+    await importPR()
+    await vi.waitFor(() => expect(host!.querySelector('.nox-summary')).not.toBeNull())
+    expect(host!.querySelector('.nox-summary')?.textContent).toContain('report from not reported · retained until not reported')
+    expect(host!.querySelector('.nox-source')?.textContent).toContain('Source workflow link not reported')
+    expect(host!.querySelector('.nox-source a')).toBeNull()
+  })
+
   it('does not show a clean headline when the scan did not succeed', async () => {
-    vi.mocked(fetchNoxReport).mockResolvedValue(report(headSha, 0, 'failure'))
+    vi.mocked(fetchNoxReport).mockResolvedValue({ ...report(headSha, 0, 'failure'), scanSuccessful: false })
     await importPR()
     await vi.waitFor(() => expect(host!.querySelector('.nox-summary strong')?.textContent).toContain('results may be incomplete'))
     expect(host!.querySelector('.nox-summary strong')?.textContent).not.toContain('No security findings reported')
+    expect(host!.querySelector('.nox-report')?.textContent).not.toContain('not an independent guarantee')
+  })
+
+  it('does not show the zero-result note when GitHub omits the workflow outcome', async () => {
+    vi.mocked(fetchNoxReport).mockResolvedValue({ ...report(headSha, 0), runStatus: 'completed', runConclusion: undefined })
+    await importPR()
+    await vi.waitFor(() => expect(host!.querySelector('.nox-summary strong')?.textContent).toContain('Workflow outcome unavailable'))
+    expect(host!.querySelector('.nox-report')?.textContent).not.toContain('not an independent guarantee')
   })
 
   it('shows suppressed reports and explains suppression is not a repair', async () => {
@@ -95,6 +114,33 @@ describe('revision-linked Nox report', () => {
     expect(panel.textContent).toContain('Second accepted reason')
     expect(panel.textContent).toContain('does not mean it was fixed or verified')
     expect(panel.textContent).not.toContain('No security findings reported')
+  })
+
+  it('shows accepted suppression detail preserved beyond the displayed source-record limit', async () => {
+    vi.mocked(fetchNoxReport).mockResolvedValue({
+      ...report(headSha), totalCount: 1, activeCount: 0, suppressedCount: 1,
+      findings: [{
+        ruleId: 'SEC-BASELINE', title: 'Known issue', severity: 'medium', message: 'Still reported by Nox.', suppressed: true,
+        suppressionKind: 'external', suppressionJustification: 'Late accepted detail',
+        suppressions: Array.from({ length: 20 }, () => ({ status: 'underReview', kind: 'external' })), suppressionsTruncated: true,
+      }],
+    })
+    await importPR()
+    await vi.waitFor(() => expect([...host!.querySelectorAll('.nox-suppression')].some((node) => node.textContent?.includes('Late accepted detail'))).toBe(true))
+    expect(host!.querySelector('.nox-report')?.textContent).toContain('Some suppression records were omitted')
+  })
+
+  it('explains when the displayed finding list is truncated', async () => {
+    vi.mocked(fetchNoxReport).mockResolvedValue({
+      ...report(headSha, 101), truncated: true,
+      findings: Array.from({ length: 100 }, (_, index) => ({
+        ruleId: `SEC-${index}`, title: 'Validate input', severity: 'high', message: 'Untrusted input reaches a command.',
+        suppressed: false, suppressions: [], suppressionsTruncated: false,
+      })),
+    })
+    await importPR()
+    await vi.waitFor(() => expect(host!.querySelector('.nox-report')?.textContent).toContain('Showing 100 of 101 report results'))
+    expect(host!.querySelector('.nox-report')?.textContent).toContain('Open the source workflow for the full report.')
   })
 
   it('restores the missing revision explanation after clearing focused history', async () => {
