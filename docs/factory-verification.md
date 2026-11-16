@@ -61,6 +61,13 @@ flowchart TD
   the hosted Nox check on the PR head alongside Go, frontend, and Warden gates.
   Name the revision each result covers; a pass on an earlier head does not
   verify a later head.
+- Before treating the PR gate as complete, compare GitHub's current `head.sha`
+  with the commit SHA recorded by the latest completed Qodo review and with the
+  revision each required check reports. Each value must match exactly. A missing
+  or unreadable review/check revision is incomplete evidence; request a fresh
+  review or check, and stop for an engineer if that evidence cannot be obtained.
+  Repeat the comparison after every push; timestamps or comment order do not
+  establish revision coverage.
 - Rerun checks after changes and request a new review. A review of an older head,
   an incomplete review, or a failed required check does not pass the gate.
 - Stop for an engineer if the same confirmed High or Medium finding remains
