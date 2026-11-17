@@ -376,3 +376,23 @@ test('matches the reporter label without regard to case', async () => {
   assert.equal(result.created, 0);
   assert.equal(github.issues.length, 1);
 });
+
+test('keeps a maintainer note written inside a legacy report when upgrading it', async () => {
+  const fingerprint = 'a'.repeat(64);
+  const legacySha = 'b'.repeat(40);
+  const newSha = 'c'.repeat(40);
+  const issue = legacyIssue(40, fingerprint, legacySha);
+  issue.body = issue.body.replace(
+    '\n\nThis report records what Nox observed',
+    '\n\nMaintainer note: only reachable through the admin import path.\n\nThis report records what Nox observed',
+  );
+  const github = fakeGithub([issue], { olderSha: legacySha, newerSha: newSha });
+  const finding = { RuleID: 'RULE-1', Severity: 'high', Message: 'finding', Fingerprint: fingerprint, Location: { FilePath: 'a.go' } };
+
+  await reportNoxIssues({ github, context: context({ sha: newSha }), report: { findings: [finding] }, baseline: { entries: [] } });
+
+  assert.match(issue.body, /Maintainer note: only reachable through the admin import path\./);
+  assert.doesNotMatch(issue.body, new RegExp(`commit/${legacySha}`));
+  const start = issue.body.indexOf('<!-- nox-report:start -->');
+  assert.ok(issue.body.indexOf('Maintainer note') < start, 'the note stays outside the managed section');
+});

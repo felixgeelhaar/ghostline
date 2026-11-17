@@ -162,6 +162,32 @@ function replaceReportSection(body, section) {
 // LEGACY_DISCLAIMER. Move those blocks out of the human-authored text so an
 // upgraded issue shows one current record per fingerprint, and so their revision
 // evidence still takes part in the stale-scan check.
+const LEGACY_FIELD = /^\*\*(Rule|Severity|Finding|Source revision|Nox scan):\*\*/;
+
+// Split a legacy block into the lines the old reporter generated and any text a
+// maintainer added inside it. Only the generated lines move into the managed
+// section; everything else stays where the maintainer wrote it.
+function splitLegacyBlock(block) {
+  const generated = [];
+  const human = [];
+  let inLocations = false;
+  for (const line of block.split('\n')) {
+    const trimmed = line.trim();
+    if (inLocations && trimmed.startsWith('- ')) {
+      generated.push(line);
+      continue;
+    }
+    inLocations = trimmed === '**Locations:**';
+    const isGenerated = inLocations
+      || trimmed === ''
+      || trimmed === '## Nox security finding'
+      || /^<!-- nox-fingerprint:[a-f\d]{32,128} -->$/i.test(trimmed)
+      || LEGACY_FIELD.test(trimmed);
+    (isGenerated ? generated : human).push(line);
+  }
+  return { generated: generated.join('\n').trim(), human: human.join('\n').trim() };
+}
+
 function extractLegacyBlocks(body) {
   const original = typeof body === 'string' ? body : '';
   const start = original.indexOf(REPORT_START);
@@ -182,8 +208,11 @@ function extractLegacyBlocks(body) {
       // Only a block that ends with the generated disclaimer is reporter-written.
       if (disclaimerAt < 0 || (nextAt >= 0 && nextAt < disclaimerAt)) break;
       const fingerprint = marker[1].toLowerCase();
-      if (!blocks.has(fingerprint)) blocks.set(fingerprint, remaining.slice(marker.index, disclaimerAt).trim());
-      remaining = `${remaining.slice(0, marker.index).trimEnd()}\n\n${remaining.slice(disclaimerAt + LEGACY_DISCLAIMER.length).trimStart()}`;
+      const { generated, human } = splitLegacyBlock(remaining.slice(marker.index, disclaimerAt));
+      if (!blocks.has(fingerprint)) blocks.set(fingerprint, generated);
+      const before = remaining.slice(0, marker.index).trimEnd();
+      const after = remaining.slice(disclaimerAt + LEGACY_DISCLAIMER.length).trimStart();
+      remaining = [before, human, after].filter(Boolean).join('\n\n');
     }
     return remaining;
   });
