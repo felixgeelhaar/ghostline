@@ -12,7 +12,7 @@ The frontend image is pinned to `node:22.23.5-alpine3.24`. Nox scanned that imag
 
 ## Amendment: 2026-11-17
 
-The maintainer explicitly extended this exception after Nox reported three more advisories that have no available fix:
+The maintainer explicitly extended this exception ([decision](https://github.com/felixgeelhaar/ghostline/issues/45#issuecomment-6960376515)) after Nox reported three more advisories that have no available fix:
 
 | Fingerprint | Advisory | Location | Status on 2026-11-17 |
 |---|---|---|---|
