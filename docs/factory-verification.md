@@ -6,56 +6,56 @@ stalled work, and the merge decision. A check or review only describes the
 revision it inspected.
 
 ```mermaid
-flowchart TD
-    A[Ticket with acceptance criteria] --> B[Read AGENTS.md, relevant docs, and current code]
-    B --> WZ[Investigate the ticket with Codebase Wisdom: existing capability, affected components, duplicate work; check cited sources]
-    WZ --> WZD{Does the ticket still hold?}
-    WZD -- No --> WZR[Revise or close the ticket with evidence; engineer confirms]
-    WZR --> A
-    WZD -- Yes --> C[Check ticket readiness, clean base, baseline, and criterion checks]
-    C --> D[Write a focused failing test]
-    D --> E[Implement within domain, application, and edge boundaries]
-    E --> F[Run focused tests, Go checks, frontend checks, and Nox]
-    F --> G[Review uncommitted changes with Qodo and ticket context]
-    G --> H{Confirmed High or Medium finding?}
-    H -- Yes --> VL{Has the same confirmed finding recurred after one focused repair?}
-    VL -- Yes --> W[Stop and ask engineer for a decision]
-    VL -- No --> I[Fix with a focused test or direct check]
-    I --> F
-    H -- No --> J[Report every Low; support disagreements with evidence]
-    J --> K[Open one focused PR, mark it ready for review, and confirm Qodo starts a review]
-    K --> L[Run Warden gates and hosted checks on the PR head]
-    K --> M[Inspect Qodo PR feedback and the revision it reviewed]
-    L --> N{All required checks pass on current head?}
-    N -- No --> FP{Did the check produce a result?}
-    FP -- No, runner or network failure --> RU{Already rerun once?}
-    RU -- No --> RR[Rerun the failed job once; record the run link]
-    RR --> L
-    RU -- Yes --> W
-    FP -- Yes, it reported a finding or failure --> Q[Fix failure, or ask the engineer to baseline a false positive with a written reason, or report blocker]
-    Q --> L
-    N -- Yes --> R{Review and checks cover latest head?}
-    M --> O{Confirmed High or Medium finding?}
-    O -- Yes --> VP{Has the same confirmed finding recurred after one focused repair?}
-    VP -- Yes --> W
-    VP -- No --> I2[Fix with a focused regression test]
-    I2 --> P2[Run local checks and Warden gates]
-    P2 --> K2[Push update to same PR; request fresh Qodo review]
-    K2 --> K
-    O -- No --> P[Account for every Low and evidence-backed disagreement]
-    P --> D1[Engineer decides disputed findings and Low reports]
-    D1 -- Resolved --> R
-    D1 -- Unresolved --> U[Hold PR and record next action]
-    R -- No --> K
-    R -- Yes --> BU{Branch up to date with main?}
-    BU -- No --> UB[Update the branch, run the Warden pre-push gate on the new head, and wait for fresh checks and review]
-    UB --> K
-    BU -- Yes --> S[Human decides whether to merge]
-    S -- Merge --> T[main]
-    S -- Hold or reject --> U
+%%{init: {"theme": "base", "flowchart": {"curve": "basis", "nodeSpacing": 34, "rankSpacing": 42, "padding": 16, "wrappingWidth": 420}, "themeVariables": {"fontFamily": "IBM Plex Mono, ui-monospace, SFMono-Regular, Menlo, monospace", "fontSize": "14px", "lineColor": "#8a91a7", "edgeLabelBackground": "#111525", "textColor": "#e9edf7"}}}%%
+flowchart TB
+    T(["TICKET"]):::start
+    G1{{"① TICKET HOLDS?"}}:::gate
+    B(["Build or fix · test first"]):::step
+    G2{{"② LOCAL CHECKS + QODO"}}:::gate
+    P(["Open or update PR"]):::step
+    G3{{"③ PR CHECKS + QODO ON HEAD"}}:::gate
+    G4{{"④ ENGINEER APPROVES"}}:::gate
+    M[("main")]:::done
+
+    T --> G1
+    G1 -- yes --> B
+    B --> G2
+    G2 -- pass --> P
+    P --> G3
+    G3 -- pass --> G4
+    G4 -- merge --> M
+
+    G1 -- no --> R(["Revise or close ticket"]):::muted
+    G2 -- fail --> B
+    G3 -- fail --> B
+    B -. no progress .-> S(["Stop · engineer decides"]):::stop
+    G4 -- hold --> H(["Hold PR"]):::hold
+
+    classDef start fill:#111525,stroke:#00e5ff,stroke-width:1.5px,color:#e9edf7,font-weight:bold
+    classDef step fill:#0d1020,stroke:#30344d,stroke-width:1.5px,color:#e9edf7
+    classDef gate fill:#090b16,stroke:#00e5ff,stroke-width:2px,color:#00e5ff,font-weight:bold
+    classDef done fill:#090b16,stroke:#00ffa3,stroke-width:2px,color:#00ffa3,font-weight:bold
+    classDef hold fill:#090b16,stroke:#ffc857,stroke-width:1.5px,color:#ffc857
+    classDef stop fill:#090b16,stroke:#ff7188,stroke-width:1.5px,color:#ff7188
+    classDef muted fill:#090b16,stroke:#3a3f5a,stroke-width:1.5px,color:#8a91a7,stroke-dasharray:4 3
+
+    linkStyle default stroke:#8a91a7,stroke-width:1.5px,color:#e9edf7
+    linkStyle 0,1,2,3,4,5,6 stroke:#00e5ff,stroke-width:2px,color:#00e5ff
+    linkStyle 8,9 stroke:#ff2bd6,stroke-width:1.8px,color:#ff2bd6
 ```
 
-## Gates and decisions
+## The four gates
+
+| Gate | Must pass | Evidence | If it fails |
+|---|---|---|---|
+| **① Ticket holds** | Codebase Wisdom finds no existing capability, missed dependency, or duplicate work; each criterion maps to a check | Wisdom answers checked against the cited code | Revise or close the ticket with that evidence; the engineer confirms |
+| **② Local checks + Qodo** | Go, frontend, and Nox checks pass; Qodo's review of the uncommitted change leaves no confirmed High or Medium open, and every Low is reported | Check output and the Qodo review result | Fix with a test that fails first, then rerun; a disagreement needs evidence and the engineer's decision |
+| **③ PR checks + Qodo on head** | The PR is ready for review, not a draft; Warden, hosted checks, and a completed Qodo review cover the exact current head; the branch is up to date with `main` | Every check and review names the SHA it covered; Warden runs again after a branch update | Same fix loop; a reported finding is never rerun to green, and a false positive needs an engineer-approved baseline entry; a job with no result gets one rerun |
+| **④ Engineer approves** | The engineer decides disputed findings and the merge | The PR record against gates ①–③ | Hold the PR and record the next action |
+
+**Stop rule:** if the same confirmed finding returns after one focused repair, a required check cannot be made to pass, or the evidence cannot settle a disagreement, the agent stops, reports the finding, repair attempt and revisions, and the engineer decides.
+
+## Gate rules in detail
 
 - Before implementation, investigate the ticket with Qodo Codebase Wisdom: ask
   which existing capability it touches, which components depend on that code,
