@@ -72,6 +72,14 @@
       "severity": "high",
       "reason": "Exception approved by the maintainer on 2026-11-17 (https://github.com/felixgeelhaar/ghostline/issues/45#issuecomment-6960376515); review by 2026-11-20. GHSA-fc5q-39xc-vjpf (ReDoS through repeated extglobs) affects picomatch <= 4.0.7 and no patched release exists. picomatch is a build- and dev-time dependency of vite, vitest, tinyglobby, fdir and @vue/language-core; it matches glob patterns from repository configuration, not request input, and is not part of the built frontend bundle. Reachability with attacker-controlled patterns is not established. This baseline records accepted interim risk and is not evidence the finding is fixed; remove it when a patched picomatch is available and the lockfile is updated.",
       "created_at": "2026-11-17T20:22:48.485532Z"
+    },
+    {
+      "fingerprint": "467016718eafce00cd231a402e18bcf976555fe4fd421a4a9e794aed224a1b91",
+      "rule_id": "AI-038",
+      "file_path": "README.md",
+      "severity": "medium",
+      "reason": "Confirmed false positive, approved by the maintainer on 2026-11-17 (https://github.com/felixgeelhaar/ghostline/issues/66#issuecomment-6961483840); review by 2026-12-17. Nox intermittently reports AI-038 (embedding API key stored with vectors) at README.md:22 columns 5-58, but that line is the 11-character setup command `cd frontend` at every reported revision (the same fingerprint at 5bb582a and 7a72b8b), the README holds no key material, and the repository has no embedding or vector-store code. Only this fingerprint is baselined; any other AI-038 finding must still fail the gate. Remove this entry if Nox reports a different location for this fingerprint.",
+      "created_at": "2026-11-17T21:27:16.655870Z"
     }
   ]
 }
