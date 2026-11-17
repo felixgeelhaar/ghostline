@@ -42,6 +42,34 @@ Run Ghostline's tests, build, Warden gates, and Nox scan independently. Qodo
 review feedback is not a correctness guarantee, and security findings remain
 owned by Nox.
 
+## Review quality gate
+
+Use this gate for Qodo Reviewer results on staged and unstaged local changes
+and for findings retrieved with Review Resolver on a pull request. Give the
+review the ticket or specification, acceptance criteria, and implementation
+decisions so each finding can be checked against the intended change.
+
+- Investigate every reported bug, rule violation, and requirement gap against
+  the affected code and requirements. Confirm a finding only when the cited
+  behavior exists and conflicts with a requirement or project rule.
+- Fix every confirmed High and Medium finding, including Medium Bugs. Add or
+  update a focused test or another direct check for the reported behavior.
+- Report every Low finding for the engineer's decision. Do not silently
+  dismiss, suppress, or omit it.
+- Back disagreements or uncertainty with source, reproduction, or test
+  evidence and ask the engineer to decide. An unresolved confirmed High or
+  Medium finding blocks completion.
+- Run the checks required by the change and rerun Qodo after fixes. For a PR,
+  confirm the completed review inspected the current head commit. A stale or
+  incomplete review does not pass this gate.
+- If another fix-and-review cycle makes no progress on confirmed High or
+  Medium findings, stop and report the remaining findings, checks, and decision
+  needed. Do not report the task as done.
+
+The final report accounts for every finding, the fix or reason it remains,
+verification evidence, the latest reviewed revision, and every Low finding
+flagged for the engineer.
+
 ## Review evidence in Ghostline
 
 For public pull requests, Ghostline reads Qodo's published GitHub issue
