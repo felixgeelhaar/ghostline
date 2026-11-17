@@ -4,6 +4,8 @@ const ISSUE_LABEL = 'nox-finding';
 const REPORT_START = '<!-- nox-report:start -->';
 const REPORT_END = '<!-- nox-report:end -->';
 const REPORT_DISCLAIMER = 'These reports record what Nox observed at each linked revision. They are not independent proof of exploitability or claims that findings persist in later revisions.';
+const LEGACY_DISCLAIMER = 'This report records what Nox observed at the linked revision. It is not independent proof of exploitability or a claim that the issue persists in later revisions.';
+const FINGERPRINT_MARKER = /<!-- nox-fingerprint:([a-f\d]{32,128}) -->/gi;
 
 function field(value, ...names) {
   for (const name of names) {
@@ -104,7 +106,7 @@ function issueBody(finding, evidence) {
     `**Source revision:** [\`${evidence.sha}\`](${evidence.repositoryURL}/commit/${evidence.sha})  `,
     `**Nox scan:** [workflow run](${evidence.runURL})`,
     '',
-    'This report records what Nox observed at the linked revision. It is not independent proof of exploitability or a claim that the issue persists in later revisions.',
+    LEGACY_DISCLAIMER,
   ].join('\n');
 }
 
@@ -134,7 +136,7 @@ function existingFindingBlocks(body) {
   const fullSection = body.slice(start + REPORT_START.length, end);
   const disclaimerAt = fullSection.indexOf(REPORT_DISCLAIMER);
   const section = disclaimerAt >= 0 ? fullSection.slice(0, disclaimerAt) : fullSection;
-  const markers = [...section.matchAll(/<!-- nox-fingerprint:([a-f\d]{32,128}) -->/gi)];
+  const markers = [...section.matchAll(FINGERPRINT_MARKER)];
   for (let index = 0; index < markers.length; index += 1) {
     const marker = markers[index];
     const blockEnd = markers[index + 1]?.index ?? section.length;
@@ -156,16 +158,48 @@ function replaceReportSection(body, section) {
   return `${original.trim()}${original.trim() ? '\n\n' : ''}${section}`;
 }
 
-function evidenceSha(body, fingerprint) {
-  const escapedFingerprint = fingerprint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const marker = new RegExp(`<!-- nox-fingerprint:${escapedFingerprint} -->([\\s\\S]*?)(?=<!-- nox-fingerprint:|${REPORT_END}|$)`, 'i');
-  const start = body?.indexOf(REPORT_START) ?? -1;
-  const end = body?.indexOf(REPORT_END) ?? -1;
-  const source = start >= 0 && end >= start
-    ? body.slice(start + REPORT_START.length, end)
-    : body || '';
-  const match = source.match(marker);
-  return match?.[1]?.match(/\*\*Source revision:\*\*\s*\[[^\]]*\]\([^\s)]*\/commit\/([a-f\d]{7,64})\)/i)?.[1];
+// Older reporter versions wrote one generated block per issue, ending with
+// LEGACY_DISCLAIMER. Move those blocks out of the human-authored text so an
+// upgraded issue shows one current record per fingerprint, and so their revision
+// evidence still takes part in the stale-scan check.
+function extractLegacyBlocks(body) {
+  const original = typeof body === 'string' ? body : '';
+  const start = original.indexOf(REPORT_START);
+  const end = original.indexOf(REPORT_END);
+  const hasSection = start >= 0 && end >= start;
+  const outside = hasSection
+    ? [original.slice(0, start), original.slice(end + REPORT_END.length)]
+    : [original];
+  const blocks = new Map();
+  const cleaned = outside.map((part) => {
+    let remaining = part;
+    for (;;) {
+      const marker = new RegExp(FINGERPRINT_MARKER.source, 'i').exec(remaining);
+      if (!marker) break;
+      const disclaimerAt = remaining.indexOf(LEGACY_DISCLAIMER, marker.index);
+      const nextMarker = new RegExp(FINGERPRINT_MARKER.source, 'i').exec(remaining.slice(marker.index + marker[0].length));
+      const nextAt = nextMarker ? marker.index + marker[0].length + nextMarker.index : -1;
+      // Only a block that ends with the generated disclaimer is reporter-written.
+      if (disclaimerAt < 0 || (nextAt >= 0 && nextAt < disclaimerAt)) break;
+      const fingerprint = marker[1].toLowerCase();
+      if (!blocks.has(fingerprint)) blocks.set(fingerprint, remaining.slice(marker.index, disclaimerAt).trim());
+      remaining = `${remaining.slice(0, marker.index).trimEnd()}\n\n${remaining.slice(disclaimerAt + LEGACY_DISCLAIMER.length).trimStart()}`;
+    }
+    return remaining;
+  });
+  const cleanedBody = hasSection
+    ? `${cleaned[0]}${original.slice(start, end + REPORT_END.length)}${cleaned[1]}`
+    : cleaned[0];
+  return { body: cleanedBody.trim(), blocks };
+}
+
+function blockSha(block) {
+  return block?.match(/\*\*Source revision:\*\*\s*\[[^\]]*\]\([^\s)]*\/commit\/([a-f\d]{7,64})\)/i)?.[1];
+}
+
+function isReporterLabel(label) {
+  const name = typeof label === 'string' ? label : label?.name;
+  return typeof name === 'string' && name.toLowerCase() === ISSUE_LABEL;
 }
 
 function issueTitle(finding) {
@@ -183,7 +217,7 @@ async function reportNoxIssues({ github, context, report, baseline }) {
     ...repository,
     per_page: 100,
   });
-  if (!labels.some((label) => label.name === ISSUE_LABEL)) {
+  if (!labels.some((label) => isReporterLabel(label))) {
     await github.rest.issues.createLabel({ ...repository, name: ISSUE_LABEL, color: 'd73a4a', description: 'Findings reported by Nox security scans' });
   }
 
@@ -198,10 +232,10 @@ async function reportNoxIssues({ github, context, report, baseline }) {
   for (const issue of issues) {
     if (issue.pull_request) continue;
     byIssueNumber.set(issue.number, issue);
-    const hasReporterLabel = (issue.labels || []).some((label) => (typeof label === 'string' ? label : label.name) === ISSUE_LABEL);
+    const hasReporterLabel = (issue.labels || []).some((label) => isReporterLabel(label));
     if (hasReporterLabel) reporterIssues.add(issue.number);
     if (hasReporterLabel) {
-      for (const match of issue.body?.matchAll(/<!-- nox-fingerprint:([a-f\d]{32,128}) -->/gi) || []) {
+      for (const match of issue.body?.matchAll(FINGERPRINT_MARKER) || []) {
         const fingerprint = match[1].toLowerCase();
         if (!byFingerprint.has(fingerprint)) byFingerprint.set(fingerprint, issue);
       }
@@ -224,10 +258,14 @@ async function reportNoxIssues({ github, context, report, baseline }) {
   }
 
   for (const { issue, findings: linkedFindings } of groupedByIssue.values()) {
-    const activeFindings = existingFindingBlocks(issue.body);
+    const legacy = extractLegacyBlocks(issue.body);
+    const activeFindings = existingFindingBlocks(legacy.body);
+    for (const [fingerprint, block] of legacy.blocks) {
+      if (!activeFindings.has(fingerprint)) activeFindings.set(fingerprint, block);
+    }
     let staleScan = false;
     for (const finding of linkedFindings) {
-      const previousSha = evidenceSha(issue.body, finding.fingerprint);
+      const previousSha = blockSha(activeFindings.get(finding.fingerprint));
       if (previousSha && previousSha !== evidence.sha) {
         const comparison = await github.rest.repos.compareCommitsWithBasehead({ ...repository, basehead: `${previousSha}...${evidence.sha}` });
         if (comparison.data.status !== 'ahead') {
@@ -243,8 +281,10 @@ async function reportNoxIssues({ github, context, report, baseline }) {
       counts.existing += linkedFindings.length;
       continue;
     }
-    const nextBody = replaceReportSection(issue.body, reportSection([...activeFindings.values()]));
-    const title = linkedFindings.length === 1 ? issueTitle(linkedFindings[0]) : issue.title;
+    const nextBody = replaceReportSection(legacy.body, reportSection([...activeFindings.values()]));
+    // Existing titles may be maintainer-written or describe several findings;
+    // only issues the reporter creates get a generated title.
+    const title = issue.title;
     const nextLabels = reporterIssues.has(issue.number) ? undefined : [...new Set([...(issue.labels || []).map((label) => typeof label === 'string' ? label : label.name), ISSUE_LABEL])];
     const changes = { title, body: nextBody, ...(nextLabels ? { labels: nextLabels } : {}) };
     if (issue.state === 'closed') changes.state = 'open';

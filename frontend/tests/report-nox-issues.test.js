@@ -303,3 +303,76 @@ test('reopens the issue linked from a baseline entry when its finding recurs', a
   assert.match(issue.body, /nox-fingerprint:/);
   assert.match(issue.body, /\/commit\/abc123/);
 });
+
+function legacyIssue(number, fingerprint, sha, extra = {}) {
+  return {
+    number,
+    state: 'open',
+    title: 'Nox RULE-1 high: finding',
+    labels: [{ name: 'nox-finding' }],
+    body: issueBody(
+      { fingerprint, ruleID: 'RULE-1', severity: 'high', message: 'finding', locations: [{ file: 'a.go' }] },
+      { repositoryURL: 'https://github.com/owner/repo', sha, runURL: 'https://github.com/owner/repo/actions/runs/1' },
+    ),
+    ...extra,
+  };
+}
+
+test('removes legacy revision evidence when upgrading an issue to the managed section', async () => {
+  const fingerprint = 'a'.repeat(64);
+  const legacySha = 'b'.repeat(40);
+  const newSha = 'c'.repeat(40);
+  const issue = legacyIssue(20, fingerprint, legacySha);
+  const github = fakeGithub([issue], { olderSha: legacySha, newerSha: newSha });
+  const finding = { RuleID: 'RULE-1', Severity: 'high', Message: 'finding', Fingerprint: fingerprint, Location: { FilePath: 'a.go' } };
+
+  await reportNoxIssues({ github, context: context({ sha: newSha }), report: { findings: [finding] }, baseline: { entries: [] } });
+
+  assert.doesNotMatch(issue.body, new RegExp(`commit/${legacySha}`));
+  assert.equal((issue.body.match(new RegExp(`nox-fingerprint:${fingerprint}`, 'g')) || []).length, 1);
+});
+
+test('keeps revision checks for a legacy fingerprint beside a managed section', async () => {
+  const managedFingerprint = 'a'.repeat(64);
+  const legacyFingerprint = 'e'.repeat(64);
+  const newerSha = 'c'.repeat(40);
+  const olderSha = 'b'.repeat(40);
+  const legacy = legacyIssue(21, legacyFingerprint, newerSha).body;
+  const issue = legacyIssue(21, legacyFingerprint, newerSha);
+  const github = fakeGithub([issue], { olderSha, newerSha });
+  // Simulate an issue that already has a managed section for another fingerprint
+  // while the legacy block for this fingerprint still sits outside it.
+  issue.body = `${legacy}\n\n<!-- nox-report:start -->\n## Nox security findings\n\n<!-- nox-fingerprint:${managedFingerprint} -->\n### RULE-2 · low\n\n**Source revision:** [\`${newerSha}\`](https://github.com/owner/repo/commit/${newerSha})  \n\nThese reports record what Nox observed at each linked revision. They are not independent proof of exploitability or claims that findings persist in later revisions.\n<!-- nox-report:end -->`;
+  const finding = { RuleID: 'RULE-1', Severity: 'high', Message: 'finding', Fingerprint: legacyFingerprint, Location: { FilePath: 'a.go' } };
+
+  const result = await reportNoxIssues({ github, context: context({ sha: olderSha }), report: { findings: [finding] }, baseline: { entries: [] } });
+
+  assert.equal(result.updated, 0);
+  assert.doesNotMatch(issue.body, new RegExp(`commit/${olderSha}`));
+});
+
+test('keeps the title of an existing issue when a scan links a single finding', async () => {
+  const issue = { number: 58, state: 'open', title: 'Tracked dependency alerts', body: 'Maintainer rationale.', labels: [{ name: 'nox-finding' }] };
+  const github = fakeGithub([issue]);
+  const baseline = { entries: [{ fingerprint: 'a'.repeat(64), reason: 'Tracked in https://github.com/owner/repo/issues/58' }] };
+  const report = { findings: [{ RuleID: 'RULE-1', Severity: 'medium', Message: 'first alert', Fingerprint: 'a'.repeat(64), Location: { FilePath: 'a.go' } }] };
+
+  await reportNoxIssues({ github, context: context(), report, baseline });
+
+  assert.equal(issue.title, 'Tracked dependency alerts');
+  assert.match(issue.body, /first alert/);
+});
+
+test('matches the reporter label without regard to case', async () => {
+  const fingerprint = 'a'.repeat(64);
+  const issue = legacyIssue(30, fingerprint, 'abc123', { labels: [{ name: 'Nox-Finding' }] });
+  const github = fakeGithub([issue]);
+  github.rest.issues.listLabelsForRepo = async () => ({ data: [{ name: 'Nox-Finding' }] });
+  github.rest.issues.createLabel = async () => { throw new Error('label already exists'); };
+  const report = { findings: [{ RuleID: 'RULE-1', Severity: 'high', Message: 'finding', Fingerprint: fingerprint, Location: { FilePath: 'a.go' } }] };
+
+  const result = await reportNoxIssues({ github, context: context(), report, baseline: { entries: [] } });
+
+  assert.equal(result.created, 0);
+  assert.equal(github.issues.length, 1);
+});
