@@ -48,6 +48,30 @@
       "severity": "medium",
       "reason": "Temporary maintainer-approved release exception through 2026-11-20; review by this date, and remove the baseline as soon as a supported Node runtime ships OpenSSL 3.5.10+. Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. Nox confirmed four OpenSSL 3.5.9 advisories in the pinned Node image; vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed.",
       "created_at": "2026-11-13T20:14:12.127752Z"
+    },
+    {
+      "fingerprint": "6d7de04ef2452a7d66a9403cc17b38d572628df7cfcba7b84d6247e68e253540",
+      "rule_id": "VULN-001",
+      "file_path": "frontend/Dockerfile",
+      "severity": "high",
+      "reason": "Temporary maintainer-approved release exception through 2026-11-20, extending the existing exception for OpenSSL 3.5.9 in the pinned Node image to two advisories Nox reported on 2026-11-17 (CVE-2026-124709, CVE-2026-35190). Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. No supported Node release (22.23.5, 24.22.3, 26.13.1) and no Alpine v3.24 libssl3 package ships OpenSSL 3.5.10 as of 2026-11-17. Vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed; remove it when the base image ships OpenSSL 3.5.10+.",
+      "created_at": "2026-11-17T20:22:48.485532Z"
+    },
+    {
+      "fingerprint": "95bf7d85016061671297507f50d7548e02acb780b350df0bc615d0767279122e",
+      "rule_id": "VULN-001",
+      "file_path": "frontend/Dockerfile",
+      "severity": "medium",
+      "reason": "Temporary maintainer-approved release exception through 2026-11-20, extending the existing exception for OpenSSL 3.5.9 in the pinned Node image to two advisories Nox reported on 2026-11-17 (CVE-2026-124709, CVE-2026-35190). Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. No supported Node release (22.23.5, 24.22.3, 26.13.1) and no Alpine v3.24 libssl3 package ships OpenSSL 3.5.10 as of 2026-11-17. Vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed; remove it when the base image ships OpenSSL 3.5.10+.",
+      "created_at": "2026-11-17T20:22:48.485532Z"
+    },
+    {
+      "fingerprint": "7bfac57a77d7f0d83c2bb31b2c0bbf1b8dde061a0c1b5152318becb5fa1176b5",
+      "rule_id": "VULN-001",
+      "file_path": "frontend/package-lock.json",
+      "severity": "high",
+      "reason": "Maintainer-approved exception recorded 2026-11-17; review by 2026-11-20. GHSA-fc5q-39xc-vjpf (ReDoS through repeated extglobs) affects picomatch <= 4.0.7 and no patched release exists. picomatch is a build- and dev-time dependency of vite, vitest, tinyglobby, fdir and @vue/language-core; it matches glob patterns from repository configuration, not request input, and is not part of the built frontend bundle. Reachability with attacker-controlled patterns is not established. This baseline records accepted interim risk and is not evidence the finding is fixed; remove it when a patched picomatch is available and the lockfile is updated.",
+      "created_at": "2026-11-17T20:22:48.485532Z"
     }
   ]
 }
