@@ -6,7 +6,7 @@ stalled work, and the merge decision. A check or review only describes the
 revision it inspected.
 
 ```mermaid
-%%{init: {"theme": "base", "flowchart": {"curve": "basis", "nodeSpacing": 34, "rankSpacing": 42, "padding": 16, "wrappingWidth": 420}, "themeVariables": {"fontFamily": "IBM Plex Mono, ui-monospace, SFMono-Regular, Menlo, monospace", "fontSize": "14px", "lineColor": "#8a91a7", "edgeLabelBackground": "#111525", "textColor": "#e9edf7"}}}%%
+%%{init: {"theme": "base", "flowchart": {"curve": "basis", "nodeSpacing": 34, "rankSpacing": 42, "padding": 16, "wrappingWidth": 420}, "themeVariables": {"fontSize": "14px", "lineColor": "#8a91a7", "edgeLabelBackground": "#111525", "textColor": "#e9edf7"}}}%%
 flowchart TB
     T(["TICKET"]):::start
     G1{{"① TICKET HOLDS?"}}:::gate
