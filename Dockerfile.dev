@@ -1,8 +1,11 @@
-FROM golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea
+FROM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf
 LABEL maintainer="Ghostline maintainers"
 WORKDIR /app
 COPY --chown=65532:65532 go.mod go.sum ./
 RUN go mod download
+# zlib: ALPINE-CVE-2026-4738 is fixed in 1.4-r0, which the pinned base image does not ship yet.
+# The version constraint fails the build if the fixed package cannot be installed.
+RUN apk add --no-cache 'zlib>=1.4-r0'
 COPY --chown=65532:65532 backend ./backend
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/local/bin/ghostline ./backend \
     && chown 65532:65532 /usr/local/bin/ghostline

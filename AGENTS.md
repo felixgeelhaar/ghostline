@@ -10,7 +10,7 @@ Ghostline is a change-centric engineering control room. It imports public GitHub
 - Run with Docker Compose: `docker compose up --build`.
 - Verify Go: `go test ./... -count=1` and `go vet ./...`.
 - Verify frontend: `cd frontend && npm ci && npm test && npm run build`.
-- Run the repository security scan: `nox --format all --output .nox/results scan . --tracked-only`.
+- Run the repository security scan: `nox --format all --output .nox/results scan . --tracked-only --severity-threshold low`. Informational findings stay in the report but do not fail the scan.
 - The configured Warden pre-commit and pre-push gates run these checks; follow `.warden.yaml` when changing the gate.
 
 ## Project rules

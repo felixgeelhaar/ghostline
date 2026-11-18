@@ -2,6 +2,22 @@
   "schema_version": "1.0.0",
   "entries": [
     {
+      "fingerprint": "41131eda8752e6de09401f8c4866ec55ec1e19705e88f31926584175a8567eb1",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile",
+      "severity": "medium",
+      "reason": "ALPINE-CVE-2026-4738 (zlib 1.3.2-r1) is in the pinned golang:1.27.4-alpine image used only as the backend build stage; the statically linked binary is copied into a scratch image that contains no zlib. No golang Alpine digest ships zlib 1.4-r0 yet, and the Debian builder carries 229 critical or high advisories. Remove when the FROM digest includes zlib >= 1.4-r0. Maintainer decision on PR #62 (2026-11-18), see docs/nox-temporary-exception.md.",
+      "created_at": "2026-11-10T20:25:45.47479Z"
+    },
+    {
+      "fingerprint": "241d7b7fe049c814c60c3966c0d00dc216a37a8276ee5554935dccb082ecb95e",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile.dev",
+      "severity": "medium",
+      "reason": "ALPINE-CVE-2026-4738 (zlib 1.3.2-r1) is in the pinned golang:1.27.4-alpine base image of the development image. The Dockerfile installs zlib>=1.4-r0 and fails the build if it is unavailable; Nox inventories the FROM image, not the built one. Remove when the FROM digest includes zlib >= 1.4-r0. Maintainer decision on PR #62 (2026-11-18), see docs/nox-temporary-exception.md.",
+      "created_at": "2026-11-18T00:00:00Z"
+    },
+    {
       "fingerprint": "132cceb6c386492d0d153cb33f4d1098807e55d62d90db0eb6fc5b054fdc8f23",
       "rule_id": "VULN-001",
       "file_path": "frontend/Dockerfile",
