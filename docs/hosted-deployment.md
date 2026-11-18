@@ -13,18 +13,24 @@ Ghostline can run as one production container behind an HTTPS ingress. The image
 Start and inspect the service:
 
 ```sh
-GHOSTLINE_SESSION_SECRET="$(secret-manager read ghostline/session-secret)" \
-GITHUB_OAUTH_CLIENT_SECRET="$(secret-manager read ghostline/github-oauth-client-secret)" \
-docker compose --env-file .env.hosted -f compose.hosted.yml up --build -d
-docker compose --env-file .env.hosted -f compose.hosted.yml ps
+(
+  export GHOSTLINE_SESSION_SECRET="$(secret-manager read ghostline/session-secret)"
+  export GITHUB_OAUTH_CLIENT_SECRET="$(secret-manager read ghostline/github-oauth-client-secret)"
+  docker compose --env-file .env.hosted -f compose.hosted.yml up --build -d
+  docker compose --env-file .env.hosted -f compose.hosted.yml ps
+)
 ```
+
+Every Compose command for this file, including `ps`, `logs`, and `down`, needs both secrets because Compose interpolates the whole file first. The subshell keeps them out of `.env.hosted` and out of your interactive shell.
 
 Stop it with:
 
 ```sh
-GHOSTLINE_SESSION_SECRET="$(secret-manager read ghostline/session-secret)" \
-GITHUB_OAUTH_CLIENT_SECRET="$(secret-manager read ghostline/github-oauth-client-secret)" \
-docker compose --env-file .env.hosted -f compose.hosted.yml down
+(
+  export GHOSTLINE_SESSION_SECRET="$(secret-manager read ghostline/session-secret)"
+  export GITHUB_OAUTH_CLIENT_SECRET="$(secret-manager read ghostline/github-oauth-client-secret)"
+  docker compose --env-file .env.hosted -f compose.hosted.yml down
+)
 ```
 
 The app fails at startup unless production mode, required sign-in, the built frontend, an HTTPS callback, a 32-byte session secret, OAuth credentials, and at least one allowed GitHub account ID are configured. `/api` access requires GitHub sign-in. The container runs non-root from a minimal scratch image, drops Linux capabilities, and has a read-only filesystem. Docker Compose and the image health check call the unauthenticated `/api/health` endpoint; this confirms the HTTP process responds, not application correctness or revision validity.
