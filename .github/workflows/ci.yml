@@ -47,7 +47,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
@@ -56,3 +56,44 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+
+  production-container:
+    name: Production container smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Build production image
+        run: docker build --tag ghostline:ci .
+      - name: Start with required authentication
+        run: |
+          docker run --detach --name ghostline-ci \
+            --publish 127.0.0.1:18080:8080 \
+            --read-only --tmpfs /tmp --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --env GITHUB_OAUTH_CLIENT_ID=ci-client \
+            --env GITHUB_OAUTH_CLIENT_SECRET=ci-secret \
+            --env GITHUB_OAUTH_CALLBACK_URL=https://ghostline.example/auth/callback \
+            --env GHOSTLINE_SESSION_SECRET="$(printf 'c%.0s' $(seq 1 40))" \
+            --env GHOSTLINE_ALLOWED_GITHUB_IDS=42 \
+            ghostline:ci
+      - name: Verify frontend and protected API
+        run: |
+          trap 'docker logs ghostline-ci; docker rm -f ghostline-ci >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:18080/api/health >/dev/null; then break; fi
+            sleep 2
+          done
+          html=$(curl --fail --silent http://127.0.0.1:18080/)
+          printf '%s' "$html" | grep -q '<div id="app">'
+          js_asset=$(printf '%s' "$html" | grep -oE '/assets/[^" ]+\.js' | head -n 1)
+          css_asset=$(printf '%s' "$html" | grep -oE '/assets/[^" ]+\.css' | head -n 1)
+          test -n "$js_asset"
+          test -n "$css_asset"
+          curl --fail --silent "http://127.0.0.1:18080$js_asset" --output /tmp/ghostline-app.js
+          curl --fail --silent "http://127.0.0.1:18080$css_asset" --output /tmp/ghostline-app.css
+          test -s /tmp/ghostline-app.js
+          test -s /tmp/ghostline-app.css
+          curl --fail --silent http://127.0.0.1:18080/api/session | grep -q '"authRequired":true'
+          status=$(curl --silent --output /dev/null --write-out '%{http_code}' --request POST --header 'Content-Type: application/json' --data '{}' http://127.0.0.1:18080/api/import)
+          test "$status" = 401

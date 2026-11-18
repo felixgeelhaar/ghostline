@@ -6,16 +6,16 @@
       "rule_id": "VULN-001",
       "file_path": "Dockerfile",
       "severity": "medium",
-      "reason": "ALPINE-CVE-2026-4738 (zlib 1.3.2-r1) is in the pinned golang:1.27-alpine base image; no upstream digest ships the fixed zlib 1.4-r0 yet. The Dockerfile installs zlib>=1.4-r0 during the build and fails if that version is unavailable, but Nox inventories the base image, not the built one. Remove this entry when the FROM digest moves to an image with zlib >= 1.4-r0.",
+      "reason": "ALPINE-CVE-2026-4738 (zlib 1.3.2-r1) is in the pinned golang:1.27.4-alpine image used only as the backend build stage; the statically linked binary is copied into a scratch image that contains no zlib. No golang Alpine digest ships zlib 1.4-r0 yet, and the Debian builder carries 229 critical or high advisories. Remove when the FROM digest includes zlib >= 1.4-r0. Maintainer decision on PR #62 (2026-11-18), see docs/nox-temporary-exception.md.",
       "created_at": "2026-11-10T20:25:45.47479Z"
     },
     {
-      "fingerprint": "23662a6371f601220a63a88283a1fbf47a7d8f37b2dfcfef55c212c9762efc67",
+      "fingerprint": "241d7b7fe049c814c60c3966c0d00dc216a37a8276ee5554935dccb082ecb95e",
       "rule_id": "VULN-001",
-      "file_path": "frontend/Dockerfile",
+      "file_path": "Dockerfile.dev",
       "severity": "medium",
-      "reason": "ALPINE-CVE-2026-4738 affects zlib 1.3.2-r1 embedded in node:22.23.5-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a. Alpine v3.24 has not published fixed zlib 1.4-r0 yet. The Dockerfile installs zlib>=1.4-r0 and fails the build if unavailable; Nox inventories the FROM image rather than the post-install image. Remove when the base digest includes fixed zlib.",
-      "created_at": "2026-11-10T20:25:45.47479Z"
+      "reason": "ALPINE-CVE-2026-4738 (zlib 1.3.2-r1) is in the pinned golang:1.27.4-alpine base image of the development image. The Dockerfile installs zlib>=1.4-r0 and fails the build if it is unavailable; Nox inventories the FROM image, not the built one. Remove when the FROM digest includes zlib >= 1.4-r0. Maintainer decision on PR #62 (2026-11-18), see docs/nox-temporary-exception.md.",
+      "created_at": "2026-11-18T00:00:00Z"
     },
     {
       "fingerprint": "132cceb6c386492d0d153cb33f4d1098807e55d62d90db0eb6fc5b054fdc8f23",

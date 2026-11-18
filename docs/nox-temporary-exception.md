@@ -8,7 +8,13 @@
 
 Nox reports four medium-severity advisories for OpenSSL 3.5.9 bundled with the frontend's Node runtime: CVE-2026-95691, CVE-2026-95692, CVE-2026-88823, and CVE-2026-88822. The findings identify an affected version, but Nox cannot establish whether Ghostline reaches the vulnerable code paths. This exception records unresolved risk; it does not mean the advisories are fixed or proven unreachable.
 
-The frontend image is pinned to `node:22.23.5-alpine3.24`. Nox scanned that image and still reported OpenSSL 3.5.9. Updating Alpine's system OpenSSL package alone does not replace the OpenSSL bundled in Node.
+The frontend development image was pinned to `node:22.23.5-alpine3.24` when this exception was created. Nox scanned that image and still reported OpenSSL 3.5.9. Updating the operating-system OpenSSL package alone does not replace the OpenSSL bundled in Node. The frontend development image and production build now use the pinned `node:26.13.1-bookworm-slim` digest, the current Node LTS line. A fresh tracked Nox scan must establish whether this runtime clears the OpenSSL advisories; retain the exception until the scan confirms that it does. The final production image is built from `scratch` and does not include the Node builder image. The production builder's OpenSSL findings remain visible in Nox and are not covered by this exception.
+
+## Go builder image and the zlib alert
+
+The Node images moved to the pinned `node:26.13.1-bookworm-slim` digest, and a tracked Nox scan no longer reports the Alpine zlib alert for them. The Go images stay on the pinned `golang:1.27.4-alpine` digest. A Debian `golang:1.27.4-bookworm` builder was tried, but a tracked Nox scan with vulnerability lookups available reported 229 critical or high Debian package advisories in it, against none for the Alpine image.
+
+Nox still reports ALPINE-CVE-2026-4738 (medium, zlib 1.3.2-r1) for the Alpine Go image in `Dockerfile` and `Dockerfile.dev`. In `Dockerfile` it is the build stage only: the statically linked binary is copied into a `scratch` image that contains no zlib. `Dockerfile.dev` runs from that image, so it installs `zlib>=1.4-r0` and fails the build if the fixed package is unavailable; Nox inventories the base image, not the built one. The maintainer decided on PR #62 (2026-11-18) to baseline both findings in `.nox/baseline.json`: the `Dockerfile` entry keeps the fingerprint already approved on `main`, and `Dockerfile.dev` gets its own. Remove both when the pinned Go Alpine digest ships zlib 1.4-r0 or later. No supported `golang:1.27.4-alpine` digest did on 2026-11-18.
 
 ## Amendment: 2026-11-17
 
@@ -24,9 +30,9 @@ The two OpenSSL advisories join the original four under the same boundary and re
 
 ## Exception boundary
 
-The original four fingerprints and the three added on 2026-11-17 are baselined in `.nox/baseline.json` through 2026-11-20 to unblock the current release. Nox baselines do not expire automatically. The maintainer must review this record and issue #45 by the review date, remove the six OpenSSL baseline entries as soon as a supported runtime with OpenSSL 3.5.10 or later is available, and seek a new explicit decision before extending the exception.
+The original four OpenSSL fingerprints and the three added on 2026-11-17 are baselined in `.nox/baseline.json` through 2026-11-20 to unblock the current release. Nox baselines do not expire automatically. The maintainer must review this record and issue #45 by the review date, remove the six OpenSSL baseline entries as soon as a supported runtime with OpenSSL 3.5.10 or later is available, and seek a new explicit decision before extending the exception. OpenSSL findings in the production builder are not baselined.
 
-The exception does not cover findings other than the seven listed above. Keep Nox and Warden enabled and preserve the scan output with the release evidence.
+The exception does not cover findings other than the seven listed above; the two zlib entries are recorded in the section on the Go builder image. Keep Nox and Warden enabled and preserve the scan output with the release evidence.
 
 ## Exit criteria
 

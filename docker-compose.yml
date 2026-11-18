@@ -2,7 +2,7 @@ services:
   backend:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     environment:
       HOST: 0.0.0.0
       PORT: 8080
@@ -20,7 +20,7 @@ services:
     expose:
       - "8080"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/health || exit 1"]
+      test: ["CMD", "/usr/local/bin/ghostline", "healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 6

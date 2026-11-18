@@ -70,13 +70,15 @@ Open the URL Vite prints. The frontend proxies `/api` requests to `http://localh
 
 Local mode leaves sign-in disabled. Protected OAuth mode is supported only when a trusted HTTPS ingress serves Ghostline at the same public origin as `GITHUB_OAUTH_CALLBACK_URL`; direct access to the local HTTP Vite URL is rejected by the same-origin check. Configure `GHOSTLINE_AUTH_MODE=required`, GitHub OAuth client ID and secret, the matching HTTPS callback, a 32-byte `GHOSTLINE_SESSION_SECRET`, and one or more numeric IDs in `GHOSTLINE_ALLOWED_GITHUB_IDS`. If the ingress proxies requests to Vite, set `GHOSTLINE_TRUSTED_PROXY_CIDRS` to its peer CIDRs and configure it to overwrite `X-Real-IP`. Local Vite proxies `/api` and `/auth` to the backend.
 
-To run both services in containers:
+To run the local Vite development stack in containers:
 
 ```sh
 docker compose up --build
 ```
 
-Open `http://localhost:5173`, or the configured `GHOSTLINE_PORT`, for the unauthenticated local demo. Compose exposes the frontend on network interfaces by default; use `GHOSTLINE_BIND_ADDRESS` to select a bind address. Compose forwards `GITHUB_TOKEN` from the environment to the backend when set. The token is used only for repository visibility metadata; public PR, check, review-comment, annotation, and referenced-issue data are fetched without credentials. If a repository becomes private after the metadata check, GitHub rejects the later unauthenticated data request. Never commit or paste a token into a report. Compose accepts the GitHub OAuth configuration described in the [README](../README.md#protected-hosted-mode-sign-in), but protected sign-in works only through the matching HTTPS ingress, and its frontend remains a Vite development server rather than production hosting.
+Open `http://localhost:5173` for the unauthenticated local demo. Compose exposes the frontend on network interfaces by default; use `GHOSTLINE_BIND_ADDRESS` to select a bind address. Compose forwards `GITHUB_TOKEN` from the environment to the backend when set. The token is used only for repository visibility metadata; public PR, check, review-comment, annotation, and referenced-issue data are fetched without credentials. If a repository becomes private after the metadata check, GitHub rejects the later unauthenticated data request. Never commit or paste a token into a report. This stack runs Vite and is intended for local or trusted demos.
+
+For the production-built, same-origin container, follow the [hosted deployment guide](hosted-deployment.md). It requires protected GitHub sign-in and an HTTPS ingress; it remains a single-instance deployment because authentication and rate-limit state are held in process memory.
 
 Run the project checks:
 
@@ -103,3 +105,5 @@ The running change activity index, imported from Ghostline PR #49, is shown in [
 The current source-backed review timeline, imported from Ghostline PR #50 at revision `4bae19d`, is shown in [this screenshot](feature-evidence/activity-index-review-timeline.jpg). It shows observed commit and published Qodo comment events; it does not imply that event order proves a repair relationship. Parser-incompleteness and partial-check-placement warnings are edge states covered by tests, not present in this PR's current records.
 
 The [live referenced-issues panel](feature-evidence/referenced-issue-live-2026-11-13.jpg) shows issue states imported from a public pull request. This example’s referenced issues are now closed; the merged/open warning is covered by UI tests using explicit fixtures.
+
+The [production-mode sign-in screen](feature-evidence/hosted-production-sign-in.jpg) is served by the Go process from the built Vue bundle. It was captured from a local production-configured run with test OAuth settings; no GitHub sign-in was completed. The production Docker image itself is built and smoke-tested by the `Production container smoke test` CI job.
