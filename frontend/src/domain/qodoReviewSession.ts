@@ -99,8 +99,14 @@ export function qodoCitationURL(pullRequestUrl: string, source?: string): string
   }
 }
 
-export function findingRevisionFreshness(finding: QodoManagedFinding, headSha: string): 'current' | 'stale' | 'unknown' {
-  if (!fullSha.safeParse(headSha).success || !finding.gitSha) return 'unknown'
+export type FindingRevisionFreshness = 'current' | 'stale' | 'missing' | 'unknown'
+
+// A finding without its own revision is "missing" whatever the head is: a
+// linked run revision identifies the run, not the finding. "unknown" means the
+// finding has a revision but there is no valid imported head to compare it with.
+export function findingRevisionFreshness(finding: QodoManagedFinding, headSha: string): FindingRevisionFreshness {
+  if (!finding.gitSha) return 'missing'
+  if (!fullSha.safeParse(headSha).success) return 'unknown'
   return finding.gitSha.toLowerCase() === headSha.toLowerCase() ? 'current' : 'stale'
 }
 
@@ -115,7 +121,7 @@ export type ReviewAttentionSummary = {
   unrecognizedFindingCount: number
   currentFindingCount: number
   staleFindingCount: number
-  unknownFindingRevisionCount: number
+  missingFindingRevisionCount: number
   implementedFindingCount: number
   dismissedFindingCount: number
 }
@@ -202,7 +208,7 @@ function baseReviewAttentionSummary(review: QodoStructuredReview, headSha: strin
   const unclassifiedFindingCount = unspecifiedFindingCount + unrecognizedFindingCount
   const staleFindingCount = review.findings.filter((finding) => findingRevisionFreshness(finding, headSha) === 'stale').length
   const currentFindingCount = review.findings.filter((finding) => findingRevisionFreshness(finding, headSha) === 'current').length
-  const unknownFindingRevisionCount = review.findings.filter((finding) => !finding.gitSha).length
+  const missingFindingRevisionCount = review.findings.filter((finding) => findingRevisionFreshness(finding, headSha) === 'missing').length
   const counts = {
     findingCount: review.findings.length,
     openFindingCount,
@@ -212,7 +218,7 @@ function baseReviewAttentionSummary(review: QodoStructuredReview, headSha: strin
     implementedFindingCount,
     dismissedFindingCount,
     staleFindingCount,
-    unknownFindingRevisionCount,
+    missingFindingRevisionCount,
   }
 
   const activeHeadRun = runningReviewRunForHead(review, headSha)
@@ -320,15 +326,15 @@ function baseReviewAttentionSummary(review: QodoStructuredReview, headSha: strin
 
   if (openFindingCount > 0) {
     const uncertainty = unclassifiedFindingCount > 0 ? ` ${unclassifiedFindingCount} finding${unclassifiedFindingCount === 1 ? ' has' : 's have'} no recognized status.` : ''
-    const revisionUncertainty = unknownFindingRevisionCount > 0
-      ? ` ${unknownFindingRevisionCount} finding${unknownFindingRevisionCount === 1 ? ' has' : 's have'} no finding-specific revision, so ${unknownFindingRevisionCount === 1 ? 'its Qodo status cannot' : 'their Qodo statuses cannot'} be tied to the imported PR head.`
+    const revisionUncertainty = missingFindingRevisionCount > 0
+      ? ` ${missingFindingRevisionCount} finding${missingFindingRevisionCount === 1 ? ' has' : 's have'} no finding-specific revision, so ${missingFindingRevisionCount === 1 ? 'its Qodo status cannot' : 'their Qodo statuses cannot'} be tied to the imported PR head.`
       : ''
     return {
       ...counts,
       kind: 'attention',
       title: `${openFindingCount} finding${openFindingCount === 1 ? '' : 's'} reported open`,
       detail: `Qodo reports ${openFindingCount} finding${openFindingCount === 1 ? '' : 's'} as open.${uncertainty}${revisionUncertainty} Qodo’s implemented or dismissed statuses do not independently verify correctness.`,
-      nextAction: unknownFindingRevisionCount > 0
+      nextAction: missingFindingRevisionCount > 0
         ? 'Inspect the open findings below, then confirm missing finding-specific revisions against their Qodo sources and linked runs before relying on reported status.'
         : 'Inspect the open findings below and follow their source and revision links.',
     }
@@ -344,12 +350,12 @@ function baseReviewAttentionSummary(review: QodoStructuredReview, headSha: strin
     }
   }
 
-  if (unknownFindingRevisionCount > 0) {
-    const revisionDetail = `${unknownFindingRevisionCount} finding${unknownFindingRevisionCount === 1 ? ' has' : 's have'} no finding-specific revision. A linked run revision identifies that run, not the finding’s source revision.`
+  if (missingFindingRevisionCount > 0) {
+    const revisionDetail = `${missingFindingRevisionCount} finding${missingFindingRevisionCount === 1 ? ' has' : 's have'} no finding-specific revision. A linked run revision identifies that run, not the finding’s source revision.`
     return {
       ...counts,
       kind: 'attention',
-      title: 'Finding revision unconfirmed',
+      title: 'Finding revision missing',
       detail: revisionDetail,
       nextAction: 'Inspect the source finding and linked review run before relying on its status for the current PR head.',
     }
