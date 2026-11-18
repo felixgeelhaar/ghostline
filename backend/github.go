@@ -18,7 +18,10 @@ var (
 	errRateLimit = errors.New("rate limit")
 	// errServerTokenRateLimit means the configured server token, used only for
 	// visibility checks, is out of quota; the public API limit may still be fine.
-	errServerTokenRateLimit        = errors.New("server token rate limit")
+	errServerTokenRateLimit = errors.New("server token rate limit")
+	// errServerTokenRejected means GitHub refused the configured server token
+	// (expired or revoked), so repository visibility cannot be checked.
+	errServerTokenRejected         = errors.New("server token rejected")
 	errPrivateRepository           = errors.New("private repository is not supported")
 	errRepositoryVisibilityUnknown = errors.New("repository visibility is missing")
 )
@@ -159,6 +162,10 @@ func ensurePublicRepository(ctx context.Context, gh *githubClient, owner, repo s
 	if err := gh.getWithServerToken(ctx, path, &metadata); err != nil {
 		if errors.Is(err, errRateLimit) {
 			return errServerTokenRateLimit
+		}
+		var statusErr statusError
+		if errors.As(err, &statusErr) && statusErr.code == http.StatusUnauthorized {
+			return errServerTokenRejected
 		}
 		return err
 	}

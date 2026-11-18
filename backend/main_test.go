@@ -106,33 +106,45 @@ func TestPrivateRepositoryResponseMatchesMissingRepository(t *testing.T) {
 	}
 }
 
-func TestServerTokenQuotaExhaustionIsNotReportedAsPublicLimit(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/acme/app" {
-			t.Errorf("request after the visibility check failed: %s", r.URL.Path)
-		}
-		w.Header().Set("X-RateLimit-Remaining", "0")
-		w.WriteHeader(http.StatusForbidden)
-	}))
-	defer srv.Close()
-	gin.SetMode(gin.TestMode)
-	router := newRouter(&githubClient{baseURL: srv.URL, token: "visibility-token", http: srv.Client()})
-	for _, endpoint := range []struct{ path, body string }{
-		{"/api/import", `{"url":"https://github.com/acme/app/pull/7"}`},
-		{"/api/checks", `{"url":"https://github.com/acme/app/pull/7","sha":"` + strings.Repeat("a", 40) + `"}`},
-		{"/api/check-annotations", `{"url":"https://github.com/acme/app/pull/7","sha":"` + strings.Repeat("a", 40) + `","checkRunId":314,"page":1}`},
+func TestServerTokenFailuresNameTheServerToken(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		respond func(http.ResponseWriter)
+		want    string
+	}{
+		{"quota exhausted", func(w http.ResponseWriter) {
+			w.Header().Set("X-RateLimit-Remaining", "0")
+			w.WriteHeader(http.StatusForbidden)
+		}, "server’s GitHub token has reached its rate limit"},
+		{"token rejected", func(w http.ResponseWriter) { w.WriteHeader(http.StatusUnauthorized) }, "server’s GitHub token was rejected"},
 	} {
-		recorder := httptest.NewRecorder()
-		request := httptest.NewRequest(http.MethodPost, endpoint.path, strings.NewReader(endpoint.body))
-		request.Header.Set("Content-Type", "application/json")
-		router.ServeHTTP(recorder, request)
-		if recorder.Code != http.StatusServiceUnavailable {
-			t.Errorf("%s status = %d, want %d", endpoint.path, recorder.Code, http.StatusServiceUnavailable)
-		}
-		body := recorder.Body.String()
-		if strings.Contains(body, "public API") || !strings.Contains(body, "server’s GitHub token") {
-			t.Errorf("%s body = %s, want the server token's quota named instead of the public limit", endpoint.path, body)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/repos/acme/app" {
+					t.Errorf("request after the visibility check failed: %s", r.URL.Path)
+				}
+				tc.respond(w)
+			}))
+			defer srv.Close()
+			gin.SetMode(gin.TestMode)
+			router := newRouter(&githubClient{baseURL: srv.URL, token: "visibility-token", http: srv.Client()})
+			for _, endpoint := range []struct{ path, body string }{
+				{"/api/import", `{"url":"https://github.com/acme/app/pull/7"}`},
+				{"/api/checks", `{"url":"https://github.com/acme/app/pull/7","sha":"` + strings.Repeat("a", 40) + `"}`},
+				{"/api/check-annotations", `{"url":"https://github.com/acme/app/pull/7","sha":"` + strings.Repeat("a", 40) + `","checkRunId":314,"page":1}`},
+			} {
+				recorder := httptest.NewRecorder()
+				request := httptest.NewRequest(http.MethodPost, endpoint.path, strings.NewReader(endpoint.body))
+				request.Header.Set("Content-Type", "application/json")
+				router.ServeHTTP(recorder, request)
+				if recorder.Code != http.StatusServiceUnavailable {
+					t.Errorf("%s status = %d, want %d", endpoint.path, recorder.Code, http.StatusServiceUnavailable)
+				}
+				if body := recorder.Body.String(); !strings.Contains(body, tc.want) {
+					t.Errorf("%s body = %s, want it to contain %q", endpoint.path, body, tc.want)
+				}
+			}
+		})
 	}
 }
 

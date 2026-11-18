@@ -6,6 +6,7 @@ import { fetchGhostlineSession } from '../application/fetchGhostlineSession'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { fetchCheckAnnotations } from '../application/fetchCheckAnnotations'
 import type { PullRequest } from '../domain/pullRequest'
+import { GhostlineApiError } from '../application/apiError'
 import App from './App.vue'
 
 vi.mock('../application/fetchGhostlineSession', () => ({ fetchGhostlineSession: vi.fn() }))
@@ -131,6 +132,33 @@ describe('GitHub check annotations', () => {
     host!.querySelector<HTMLButtonElement>('.annotation-toggle')!.click()
     await vi.waitFor(() => expect(host?.textContent).toContain('Annotation after refresh.'))
     expect(fetchCheckAnnotations).toHaveBeenCalledTimes(2)
+  })
+
+  it('re-verifies the session when the current annotation request is rejected for sign-in', async () => {
+    vi.mocked(fetchCheckAnnotations).mockRejectedValue(new GhostlineApiError(401, 'Sign in to continue.', 'AUTH_REQUIRED'))
+    await mountImportedPR()
+    expect(fetchGhostlineSession).toHaveBeenCalledTimes(1)
+
+    host!.querySelector<HTMLButtonElement>('.annotation-toggle')!.click()
+    await vi.waitFor(() => expect(fetchGhostlineSession).toHaveBeenCalledTimes(2))
+  })
+
+  it('ignores a sign-in rejection from an annotation request made before the PR was refreshed', async () => {
+    let rejectStale: (error: unknown) => void = () => {}
+    vi.mocked(fetchCheckAnnotations).mockImplementationOnce(() => new Promise((_, reject) => { rejectStale = reject }))
+    await mountImportedPR()
+
+    host!.querySelector<HTMLButtonElement>('.annotation-toggle')!.click()
+    await vi.waitFor(() => expect(host?.textContent).toContain('Loading annotations from GitHub…'))
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(importPullRequest).toHaveBeenCalledTimes(2))
+    await settle()
+
+    rejectStale(new GhostlineApiError(401, 'Sign in to continue.', 'AUTH_REQUIRED'))
+    await settle()
+
+    expect(fetchGhostlineSession).toHaveBeenCalledTimes(1)
+    expect(host!.querySelector('.check-list')).not.toBeNull()
   })
 
   it('closes a panel opened during a same-PR refresh once the refreshed data arrives', async () => {

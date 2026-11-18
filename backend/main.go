@@ -290,6 +290,8 @@ func respondGitHubError(c *gin.Context, err error) {
 	// can see it, and a distinct reply would let callers probe for its existence.
 	case errors.Is(err, errNotFound), errors.Is(err, errPrivateRepository):
 		c.JSON(http.StatusNotFound, gin.H{"error": "Pull request not found. Check the URL and confirm the repository is public."})
+	case errors.Is(err, errServerTokenRejected):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "The server’s GitHub token was rejected, so repository visibility could not be checked. Replace the configured token."})
 	case errors.Is(err, errServerTokenRateLimit):
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "The server’s GitHub token has reached its rate limit, so repository visibility could not be checked. Try again later."})
 	case errors.Is(err, errRateLimit):

@@ -231,10 +231,10 @@ async function loadAnnotations(check: Check, sha: string, page: number) {
       annotationPages.value = { ...annotationPages.value, [key]: result }
     }
   } catch (e) {
+    // A request from a reset workspace can't speak for the current session.
+    if (!isLatestAnnotationRequest(key, request, generation)) return
     handleUnauthorized(e)
-    if (isLatestAnnotationRequest(key, request, generation)) {
-      annotationErrors.value = { ...annotationErrors.value, [key]: e instanceof Error ? e.message : 'Could not load GitHub annotations for this check.' }
-    }
+    annotationErrors.value = { ...annotationErrors.value, [key]: e instanceof Error ? e.message : 'Could not load GitHub annotations for this check.' }
   } finally {
     if (isLatestAnnotationRequest(key, request, generation)) annotationLoading.value = { ...annotationLoading.value, [key]: false }
   }
