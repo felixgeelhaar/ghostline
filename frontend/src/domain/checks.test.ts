@@ -5,12 +5,12 @@ const head = 'a'.repeat(40)
 const checks: RevisionChecks = { revisionSha: head, revisionShortSha: 'aaaaaaa', revisionUrl: `https://github.com/acme/app/commit/${head}`, availability: 'available', items: [] }
 
 describe('checkOutcome', () => {
-  it('uses the conclusion of a completed check', () => expect(checkOutcome({ name: 'go', kind: 'check_run', status: 'completed', conclusion: 'success' })).toEqual({ label: 'success', tone: 'pass' }))
+  it('uses the conclusion of a completed check', () => expect(checkOutcome({ id: 1, name: 'go', kind: 'check_run', status: 'completed', conclusion: 'success' })).toEqual({ label: 'success', tone: 'pass' }))
   it('marks failing conclusions', () => {
-    for (const conclusion of ['failure', 'error', 'timed_out', 'action_required', 'cancelled', 'startup_failure', 'stale']) expect(checkOutcome({ name: 'x', kind: 'check_run', status: 'completed', conclusion }).tone).toBe('fail')
+    for (const conclusion of ['failure', 'error', 'timed_out', 'action_required', 'cancelled', 'startup_failure', 'stale']) expect(checkOutcome({ id: 1, name: 'x', kind: 'check_run', status: 'completed', conclusion }).tone).toBe('fail')
   })
-  it('treats skipped and neutral results as neutral', () => expect(checkOutcome({ name: 'x', kind: 'check_run', status: 'completed', conclusion: 'skipped' }).tone).toBe('neutral'))
-  it('shows unfinished checks as running', () => expect(checkOutcome({ name: 'x', kind: 'check_run', status: 'in_progress' })).toEqual({ label: 'in progress', tone: 'running' }))
+  it('treats skipped and neutral results as neutral', () => expect(checkOutcome({ id: 1, name: 'x', kind: 'check_run', status: 'completed', conclusion: 'skipped' }).tone).toBe('neutral'))
+  it('shows unfinished checks as running', () => expect(checkOutcome({ id: 1, name: 'x', kind: 'check_run', status: 'in_progress' })).toEqual({ label: 'in progress', tone: 'running' }))
 })
 
 describe('isHeadCommit', () => {
@@ -29,9 +29,18 @@ describe('RevisionChecksSchema', () => {
 })
 
 describe('CheckSchema output evidence', () => {
+  it('keeps the GitHub ID of a commit status for source-linked activity', () => {
+    const status = { id: 271, name: 'legacy-ci', kind: 'commit_status', status: 'completed', conclusion: 'success' }
+    expect(CheckSchema.parse(status)).toEqual(status)
+  })
+
+  it('requires a check-run ID so annotations can be requested for that run', () => {
+    expect(CheckSchema.safeParse({ name: 'go', kind: 'check_run', status: 'completed' }).success).toBe(false)
+  })
+
   it('preserves GitHub check-run titles and summaries', () => {
     const check = {
-      name: 'nox', kind: 'check_run', status: 'completed', conclusion: 'success',
+      id: 7, name: 'nox', kind: 'check_run', status: 'completed', conclusion: 'success',
       outputTitle: 'No new alerts in code changed by this pull request',
       outputSummary: '[View all branch alerts](/acme/app/security/code-scanning?query=pr%3A7+tool%3Anox+is%3Aopen).',
       outputSummaryTruncated: false,
@@ -56,7 +65,7 @@ describe('CheckSchema output evidence', () => {
   })
 })
 
-const run = (name: string, status: string, conclusion?: string): Check => ({ name, kind: 'check_run', status, conclusion })
+const run = (name: string, status: string, conclusion?: string): Check => ({ id: 1, name, kind: 'check_run', status, conclusion })
 
 describe('summarizeChecks', () => {
   it('reports all passing', () => expect(summarizeChecks([run('a', 'completed', 'success'), run('b', 'completed', 'success')])).toEqual({ tone: 'pass', label: '2 of 2 passing' }))

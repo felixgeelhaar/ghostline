@@ -96,7 +96,17 @@ describe('structured Qodo review evidence', () => {
     expect(findingRevisionFreshness(review.findings[0]!, shaB)).toBe('stale')
     expect(findingRevisionFreshness(review.findings[0]!, shaA)).toBe('current')
     expect(findingRevisionFreshness(review.findings[0]!, '')).toBe('unknown')
-    expect(findingRevisionFreshness({ id: 'finding-2', title: 'Unknown revision' }, shaB)).toBe('unknown')
+    expect(findingRevisionFreshness({ id: 'finding-2', title: 'Unknown revision' }, shaB)).toBe('missing')
+  })
+
+  it('keeps a missing finding revision distinct from an unknown pull request head', () => {
+    const withRevision = { id: 'finding-1', title: 'Guard retries', gitSha: shaA }
+    const withoutRevision = { id: 'finding-2', title: 'No revision', reviewRunId: 'run-1' }
+
+    expect(findingRevisionFreshness(withRevision, '')).toBe('unknown')
+    expect(findingRevisionFreshness(withRevision, 'not-a-sha')).toBe('unknown')
+    expect(findingRevisionFreshness(withoutRevision, shaA)).toBe('missing')
+    expect(findingRevisionFreshness(withoutRevision, '')).toBe('missing')
   })
 
   it('reports unknown freshness when the imported head revision is missing', () => {
@@ -257,7 +267,7 @@ describe('structured Qodo review evidence', () => {
     })
 
     const summary = reviewAttentionSummary(review, shaA)
-    expect(summary).toMatchObject({ kind: 'attention', openFindingCount: 1, unknownFindingRevisionCount: 1 })
+    expect(summary).toMatchObject({ kind: 'attention', openFindingCount: 1, missingFindingRevisionCount: 1 })
     expect(summary.detail).toContain('no finding-specific revision')
     expect(summary.detail).toContain('cannot be tied to the imported PR head')
     expect(summary.nextAction).toContain('confirm missing finding-specific revisions against their Qodo sources and linked runs')
@@ -324,7 +334,7 @@ describe('structured Qodo review evidence', () => {
     })
 
     expect(reviewAttentionSummary(review, shaA)).toMatchObject({
-      kind: 'attention', title: 'Finding revision unconfirmed', unknownFindingRevisionCount: 1,
+      kind: 'attention', title: 'Finding revision missing', missingFindingRevisionCount: 1,
     })
     expect(reviewAttentionSummary(review, shaA).detail).toContain('finding-specific revision')
     expect(reviewAttentionSummary(review, shaA).detail).toContain('linked run revision')

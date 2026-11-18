@@ -217,8 +217,8 @@ describe('change activity index', () => {
       checks: {
         availability: 'available', revisionSha: sha, revisionShortSha: 'aaaaaaa', revisionUrl: commit.url,
         items: [
-          { name: 'Dated check', kind: 'check_run', status: 'completed', conclusion: 'success', completedAt: '2026-11-04T09:10:00Z' },
-          { name: 'Undated check', kind: 'check_run', status: 'queued' },
+          { id: 806, name: 'Dated check', kind: 'check_run', status: 'completed', conclusion: 'success', completedAt: '2026-11-04T09:10:00Z' },
+          { id: 807, name: 'Undated check', kind: 'check_run', status: 'queued' },
         ],
       },
     })

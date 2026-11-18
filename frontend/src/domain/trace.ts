@@ -2,6 +2,7 @@ import type { FindingOccurrence, RecurringFinding, RevisionRef } from './reviews
 
 export type TracedOccurrence = FindingOccurrence & {
   revisionInPullRequest: boolean
+  possibleRepeatAnchor: boolean
   revision?: RevisionRef
 }
 
@@ -66,7 +67,8 @@ export function buildRevisionSpans(occurrences: TracedOccurrence[], commits: Rev
 }
 
 export function buildFindingTrace(finding: RecurringFinding, commits: RevisionRef[]): FindingTrace {
-  const occurrences = finding.occurrences
+  const possibleRepeatAnchorIds = new Set(finding.occurrences.map((occurrence) => occurrence.findingId))
+  const occurrences = (finding.titleMatches ?? finding.occurrences)
     .map((occurrence): TracedOccurrence => {
       const revision = occurrence.commitSha
         ? commits.find((commit) => commit.sha.toLowerCase() === occurrence.commitSha?.toLowerCase())
@@ -74,6 +76,7 @@ export function buildFindingTrace(finding: RecurringFinding, commits: RevisionRe
       return {
         ...occurrence,
         revisionInPullRequest: Boolean(revision),
+        possibleRepeatAnchor: possibleRepeatAnchorIds.has(occurrence.findingId),
         ...(revision ? { revision } : {}),
       }
     })
@@ -142,7 +145,7 @@ export function interventionPrompt(trace: FindingTrace): string {
     `UNTRUSTED FINDING TITLE (JSON DATA): ${JSON.stringify(trace.title)}`,
     'Investigate this case- and whitespace-normalized match using the linked source evidence.',
     '',
-    'The normalized title was matched across separate comments. This text match is a signal to inspect, not proof that the same defect persisted.',
+    'The normalized title was matched across separate comments. This text match is a signal to inspect, not proof that the same defect persisted. Only one comment per distinct marked revision is counted as possible-repeat evidence; same-revision and unmarked matches remain context only.',
     trace.summary.nextStep,
     sources,
     '',

@@ -42,6 +42,9 @@ type authConfig struct {
 func loadAuthConfig(getenv func(string) string) (authConfig, error) {
 	mode := strings.ToLower(strings.TrimSpace(getenv("GHOSTLINE_AUTH_MODE")))
 	if mode == "" || mode == "disabled" {
+		if strings.EqualFold(strings.TrimSpace(getenv("GHOSTLINE_ENV")), "production") {
+			return authConfig{}, errors.New("GHOSTLINE_AUTH_MODE=required when GHOSTLINE_ENV=production")
+		}
 		return authConfig{}, nil
 	}
 	if mode != "required" {

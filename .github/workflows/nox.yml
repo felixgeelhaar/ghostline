@@ -11,47 +11,46 @@ permissions:
 
 jobs:
   nox:
-    # Preserve the required branch-protection check name from the former reusable workflow.
-    name: nox / Security (nox)
+    name: Security (nox)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
       security-events: write
+      pull-requests: write
     steps:
-      - name: Check out revision
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Scan with Nox Marketplace action
+      # Nox 1.67.0 includes the severity-specific SARIF rule descriptors from
+      # Nox-HQ/nox#1068. Keep the action and scanner versions explicit.
+      - name: Run Nox security scan
         id: scan
-        uses: nox-hq/nox@6bb8ca8c4da7dc87a0ef6d87d7f3a5d3ec1bc432 # v1.68.0
+        uses: nox-hq/nox@c030244316e7654bb7ad4694b5eb5b0266141ff9 # v1.39.2
         with:
           path: .
+          version: 1.67.0
           format: json,sarif
           output: nox-results
-          version: 1.68.0
-          # The baseline-aware gate below decides which findings fail CI.
-          fail-on-findings: false
-          # Keep degraded lookup details visible without replacing the gate's policy.
-          fail-on-degraded: false
-          # SARIF is the durable review surface. Avoid a second burst of PR
-          # annotations; Nox's annotation API request timed out on large reports.
-          annotate: false
+          fail-on-findings: 'false'
+          fail-on-degraded: 'true'
 
       - name: Upload SARIF to code scanning
-        if: always() && hashFiles('nox-results/results.sarif') != ''
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        if: always() && steps.scan.outputs.sarif-file != ''
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4
         with:
-          sarif_file: nox-results/results.sarif
+          sarif_file: ${{ steps.scan.outputs.sarif-file }}
 
-      - name: Gate on repository baseline
+      # The Marketplace action puts its verified Nox binary on PATH, so use
+      # Nox's baseline-aware gate directly rather than scripting a second gate.
+      - name: Gate on new Nox findings
         if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: nox ci-gate --input nox-results/findings.json --baseline .nox/baseline.json --github
 
-      - name: Upload Nox reports
+      - name: Upload Nox artifacts
         if: always() && hashFiles('nox-results/**') != ''
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nox-results
           path: nox-results/
