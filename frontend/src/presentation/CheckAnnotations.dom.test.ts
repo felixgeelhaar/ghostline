@@ -2,12 +2,13 @@
 import { createApp, nextTick } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { importPullRequest } from '../application/importPullRequest'
+import { fetchGhostlineSession } from '../application/fetchGhostlineSession'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { fetchCheckAnnotations } from '../application/fetchCheckAnnotations'
 import type { PullRequest } from '../domain/pullRequest'
 import App from './App.vue'
 
-vi.mock('../application/fetchGhostlineSession', () => ({ fetchGhostlineSession: vi.fn().mockResolvedValue({ authRequired: false, authenticated: true }) }))
+vi.mock('../application/fetchGhostlineSession', () => ({ fetchGhostlineSession: vi.fn() }))
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
 vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
 vi.mock('../application/fetchCheckAnnotations', () => ({ fetchCheckAnnotations: vi.fn() }))
@@ -26,8 +27,8 @@ const pullRequest: PullRequest = {
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] },
   referencedIssues: { availability: 'available', items: [] },
 }
-const page = (sha: string, checkRunId: number, message: string, details?: string) => ({
-  revisionSha: sha, checkRunId, checkRunUrl: `https://github.com/acme/app/actions/runs/${checkRunId}`, page: 1, pageSize: 100, hasMore: false,
+const page = (sha: string, checkRunId: number, message: string, details?: string, pageNumber = 1, hasMore = false) => ({
+  revisionSha: sha, checkRunId, checkRunUrl: `https://github.com/acme/app/actions/runs/${checkRunId}`, page: pageNumber, pageSize: 100, hasMore,
   items: [{ path: 'backend/payments.go', startLine: 12, endLine: 14, level: 'warning', title: 'Idempotency', message, ...(details ? { details } : {}), sourceUrl: `https://github.com/acme/app/blob/${sha}/backend/payments.go#L12-L14` }],
 })
 
@@ -35,6 +36,7 @@ let app: ReturnType<typeof createApp> | undefined
 let host: HTMLDivElement | undefined
 async function settle() { await Promise.resolve(); await nextTick(); await nextTick() }
 async function mountImportedPR() {
+  vi.mocked(fetchGhostlineSession).mockResolvedValue({ authRequired: false, authenticated: true })
   vi.mocked(importPullRequest).mockResolvedValue(pullRequest)
   host = document.createElement('div')
   document.body.append(host)
@@ -52,7 +54,7 @@ async function mountImportedPR() {
 afterEach(() => {
   app?.unmount(); app = undefined
   host?.remove(); host = undefined
-  vi.clearAllMocks()
+  vi.resetAllMocks()
 })
 
 describe('GitHub check annotations', () => {
@@ -91,6 +93,25 @@ describe('GitHub check annotations', () => {
 
     expect(host!.textContent).toContain('Finding without a run link.')
     expect(host!.textContent).not.toContain('Unable to load annotations')
+  })
+
+  it('uses cached annotation pages when navigating back after they were loaded', async () => {
+    vi.mocked(fetchCheckAnnotations)
+      .mockResolvedValueOnce(page(head, 314, 'First-page annotation.', undefined, 1, true))
+      .mockResolvedValueOnce(page(head, 314, 'Second-page annotation.', undefined, 2, false))
+      .mockRejectedValue(new Error('Temporary GitHub error'))
+    await mountImportedPR()
+
+    host!.querySelector<HTMLButtonElement>('.annotation-toggle')!.click()
+    await vi.waitFor(() => expect(host?.textContent).toContain('First-page annotation.'))
+    host!.querySelector<HTMLButtonElement>('.annotation-pagination button')!.click()
+    await vi.waitFor(() => expect(host?.textContent).toContain('Second-page annotation.'))
+    host!.querySelector<HTMLButtonElement>('.annotation-pagination button')!.click()
+    await settle()
+
+    expect(fetchCheckAnnotations).toHaveBeenCalledTimes(2)
+    expect(host!.textContent).toContain('First-page annotation.')
+    expect(host!.textContent).not.toContain('Temporary GitHub error')
   })
 
   it('discards an older annotation response after the selected revision changes', async () => {

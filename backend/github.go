@@ -40,6 +40,18 @@ func (g *githubClient) get(ctx context.Context, path string, target any) error {
 }
 
 func (g *githubClient) getWithNext(ctx context.Context, path string, target any) (bool, error) {
+	return g.getWithNextUsingToken(ctx, path, target, false)
+}
+
+// getWithServerToken is reserved for repository visibility metadata. Public PR
+// data is fetched without credentials so a visibility change after this check
+// cannot turn the unauthenticated API into a private-data proxy.
+func (g *githubClient) getWithServerToken(ctx context.Context, path string, target any) error {
+	_, err := g.getWithNextUsingToken(ctx, path, target, true)
+	return err
+}
+
+func (g *githubClient) getWithNextUsingToken(ctx context.Context, path string, target any, useToken bool) (bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.baseURL+path, nil)
 	if err != nil {
 		return false, err
@@ -47,7 +59,7 @@ func (g *githubClient) getWithNext(ctx context.Context, path string, target any)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "Ghostline-Day1")
-	if g.token != "" {
+	if useToken && g.token != "" {
 		req.Header.Set("Authorization", "Bearer "+g.token)
 	}
 	resp, err := g.http.Do(req)
@@ -141,7 +153,7 @@ func ensurePublicRepository(ctx context.Context, gh *githubClient, owner, repo s
 	var metadata struct {
 		Private *bool `json:"private"`
 	}
-	if err := gh.get(ctx, path, &metadata); err != nil {
+	if err := gh.getWithServerToken(ctx, path, &metadata); err != nil {
 		return err
 	}
 	if metadata.Private == nil {
