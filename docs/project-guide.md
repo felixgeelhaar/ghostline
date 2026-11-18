@@ -88,6 +88,8 @@ Warden configures pre-commit and pre-push gates in `.warden.yaml`. It runs the G
 
 For detailed Qodo setup and review-evidence semantics, see [Qodo workflow](qodo-workflow.md). Repository rules for agents are in [AGENTS.md](../AGENTS.md).
 
+The intended ticket-to-merge checks, review decisions, and a verified example are documented in [factory verification](factory-verification.md).
+
 For current trust boundaries, abuse cases, and hosting limitations, see the [threat model](threat-model.md).
 
 ## Feature evidence
