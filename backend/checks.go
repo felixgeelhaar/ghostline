@@ -22,8 +22,9 @@ const (
 )
 
 var (
-	fullSHA             = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	errRevisionMismatch = errors.New("GitHub returned checks for a different revision")
+	fullSHA              = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	errRevisionMismatch  = errors.New("GitHub returned checks for a different revision")
+	errCheckRunWithoutID = errors.New("GitHub returned a check run without an ID")
 )
 
 // revisionChecks holds only the checks GitHub reports for the requested commit.
@@ -131,6 +132,10 @@ func fetchCheckRuns(ctx context.Context, gh *githubClient, commitPath, sha strin
 			if run.HeadSHA != sha {
 				return nil, errRevisionMismatch
 			}
+			// Annotation lookups and activity identities depend on GitHub's native ID.
+			if run.ID <= 0 {
+				return nil, errCheckRunWithoutID
+			}
 			summary, summaryTruncated, summaryBytes := boundedCheckSummary(run.Output.Summary, remainingSummaryBytes)
 			remainingSummaryBytes -= summaryBytes
 			item := check{ID: run.ID, Name: run.Name, Kind: kindCheckRun, Status: run.Status, URL: safeURL(run.HTMLURL), StartedAt: stringValue(run.StartedAt), CompletedAt: stringValue(run.CompletedAt), UpdatedAt: stringValue(run.UpdatedAt), OutputTitle: run.Output.Title, OutputSummary: summary, OutputSummaryTruncated: summaryTruncated}
@@ -214,6 +219,8 @@ func checksUnavailableReason(err error) string {
 	switch {
 	case errors.Is(err, errRevisionMismatch):
 		return "GitHub returned checks for a different commit than the pull request's head, so they are not shown."
+	case errors.Is(err, errCheckRunWithoutID):
+		return "GitHub returned a check run without an ID, so its checks are not shown."
 	case errors.Is(err, errRateLimit):
 		return "GitHub’s public API rate limit was reached before checks could be loaded. Try again later."
 	case errors.Is(err, errNotFound):

@@ -72,6 +72,40 @@ func TestAuthenticatedAPIRejectsPrivateRepository(t *testing.T) {
 	}
 }
 
+func TestPrivateRepositoryResponseMatchesMissingRepository(t *testing.T) {
+	respond := func(private bool) func(path, body string) (int, string) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if private {
+				_, _ = w.Write([]byte(`{"private":true}`))
+				return
+			}
+			http.NotFound(w, r)
+		}))
+		t.Cleanup(srv.Close)
+		gin.SetMode(gin.TestMode)
+		router := newRouter(&githubClient{baseURL: srv.URL, token: "test-token", http: srv.Client()})
+		return func(path, body string) (int, string) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(recorder, request)
+			return recorder.Code, recorder.Body.String()
+		}
+	}
+	privateRepo, missingRepo := respond(true), respond(false)
+	for _, endpoint := range []struct{ path, body string }{
+		{"/api/import", `{"url":"https://github.com/acme/app/pull/7"}`},
+		{"/api/checks", `{"url":"https://github.com/acme/app/pull/7","sha":"` + strings.Repeat("a", 40) + `"}`},
+		{"/api/check-annotations", `{"url":"https://github.com/acme/app/pull/7","sha":"` + strings.Repeat("a", 40) + `","checkRunId":314,"page":1}`},
+	} {
+		privateCode, privateBody := privateRepo(endpoint.path, endpoint.body)
+		missingCode, missingBody := missingRepo(endpoint.path, endpoint.body)
+		if privateCode != missingCode || privateBody != missingBody {
+			t.Errorf("%s reveals a token-visible private repository: private=%d %s, missing=%d %s", endpoint.path, privateCode, privateBody, missingCode, missingBody)
+		}
+	}
+}
+
 func TestImportDoesNotUseVisibilityTokenForPullRequestData(t *testing.T) {
 	var requests []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

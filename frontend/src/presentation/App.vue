@@ -154,8 +154,7 @@ async function loadPR() {
     qodoReviewError.value = ''
   }
   copyRequest++
-  annotationGeneration++
-  annotationPages.value = {}
+  resetAnnotations()
   if (!keepCurrentChange) revisionRequest++
   qodoApiKey.value = ''
   if (!keepCurrentChange) {
@@ -178,6 +177,7 @@ async function loadPR() {
         checksError.value = ''
         checksLoading.value = false
       }
+      resetAnnotations()
       pr.value = importedPR
       showingPreviousSnapshot.value = false
     }
@@ -190,6 +190,24 @@ async function loadPR() {
   } finally {
     if (request === importRequest) loading.value = false
   }
+}
+// Annotation state is reset when an import starts and again when its result is
+// applied: a refresh can return new check runs, and a request made against the
+// replaced pull-request object must not leave an open panel without a page.
+function resetAnnotations() {
+  annotationGeneration++
+  annotationRequests.clear()
+  annotationPages.value = {}
+  annotationOpen.value = ''
+  annotationLoading.value = {}
+  annotationErrors.value = {}
+  annotationPageNumbers.value = {}
+}
+// A page is cached under its revision, check run and page number, and the panel
+// reads only its own key, so a response can never appear under another item.
+// It is kept unless a newer import or a newer request for the same key replaced it.
+function isLatestAnnotationRequest(key: string, request: number, generation: number) {
+  return generation === annotationGeneration && annotationRequests.get(key) === request
 }
 function annotationKey(sha: string, checkRunId: number, page: number) { return `${sha}:${checkRunId}:${page}` }
 function annotationPanelKey(sha: string, checkRunId: number) { return `${sha}:${checkRunId}` }
@@ -209,16 +227,16 @@ async function loadAnnotations(check: Check, sha: string, page: number) {
   annotationErrors.value = { ...annotationErrors.value, [key]: '' }
   try {
     const result = await fetchCheckAnnotations(importedPR.url, sha, check.id, page)
-    if (generation === annotationGeneration && annotationRequests.get(key) === request && pr.value === importedPR && activeChecks.value?.revisionSha === sha && annotationOpen.value === `${sha}:${check.id}`) {
+    if (isLatestAnnotationRequest(key, request, generation)) {
       annotationPages.value = { ...annotationPages.value, [key]: result }
     }
   } catch (e) {
     handleUnauthorized(e)
-    if (generation === annotationGeneration && annotationRequests.get(key) === request && pr.value === importedPR && activeChecks.value?.revisionSha === sha && annotationOpen.value === `${sha}:${check.id}`) {
+    if (isLatestAnnotationRequest(key, request, generation)) {
       annotationErrors.value = { ...annotationErrors.value, [key]: e instanceof Error ? e.message : 'Could not load GitHub annotations for this check.' }
     }
   } finally {
-    if (generation === annotationGeneration && annotationRequests.get(key) === request) annotationLoading.value = { ...annotationLoading.value, [key]: false }
+    if (isLatestAnnotationRequest(key, request, generation)) annotationLoading.value = { ...annotationLoading.value, [key]: false }
   }
 }
 function toggleAnnotations(check: Check) {

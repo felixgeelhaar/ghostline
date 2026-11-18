@@ -149,7 +149,7 @@ func checkRun(name, sha, status, conclusion string) string {
 }
 
 func checkRunWithTimes(name, sha, status, conclusion, startedAt, completedAt, updatedAt string) string {
-	return `{"name":"` + name + `","head_sha":"` + sha + `","status":"` + status + `","conclusion":` + nullableJSON(conclusion) + `,"html_url":"https://github.com/acme/app/runs/1","app":{"name":"GitHub Actions"},"started_at":` + nullableJSON(startedAt) + `,"completed_at":` + nullableJSON(completedAt) + `,"updated_at":` + nullableJSON(updatedAt) + `}`
+	return `{"id":1,"name":"` + name + `","head_sha":"` + sha + `","status":"` + status + `","conclusion":` + nullableJSON(conclusion) + `,"html_url":"https://github.com/acme/app/runs/1","app":{"name":"GitHub Actions"},"started_at":` + nullableJSON(startedAt) + `,"completed_at":` + nullableJSON(completedAt) + `,"updated_at":` + nullableJSON(updatedAt) + `}`
 }
 
 func nullableJSON(value string) string {
@@ -190,8 +190,8 @@ func TestImportReturnsChecksForHeadCommit(t *testing.T) {
 		t.Fatalf("availability = %q (%q)", got.Availability, got.Reason)
 	}
 	want := []check{
-		{Name: "frontend", Kind: kindCheckRun, Source: "GitHub Actions", Status: "in_progress", URL: "https://github.com/acme/app/runs/1", StartedAt: "2026-11-04T09:12:00Z", UpdatedAt: "2026-11-04T09:12:00Z"},
-		{Name: "go", Kind: kindCheckRun, Source: "GitHub Actions", Status: "completed", Conclusion: "success", URL: "https://github.com/acme/app/runs/1", StartedAt: "2026-11-04T09:05:00Z", CompletedAt: "2026-11-04T09:10:00Z", UpdatedAt: "2026-11-04T09:10:00Z"},
+		{ID: 1, Name: "frontend", Kind: kindCheckRun, Source: "GitHub Actions", Status: "in_progress", URL: "https://github.com/acme/app/runs/1", StartedAt: "2026-11-04T09:12:00Z", UpdatedAt: "2026-11-04T09:12:00Z"},
+		{ID: 1, Name: "go", Kind: kindCheckRun, Source: "GitHub Actions", Status: "completed", Conclusion: "success", URL: "https://github.com/acme/app/runs/1", StartedAt: "2026-11-04T09:05:00Z", CompletedAt: "2026-11-04T09:10:00Z", UpdatedAt: "2026-11-04T09:10:00Z"},
 		{Name: "legacy", Kind: kindCommitStatus, Status: "completed", Conclusion: "failure", UpdatedAt: "2026-11-04T09:11:00Z"},
 		{Name: "warden/gate", Kind: kindCommitStatus, Status: "pending", URL: "https://ci.example/1", UpdatedAt: "2026-11-04T09:12:00Z"},
 	}
@@ -208,7 +208,7 @@ func TestImportReturnsChecksForHeadCommit(t *testing.T) {
 func TestCheckRunAndCommitStatusPreserveGitHubTimestamps(t *testing.T) {
 	server := fakeGitHub{
 		headSHA:   headSHA,
-		checkRuns: checkRunsJSON(`{"name":"build","head_sha":"` + headSHA + `","status":"completed","conclusion":"success","html_url":"https://github.com/acme/app/runs/9","started_at":"2026-11-04T09:00:00Z","completed_at":"2026-11-04T09:02:00Z","updated_at":"2026-11-04T09:02:00Z"}`),
+		checkRuns: checkRunsJSON(`{"id":9,"name":"build","head_sha":"` + headSHA + `","status":"completed","conclusion":"success","html_url":"https://github.com/acme/app/runs/9","started_at":"2026-11-04T09:00:00Z","completed_at":"2026-11-04T09:02:00Z","updated_at":"2026-11-04T09:02:00Z"}`),
 		statuses:  `{"sha":"` + headSHA + `","total_count":1,"statuses":[{"context":"legacy","state":"failure","target_url":"https://ci.example/run/7","created_at":"2026-11-04T09:01:00Z","updated_at":"2026-11-04T09:03:00Z"}]}`,
 	}.serve(t)
 
@@ -369,6 +369,7 @@ func TestImportReportsMissingAndUnavailableChecks(t *testing.T) {
 		{"check run for older commit", fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(checkRun("go", olderSHA, "completed", "success")), statuses: noStatuses}, checksUnavailable, "different commit"},
 		{"status for older commit", fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(), statuses: `{"sha":"` + olderSHA + `","total_count":0,"statuses":[]}`}, checksUnavailable, "different commit"},
 		{"malformed head", fakeGitHub{headSHA: "not-a-sha"}, checksUnavailable, "revision"},
+		{"check run without an ID", fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(strings.Replace(checkRun("go", headSHA, "completed", "success"), `"id":1,`, "", 1)), statuses: noStatuses}, checksUnavailable, "without an ID"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

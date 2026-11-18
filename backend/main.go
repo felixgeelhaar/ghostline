@@ -284,11 +284,11 @@ func (a api) loadQodoReview(c *gin.Context) {
 func respondGitHubError(c *gin.Context, err error) {
 	var statusErr statusError
 	switch {
-	case errors.Is(err, errPrivateRepository):
-		c.JSON(http.StatusNotFound, gin.H{"error": "This application supports public repositories only."})
 	case errors.Is(err, errRepositoryVisibilityUnknown):
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Could not confirm that this repository is public; GitHub data was not loaded."})
-	case errors.Is(err, errNotFound):
+	// A private repository answers exactly like a missing one: the server token
+	// can see it, and a distinct reply would let callers probe for its existence.
+	case errors.Is(err, errNotFound), errors.Is(err, errPrivateRepository):
 		c.JSON(http.StatusNotFound, gin.H{"error": "Pull request not found. Check the URL and confirm the repository is public."})
 	case errors.Is(err, errRateLimit):
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "GitHub’s public API rate limit has been reached. Try again later."})

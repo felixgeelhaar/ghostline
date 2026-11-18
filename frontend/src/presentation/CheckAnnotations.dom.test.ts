@@ -114,6 +114,64 @@ describe('GitHub check annotations', () => {
     expect(host!.textContent).not.toContain('Temporary GitHub error')
   })
 
+  it('closes the annotation panel on a same-PR refresh and fetches again when reopened', async () => {
+    vi.mocked(fetchCheckAnnotations)
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValueOnce(page(head, 314, 'Annotation after refresh.'))
+    await mountImportedPR()
+
+    host!.querySelector<HTMLButtonElement>('.annotation-toggle')!.click()
+    await vi.waitFor(() => expect(host?.textContent).toContain('Loading annotations from GitHub…'))
+
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(importPullRequest).toHaveBeenCalledTimes(2))
+    await settle()
+
+    expect(host!.querySelector('.annotation-panel')).toBeNull()
+    host!.querySelector<HTMLButtonElement>('.annotation-toggle')!.click()
+    await vi.waitFor(() => expect(host?.textContent).toContain('Annotation after refresh.'))
+    expect(fetchCheckAnnotations).toHaveBeenCalledTimes(2)
+  })
+
+  it('closes a panel opened during a same-PR refresh once the refreshed data arrives', async () => {
+    let finishRefresh!: (value: PullRequest) => void
+    vi.mocked(fetchCheckAnnotations)
+      .mockResolvedValueOnce(page(head, 314, 'Annotation before refresh.'))
+      .mockResolvedValueOnce(page(head, 314, 'Annotation after refresh.'))
+    await mountImportedPR()
+    vi.mocked(importPullRequest).mockImplementationOnce(() => new Promise((resolve) => { finishRefresh = resolve }))
+
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await vi.waitFor(() => expect(importPullRequest).toHaveBeenCalledTimes(2))
+    host!.querySelector<HTMLButtonElement>('.annotation-toggle')!.click()
+    await vi.waitFor(() => expect(host?.textContent).toContain('Annotation before refresh.'))
+
+    finishRefresh({ ...pullRequest })
+    await vi.waitFor(() => expect(host!.querySelector('.annotation-panel')).toBeNull())
+    host!.querySelector<HTMLButtonElement>('.annotation-toggle')!.click()
+    await vi.waitFor(() => expect(host?.textContent).toContain('Annotation after refresh.'))
+  })
+
+  it('keeps an annotation page that settles while another revision is focused', async () => {
+    let resolveHead!: (value: ReturnType<typeof page>) => void
+    vi.mocked(fetchCheckAnnotations).mockImplementationOnce(() => new Promise((resolve) => { resolveHead = resolve }))
+    vi.mocked(fetchRevisionChecks).mockResolvedValue({
+      availability: 'available', revisionSha: older, revisionShortSha: 'aaaaaaa', revisionUrl: `https://github.com/acme/app/commit/${older}`, items: [run(271)],
+    })
+    await mountImportedPR()
+
+    host!.querySelector<HTMLButtonElement>('.annotation-toggle')!.click()
+    await vi.waitFor(() => expect(fetchCheckAnnotations).toHaveBeenCalledTimes(1))
+    host!.querySelector<HTMLButtonElement>('[aria-label="Focus history on revision aaaaaaa"]')!.click()
+    await vi.waitFor(() => expect(fetchRevisionChecks).toHaveBeenCalledWith(pullRequest.url, older))
+    resolveHead(page(head, 314, 'Head annotation that settled later.'))
+    await settle()
+
+    host!.querySelector<HTMLButtonElement>('.clear-focus')!.click()
+    await vi.waitFor(() => expect(host?.textContent).toContain('Head annotation that settled later.'))
+    expect(fetchCheckAnnotations).toHaveBeenCalledTimes(1)
+  })
+
   it('discards an older annotation response after the selected revision changes', async () => {
     let resolveHead!: (value: ReturnType<typeof page>) => void
     vi.mocked(fetchCheckAnnotations)
