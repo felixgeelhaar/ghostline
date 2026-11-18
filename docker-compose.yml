@@ -6,10 +6,16 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 8080
-      # Only the frontend proxy can reach the backend (it is not published), and that
-      # proxy overwrites this header with each browser's address.
+      # Only the frontend proxy can reach the backend (it is not published); the
+      # frontend overwrites this header with the direct client or trusted ingress IP.
       RATE_LIMIT_CLIENT_IP_HEADER: X-Ghostline-Client-IP
       RATE_LIMIT_TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7
+      GHOSTLINE_AUTH_MODE: ${GHOSTLINE_AUTH_MODE:-disabled}
+      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
+      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
+      GITHUB_OAUTH_CALLBACK_URL: ${GITHUB_OAUTH_CALLBACK_URL:-}
+      GHOSTLINE_SESSION_SECRET: ${GHOSTLINE_SESSION_SECRET:-}
+      GHOSTLINE_ALLOWED_GITHUB_IDS: ${GHOSTLINE_ALLOWED_GITHUB_IDS:-}
     expose:
       - "8080"
     healthcheck:
@@ -29,6 +35,8 @@ services:
       dockerfile: Dockerfile
     environment:
       GHOSTLINE_API_URL: http://backend:8080
+      # Configure only when a trusted HTTPS ingress connects to this frontend.
+      GHOSTLINE_TRUSTED_PROXY_CIDRS: ${GHOSTLINE_TRUSTED_PROXY_CIDRS:-}
     ports:
       - "${GHOSTLINE_BIND_ADDRESS:-0.0.0.0}:${GHOSTLINE_PORT:-5173}:5173"
     depends_on:

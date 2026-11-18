@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,18 +17,20 @@ import (
 )
 
 type pullRequest struct {
-	Repository string         `json:"repository"`
-	Owner      string         `json:"owner"`
-	Repo       string         `json:"repo"`
-	Number     int            `json:"number"`
-	Title      string         `json:"title"`
-	State      string         `json:"state"`
-	URL        string         `json:"url"`
-	CreatedAt  time.Time      `json:"createdAt"`
-	UpdatedAt  time.Time      `json:"updatedAt"`
-	Commits    []commit       `json:"commits"`
-	Checks     revisionChecks `json:"checks"`
-	Reviews    qodoReviewSet  `json:"qodoReviews"`
+	Repository       string             `json:"repository"`
+	Owner            string             `json:"owner"`
+	Repo             string             `json:"repo"`
+	Number           int                `json:"number"`
+	Title            string             `json:"title"`
+	State            string             `json:"state"`
+	Merged           bool               `json:"merged"`
+	URL              string             `json:"url"`
+	CreatedAt        time.Time          `json:"createdAt"`
+	UpdatedAt        time.Time          `json:"updatedAt"`
+	Commits          []commit           `json:"commits"`
+	Checks           revisionChecks     `json:"checks"`
+	Reviews          qodoReviewSet      `json:"qodoReviews"`
+	ReferencedIssues referencedIssueSet `json:"referencedIssues"`
 }
 
 type commit struct {
@@ -43,6 +46,8 @@ type githubPR struct {
 	Number    int    `json:"number"`
 	Title     string `json:"title"`
 	State     string `json:"state"`
+	Body      string `json:"body"`
+	Merged    bool   `json:"merged"`
 	HTMLURL   string `json:"html_url"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
@@ -93,7 +98,11 @@ func parsePRURL(raw string) (string, string, int, error) {
 	return matches[1], matches[2], n, nil
 }
 
-type api struct{ gh *githubClient }
+type api struct {
+	gh     *githubClient
+	qodo   qodoReviewSource
+	logger *slog.Logger
+}
 
 func (a api) importPR(c *gin.Context) {
 	var body struct {
@@ -160,7 +169,7 @@ func (a api) importPR(c *gin.Context) {
 		identity = verifiedIdentity
 		created, _ := time.Parse(time.RFC3339, rawPR.CreatedAt)
 		updated, _ := time.Parse(time.RFC3339, rawPR.UpdatedAt)
-		result := pullRequest{Repository: identity.FullName(), Owner: identity.Owner, Repo: identity.Name, Number: rawPR.Number, Title: rawPR.Title, State: rawPR.State, URL: rawPR.HTMLURL, CreatedAt: created, UpdatedAt: updated, Commits: make([]commit, 0, len(rawCommits)), Checks: checks, Reviews: fetchQodoReviews(c.Request.Context(), a.gh, identity, rawPR.Number)}
+		result := pullRequest{Repository: identity.FullName(), Owner: identity.Owner, Repo: identity.Name, Number: rawPR.Number, Title: rawPR.Title, State: rawPR.State, Merged: rawPR.Merged, URL: rawPR.HTMLURL, CreatedAt: created, UpdatedAt: updated, Commits: make([]commit, 0, len(rawCommits)), Checks: checks, Reviews: fetchQodoReviews(c.Request.Context(), a.gh, identity, rawPR.Number), ReferencedIssues: fetchReferencedIssues(c.Request.Context(), a.gh, identity.Owner, identity.Name, rawPR.Body)}
 		for _, item := range rawCommits {
 			date, _ := time.Parse(time.RFC3339, item.Commit.Author.Date)
 			author := item.Commit.Author.Name
@@ -200,6 +209,64 @@ func (a api) loadRevisionChecks(c *gin.Context) {
 	c.JSON(http.StatusOK, fetchRevisionChecks(c.Request.Context(), a.gh, owner, repo, body.SHA))
 }
 
+func (a api) loadQodoReview(c *gin.Context) {
+	apiKey := c.GetHeader("X-Qodo-API-Key")
+	if apiKey == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Enter a Qodo API key to load structured review data."})
+		return
+	}
+	if !secureCredentialOrigin(c.GetHeader("Origin")) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Qodo keys can only be sent from a secure Ghostline origin or localhost."})
+		return
+	}
+	if len(apiKey) > maxQodoAPIKeyLength || strings.ContainsAny(apiKey, "\r\n") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The Qodo API key is invalid or too long."})
+		return
+	}
+	var body struct {
+		URL string `json:"url"`
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxQodoRequestBytes)
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.URL) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Provide a GitHub pull request URL."})
+		return
+	}
+	if _, _, _, err := parsePRURL(body.URL); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if a.qodo == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Structured Qodo review access is not configured on this Ghostline instance."})
+		return
+	}
+	result, err := a.qodo.fetch(c.Request.Context(), apiKey, strings.TrimSpace(body.URL))
+	if err != nil {
+		logger := a.logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		cause := strings.ReplaceAll(err.Error(), apiKey, "[redacted]")
+		logger.Error("Qodo structured review request failed", "pull_request", strings.TrimSpace(body.URL), "cause", cause)
+		var serviceErr qodoServiceError
+		if errors.As(err, &serviceErr) {
+			switch serviceErr.StatusCode() {
+			case http.StatusUnauthorized:
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Qodo rejected this API key; it may be expired or revoked. Create a fresh personal Qodo key, then retry."})
+				return
+			case http.StatusForbidden:
+				c.JSON(http.StatusForbidden, gin.H{"error": "Qodo denied this key's access to the workspace. Check the key's workspace permissions and the pull request's workspace."})
+				return
+			case http.StatusTooManyRequests:
+				c.JSON(http.StatusTooManyRequests, gin.H{"error": "Qodo is rate-limiting structured review requests. Try again later."})
+				return
+			}
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Qodo structured review data could not be loaded. Check the key, workspace access, and pull request, then retry."})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func respondGitHubError(c *gin.Context, err error) {
 	var statusErr statusError
 	switch {
@@ -219,11 +286,37 @@ func newRouter(gh *githubClient) *gin.Engine {
 }
 
 func newRouterWithLimiter(gh *githubClient, limiter *rateLimiter, identity clientIdentity) *gin.Engine {
-	r := gin.Default()
+	return newRouterWithQodoAndLimiter(gh, nil, limiter, identity)
+}
+
+func newRouterWithQodoAndLimiter(gh *githubClient, qodo qodoReviewSource, limiter *rateLimiter, identity clientIdentity) *gin.Engine {
+	return newRouterWithQodoLogger(gh, qodo, limiter, identity, slog.Default())
+}
+
+func newRouterWithQodoLogger(gh *githubClient, qodo qodoReviewSource, limiter *rateLimiter, identity clientIdentity, logger *slog.Logger) *gin.Engine {
+	return newRouterWithAuth(gh, qodo, limiter, identity, logger, nil)
+}
+
+func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLimiter, identity clientIdentity, logger *slog.Logger, auth *authManager) *gin.Engine {
+	// OAuth callback URLs contain one-time credentials in their query string.
+	// Keep that path out of access logs while retaining request logging elsewhere.
+	r := gin.New()
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipPaths: []string{"/auth/callback"}}), gin.Recovery())
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
-	limited := r.Group("/api", rateLimitMiddleware(limiter, identity))
-	limited.POST("/import", api{gh: gh}.importPR)
-	limited.POST("/checks", api{gh: gh}.loadRevisionChecks)
+	if auth == nil {
+		auth = newAuthManager(authConfig{}, nil)
+	}
+	r.GET("/api/session", auth.session)
+	oauthLoginLimiter := newRateLimiter(limiter.limit, limiter.window, limiter.now)
+	oauthCallbackLimiter := newRateLimiter(limiter.limit, limiter.window, limiter.now)
+	r.POST("/auth/login", rateLimitMiddleware(oauthLoginLimiter, identity), auth.login)
+	r.GET("/auth/callback", rateLimitMiddleware(oauthCallbackLimiter, identity), auth.callback)
+	r.POST("/auth/logout", auth.logout)
+	limited := r.Group("/api", rateLimitMiddleware(limiter, identity), auth.middleware())
+	client := api{gh: gh, qodo: qodo, logger: logger}
+	limited.POST("/import", client.importPR)
+	limited.POST("/checks", client.loadRevisionChecks)
+	limited.POST("/qodo-review", client.loadQodoReview)
 	return r
 }
 
@@ -233,7 +326,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	r := newRouterWithLimiter(newGitHubClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity)
+	auth, err := loadAuthConfig(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	r := newRouterWithAuth(newGitHubClient(), newQodoReviewClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity, slog.Default(), newAuthManager(auth, nil))
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

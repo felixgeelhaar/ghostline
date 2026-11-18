@@ -4,13 +4,13 @@
 
 [![CI](https://github.com/felixgeelhaar/ghostline/actions/workflows/ci.yml/badge.svg)](https://github.com/felixgeelhaar/ghostline/actions/workflows/ci.yml) [![Security](https://github.com/felixgeelhaar/ghostline/actions/workflows/nox.yml/badge.svg)](https://github.com/felixgeelhaar/ghostline/actions/workflows/nox.yml)
 
-Ghostline is a change-centric engineering control room. The first slice imports a public GitHub pull request and shows its commit timeline, with commit timestamps clearly distinguished from push or pull-request event chronology. It also shows the checks GitHub reports for the pull request's head commit — check runs and commit statuses, each with its status and GitHub link — and says explicitly when that commit has no checks or when they could not be loaded. Checks from earlier commits are never shown as validation of the head revision. Checks belong in repository CI, where their results can be tied to the revision they actually scanned; Ghostline does not scan a developer's local filesystem.
+Ghostline is a change-centric engineering control room. The first slice imports a public GitHub pull request and shows its commit timeline, with commit timestamps clearly distinguished from push or pull-request event chronology. It also shows the checks GitHub reports for the pull request's head commit — check runs and commit statuses, each with its status and GitHub link. For GitHub check runs it preserves the source-provided title and shows a bounded, readable text preview of the source summary, including repository security-scan summaries when available. Oversized summaries are labeled, and the linked GitHub check remains the source for full output. It says explicitly when that commit has no checks or when they could not be loaded. Checks from earlier commits are never shown as validation of the head revision. Checks belong in repository CI, where their results can be tied to the revision they actually scanned; Ghostline does not scan a developer's local filesystem.
 
 See the [project guide](docs/project-guide.md) for the product specification, architecture overview, and complete setup path. The [threat model](docs/threat-model.md) records current trust boundaries and hosting limitations.
 
 ## Run locally
 
-Requirements: Go 1.27.3+ and Node.js 22.12+.
+Requirements: Go 1.27.4+ and Node.js 22.12+.
 
 ```sh
 go run ./backend
@@ -28,7 +28,7 @@ Open the URL printed by Vite. Public GitHub API requests work without a token; s
 
 ## Request rate limit
 
-`POST /api/import` and `POST /api/checks` share one per-client budget so a single caller cannot use up the GitHub API quota for everyone else. The limiter is in-memory and fixed-window: the window starts at a client's first request, and the count and any recorded clients are lost when the backend restarts or if you run more than one instance. A request over the limit receives HTTP 429, a `Retry-After` header in seconds, and a JSON `{"error": "..."}` body; the UI shows when to retry. `GET /api/health` is not limited.
+`POST /api/import`, `POST /api/checks`, and `POST /api/qodo-review` share one per-client budget so a single caller cannot use up the GitHub API quota for everyone else. The limiter is in-memory and fixed-window: the window starts at a client's first request, and the count and any recorded clients are lost when the backend restarts or if you run more than one instance. A request over the limit receives HTTP 429, a `Retry-After` header in seconds, and a JSON `{"error": "..."}` body; the UI shows when to retry. `GET /api/health` is not limited.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -45,7 +45,7 @@ This limit does not replace authentication, does not protect or meter a `GITHUB_
 
 ## Repository checks
 
-This repository's `.warden.yaml` configures Warden developer gates: Go tests and a tracked-repository Nox scan before commits, then Go tests, `go vet`, frontend tests/build, and another Nox scan before pushes. The Warden steps call Nox directly. Install Warden (for example, `go install go.klarlabs.de/warden@v0.46.1`) and Nox 1.63.0, the version the CI security scan uses, from the [official release](https://github.com/Nox-HQ/nox/releases/tag/v1.63.0), placing its `nox` binary on `PATH`. Then run `warden init --hooks=pre-commit,pre-push` in a fresh checkout to activate the hooks. Nox uses the committed `.nox/baseline.json` to report known findings and fail on new ones. Warden displays scan coverage warnings; CI checks coverage with `nox ci-gate`. These hooks help contributors catch issues early. Hosted security and validation evidence should come from repository CI checks attached to a commit; Ghostline displays those checks only for the commit they ran against.
+This repository's `.warden.yaml` configures Warden developer gates: Go tests and a tracked-repository Nox scan before commits, then Go tests, `go vet`, frontend tests/build, and another Nox scan before pushes. The Warden steps call Nox directly. Its `trusted_keys` list defines whose signed local validation notes the repository accepts; update that list deliberately when a maintainer signing key changes. Install Warden (for example, `go install go.klarlabs.de/warden@v0.46.1`) and Nox 1.63.0, the version the CI security scan uses, from the [official release](https://github.com/Nox-HQ/nox/releases/tag/v1.63.0), placing its `nox` binary on `PATH`. Then run `warden init --hooks=pre-commit,pre-push` in a fresh checkout to activate the hooks. Nox uses the committed `.nox/baseline.json` to report known findings and fail on new ones. Warden displays scan coverage warnings; CI checks coverage with `nox ci-gate`. These hooks help contributors catch issues early. Hosted security and validation evidence should come from repository CI checks attached to a commit; Ghostline displays those checks only for the commit they ran against.
 
 Pull requests also run GitHub Actions CI for Go tests/vetting and frontend tests/builds. Actions run with read-only repository permissions and are pinned to commit SHAs.
 
@@ -58,6 +58,23 @@ docker compose up --build
 ```
 
 Open http://localhost:5173 (or set `GHOSTLINE_PORT` if that port is occupied). Compose binds the frontend to all network interfaces by default, so other devices on the LAN can use `http://<host-lan-ip>:5173`; set `GHOSTLINE_BIND_ADDRESS` to a specific interface address to restrict access. The development frontend proxies API requests to the backend container.
+
+### Protected hosted-mode sign-in
+
+Compose defaults to an unauthenticated local demo. Protected-mode sign-in requires a trusted HTTPS ingress whose public origin matches the origin in `GITHUB_OAUTH_CALLBACK_URL`. The ingress must route `/auth/*` and `/api/*` to Compose and overwrite `X-Real-IP` with the client address. Browsing directly to Compose over `http://localhost:5173` or a LAN IP is intentionally rejected by the same-origin check and is not a supported protected-mode setup. Configure these variables in the environment running Compose:
+
+| Variable | Purpose |
+| --- | --- |
+| `GHOSTLINE_AUTH_MODE` | Set to `required` to protect all `/api` routes. |
+| `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET` | GitHub OAuth App credentials. |
+| `GITHUB_OAUTH_CALLBACK_URL` | Exact HTTPS callback, for example `https://ghostline.example/auth/callback`. |
+| `GHOSTLINE_SESSION_SECRET` | Random secret of at least 32 bytes used to sign state and sessions. |
+| `GHOSTLINE_ALLOWED_GITHUB_IDS` | Comma-separated numeric GitHub user IDs allowed to sign in. |
+| `GHOSTLINE_TRUSTED_PROXY_CIDRS` | Optional comma-separated CIDRs for ingress peers that are trusted to supply `X-Real-IP`; leave empty when clients connect directly to Vite. |
+
+The callback exchanges the temporary OAuth code, reads the account identity, and discards the GitHub token. Sessions last 12 hours. Use a secret manager for deployment credentials. Vite's development server and this Compose stack are for trusted demos, not production hosting; protected-mode sign-in alone does not make them production-ready. See the [threat model](docs/threat-model.md).
+
+The protected-mode sign-in screen is shown in this [working-app screenshot](docs/feature-evidence/hosted-github-sign-in.jpg); completing sign-in requires configured GitHub OAuth credentials.
 
 ## Verify
 

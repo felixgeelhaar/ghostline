@@ -148,13 +148,34 @@ func checkRun(name, sha, status, conclusion string) string {
 	return `{"name":"` + name + `","head_sha":"` + sha + `","status":"` + status + `","conclusion":` + c + `,"html_url":"https://github.com/acme/app/runs/1","app":{"name":"GitHub Actions"}}`
 }
 
+func checkRunWithTimes(name, sha, status, conclusion, startedAt, completedAt, updatedAt string) string {
+	return `{"name":"` + name + `","head_sha":"` + sha + `","status":"` + status + `","conclusion":` + nullableJSON(conclusion) + `,"html_url":"https://github.com/acme/app/runs/1","app":{"name":"GitHub Actions"},"started_at":` + nullableJSON(startedAt) + `,"completed_at":` + nullableJSON(completedAt) + `,"updated_at":` + nullableJSON(updatedAt) + `}`
+}
+
+func nullableJSON(value string) string {
+	if value == "" {
+		return "null"
+	}
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
+}
+
+func checkRunWithSummary(name, sha, summary string) string {
+	run := checkRun(name, sha, "completed", "success")
+	encodedSummary, _ := json.Marshal(summary)
+	return strings.TrimSuffix(run, "}") + `,"output":{"summary":` + string(encodedSummary) + `}}`
+}
+
 const noStatuses = `{"sha":"` + headSHA + `","total_count":0,"statuses":[]}`
 
 func TestImportReturnsChecksForHeadCommit(t *testing.T) {
 	srv := fakeGitHub{
-		headSHA:   headSHA,
-		checkRuns: checkRunsJSON(checkRun("go", headSHA, "completed", "success"), checkRun("frontend", headSHA, "in_progress", "")),
-		statuses:  `{"sha":"` + headSHA + `","total_count":2,"statuses":[{"context":"warden/gate","state":"pending","target_url":"https://ci.example/1"},{"context":"legacy","state":"failure","target_url":"javascript:alert(1)"}]}`,
+		headSHA: headSHA,
+		checkRuns: checkRunsJSON(
+			checkRunWithTimes("go", headSHA, "completed", "success", "2026-11-04T09:05:00Z", "2026-11-04T09:10:00Z", "2026-11-04T09:10:00Z"),
+			checkRunWithTimes("frontend", headSHA, "in_progress", "", "2026-11-04T09:12:00Z", "", "2026-11-04T09:12:00Z"),
+		),
+		statuses: `{"sha":"` + headSHA + `","total_count":2,"statuses":[{"context":"warden/gate","state":"pending","target_url":"https://ci.example/1","updated_at":"2026-11-04T09:12:00Z"},{"context":"legacy","state":"failure","target_url":"javascript:alert(1)","updated_at":"2026-11-04T09:11:00Z"}]}`,
 	}.serve(t)
 
 	code, pr := importVia(t, srv)
@@ -169,10 +190,10 @@ func TestImportReturnsChecksForHeadCommit(t *testing.T) {
 		t.Fatalf("availability = %q (%q)", got.Availability, got.Reason)
 	}
 	want := []check{
-		{Name: "frontend", Kind: kindCheckRun, Source: "GitHub Actions", Status: "in_progress", URL: "https://github.com/acme/app/runs/1"},
-		{Name: "go", Kind: kindCheckRun, Source: "GitHub Actions", Status: "completed", Conclusion: "success", URL: "https://github.com/acme/app/runs/1"},
-		{Name: "legacy", Kind: kindCommitStatus, Status: "completed", Conclusion: "failure"},
-		{Name: "warden/gate", Kind: kindCommitStatus, Status: "pending", URL: "https://ci.example/1"},
+		{Name: "frontend", Kind: kindCheckRun, Source: "GitHub Actions", Status: "in_progress", URL: "https://github.com/acme/app/runs/1", StartedAt: "2026-11-04T09:12:00Z", UpdatedAt: "2026-11-04T09:12:00Z"},
+		{Name: "go", Kind: kindCheckRun, Source: "GitHub Actions", Status: "completed", Conclusion: "success", URL: "https://github.com/acme/app/runs/1", StartedAt: "2026-11-04T09:05:00Z", CompletedAt: "2026-11-04T09:10:00Z", UpdatedAt: "2026-11-04T09:10:00Z"},
+		{Name: "legacy", Kind: kindCommitStatus, Status: "completed", Conclusion: "failure", UpdatedAt: "2026-11-04T09:11:00Z"},
+		{Name: "warden/gate", Kind: kindCommitStatus, Status: "pending", URL: "https://ci.example/1", UpdatedAt: "2026-11-04T09:12:00Z"},
 	}
 	if len(got.Items) != len(want) {
 		t.Fatalf("items = %+v", got.Items)
@@ -181,6 +202,106 @@ func TestImportReturnsChecksForHeadCommit(t *testing.T) {
 		if got.Items[i] != want[i] {
 			t.Errorf("item %d = %+v, want %+v", i, got.Items[i], want[i])
 		}
+	}
+}
+
+func TestCheckRunAndCommitStatusPreserveGitHubTimestamps(t *testing.T) {
+	server := fakeGitHub{
+		headSHA:   headSHA,
+		checkRuns: checkRunsJSON(`{"name":"build","head_sha":"` + headSHA + `","status":"completed","conclusion":"success","html_url":"https://github.com/acme/app/runs/9","started_at":"2026-11-04T09:00:00Z","completed_at":"2026-11-04T09:02:00Z","updated_at":"2026-11-04T09:02:00Z"}`),
+		statuses:  `{"sha":"` + headSHA + `","total_count":1,"statuses":[{"context":"legacy","state":"failure","target_url":"https://ci.example/run/7","created_at":"2026-11-04T09:01:00Z","updated_at":"2026-11-04T09:03:00Z"}]}`,
+	}.serve(t)
+
+	code, pr := importVia(t, server)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if len(pr.Checks.Items) != 2 {
+		t.Fatalf("checks = %+v", pr.Checks.Items)
+	}
+	if got := pr.Checks.Items[0]; got.StartedAt != "2026-11-04T09:00:00Z" || got.CompletedAt != "2026-11-04T09:02:00Z" || got.UpdatedAt != "2026-11-04T09:02:00Z" {
+		t.Fatalf("check run timestamps = %+v", got)
+	}
+	if got := pr.Checks.Items[1]; got.CreatedAt != "2026-11-04T09:01:00Z" || got.UpdatedAt != "2026-11-04T09:03:00Z" {
+		t.Fatalf("commit status timestamps = %+v", got)
+	}
+}
+
+func TestCheckRecordsPreserveGitHubNativeIdentifiers(t *testing.T) {
+	server := fakeGitHub{
+		headSHA:   headSHA,
+		checkRuns: checkRunsJSON(`{"id":314,"name":"build","head_sha":"` + headSHA + `","status":"completed","conclusion":"success","html_url":"https://github.com/acme/app/runs/9"}`),
+		statuses:  `{"sha":"` + headSHA + `","total_count":1,"statuses":[{"id":271,"context":"legacy","state":"failure"}]}`,
+	}.serve(t)
+
+	code, pr := importVia(t, server)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if got := pr.Checks.Items[0].ID; got != 314 {
+		t.Fatalf("check run id = %d, want 314", got)
+	}
+	if got := pr.Checks.Items[1].ID; got != 271 {
+		t.Fatalf("commit status id = %d, want 271", got)
+	}
+}
+
+func TestImportPreservesGitHubCheckRunOutput(t *testing.T) {
+	const title = "No new alerts in code changed by this pull request"
+	const summary = "[View all branch alerts](/acme/app/security/code-scanning?query=pr%3A7+tool%3Anox+is%3Aopen)."
+	run := strings.TrimSuffix(checkRun("nox", headSHA, "completed", "success"), "}") +
+		`,"output":{"title":"` + title + `","summary":"` + summary + `"}}`
+	srv := fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(run), statuses: noStatuses}.serve(t)
+
+	code, pr := importVia(t, srv)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if len(pr.Checks.Items) != 1 || pr.Checks.Items[0].OutputTitle != title || pr.Checks.Items[0].OutputSummary != summary {
+		t.Fatalf("check output = %+v, want GitHub's title and summary preserved", pr.Checks.Items)
+	}
+}
+
+func TestImportBoundsGitHubCheckRunSummaries(t *testing.T) {
+	largeSummary := strings.Repeat("x", maxCheckSummaryRunes+100)
+	run := checkRunWithSummary("long-report", headSHA, largeSummary)
+	srv := fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(run), statuses: noStatuses}.serve(t)
+
+	code, pr := importVia(t, srv)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if len(pr.Checks.Items) != 1 {
+		t.Fatalf("checks = %+v, want one check", pr.Checks.Items)
+	}
+	got := pr.Checks.Items[0]
+	if len([]rune(got.OutputSummary)) != maxCheckSummaryRunes || !got.OutputSummaryTruncated {
+		t.Fatalf("summary length = %d runes, truncated = %t; want %d runes and truncated", len([]rune(got.OutputSummary)), got.OutputSummaryTruncated, maxCheckSummaryRunes)
+	}
+}
+
+func TestImportCapsTotalGitHubCheckRunSummaryBytes(t *testing.T) {
+	runs := make([]string, 40)
+	for i := range runs {
+		runs[i] = checkRunWithSummary("report-"+itoa(i), headSHA, strings.Repeat("x", maxCheckSummaryRunes))
+	}
+	srv := fakeGitHub{headSHA: headSHA, checkRuns: checkRunsJSON(runs...), statuses: noStatuses}.serve(t)
+
+	code, pr := importVia(t, srv)
+	if code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	totalBytes := 0
+	truncated := false
+	for _, item := range pr.Checks.Items {
+		totalBytes += len(item.OutputSummary)
+		truncated = truncated || item.OutputSummaryTruncated
+	}
+	if totalBytes > maxCheckSummaryBytes {
+		t.Fatalf("total summary bytes = %d, want at most %d", totalBytes, maxCheckSummaryBytes)
+	}
+	if !truncated {
+		t.Fatal("expected at least one summary to be marked truncated after the response budget was reached")
 	}
 }
 

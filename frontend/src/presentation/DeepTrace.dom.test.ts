@@ -9,6 +9,7 @@ import App from './App.vue'
 import DeepTrace from './DeepTrace.vue'
 
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
+vi.mock('../application/fetchGhostlineSession', () => ({ fetchGhostlineSession: vi.fn().mockResolvedValue({ authRequired: false, authenticated: true }) }))
 vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
 
 const shaA = 'a'.repeat(40)
@@ -29,11 +30,12 @@ const reviews = [
 ]
 
 const pullRequest: PullRequest = {
-  repository: 'acme/app', owner: 'acme', repo: 'app', number: 7, title: 'Keyboard trace test', state: 'open',
+  repository: 'acme/app', owner: 'acme', repo: 'app', number: 7, title: 'Keyboard trace test', state: 'open', merged: false,
   url: 'https://github.com/acme/app/pull/7', createdAt: '2026-11-04T08:00:00Z', updatedAt: '2026-11-04T11:00:00Z',
   commits: [commitA, commitMiddle, commitB],
   checks: { availability: 'available', revisionSha: shaB, revisionShortSha: 'bbbbbbb', revisionUrl: commitB.url, items: [] },
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: reviews },
+  referencedIssues: { availability: 'available', items: [] },
 }
 
 function occurrence(id: number, sha: string): TracedOccurrence {
@@ -81,6 +83,7 @@ describe('Deep Trace browser interactions', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector('#pr-url')).not.toBeNull())
 
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = 'https://github.com/acme/app/pull/7'
@@ -118,6 +121,7 @@ describe('Deep Trace browser interactions', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector('#pr-url')).not.toBeNull())
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = 'https://github.com/acme/app/pull/7'
     input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -140,6 +144,7 @@ describe('Deep Trace browser interactions', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector('#pr-url')).not.toBeNull())
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = 'https://github.com/acme/app/pull/7'
     input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -168,6 +173,7 @@ describe('Deep Trace browser interactions', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector('#pr-url')).not.toBeNull())
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = 'https://github.com/acme/app/pull/7'
     input.dispatchEvent(new Event('input', { bubbles: true }))
@@ -233,6 +239,7 @@ describe('Deep Trace browser interactions', () => {
     document.body.append(host)
     mounted = createApp(App)
     mounted.mount(host)
+    await vi.waitFor(() => expect(host?.querySelector('#pr-url')).not.toBeNull())
 
     const input = host.querySelector<HTMLInputElement>('#pr-url')!
     input.value = 'https://github.com/acme/app/pull/7'
