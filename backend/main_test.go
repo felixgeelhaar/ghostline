@@ -106,6 +106,36 @@ func TestPrivateRepositoryResponseMatchesMissingRepository(t *testing.T) {
 	}
 }
 
+func TestServerTokenQuotaExhaustionIsNotReportedAsPublicLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/app" {
+			t.Errorf("request after the visibility check failed: %s", r.URL.Path)
+		}
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	gin.SetMode(gin.TestMode)
+	router := newRouter(&githubClient{baseURL: srv.URL, token: "visibility-token", http: srv.Client()})
+	for _, endpoint := range []struct{ path, body string }{
+		{"/api/import", `{"url":"https://github.com/acme/app/pull/7"}`},
+		{"/api/checks", `{"url":"https://github.com/acme/app/pull/7","sha":"` + strings.Repeat("a", 40) + `"}`},
+		{"/api/check-annotations", `{"url":"https://github.com/acme/app/pull/7","sha":"` + strings.Repeat("a", 40) + `","checkRunId":314,"page":1}`},
+	} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, endpoint.path, strings.NewReader(endpoint.body))
+		request.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusServiceUnavailable {
+			t.Errorf("%s status = %d, want %d", endpoint.path, recorder.Code, http.StatusServiceUnavailable)
+		}
+		body := recorder.Body.String()
+		if strings.Contains(body, "public API") || !strings.Contains(body, "server’s GitHub token") {
+			t.Errorf("%s body = %s, want the server token's quota named instead of the public limit", endpoint.path, body)
+		}
+	}
+}
+
 func TestImportDoesNotUseVisibilityTokenForPullRequestData(t *testing.T) {
 	var requests []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

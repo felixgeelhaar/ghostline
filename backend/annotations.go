@@ -138,6 +138,8 @@ func (a api) loadCheckAnnotations(c *gin.Context) {
 		c.JSON(http.StatusNotFound, map[string]string{"error": "GitHub did not return annotations for that check run."})
 	case errors.Is(err, errRepositoryVisibilityUnknown):
 		c.JSON(http.StatusBadGateway, map[string]string{"error": "GitHub did not confirm that this repository is public, so annotations were not loaded."})
+	case errors.Is(err, errServerTokenRateLimit):
+		c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "The server’s GitHub token has reached its rate limit, so repository visibility could not be checked. Try again later."})
 	case err == errRateLimit:
 		c.JSON(http.StatusTooManyRequests, map[string]string{"error": "GitHub’s public API rate limit has been reached. Try again later."})
 	case err == errRevisionMismatch:

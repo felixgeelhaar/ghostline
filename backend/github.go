@@ -14,8 +14,11 @@ import (
 )
 
 var (
-	errNotFound                    = errors.New("not found")
-	errRateLimit                   = errors.New("rate limit")
+	errNotFound  = errors.New("not found")
+	errRateLimit = errors.New("rate limit")
+	// errServerTokenRateLimit means the configured server token, used only for
+	// visibility checks, is out of quota; the public API limit may still be fine.
+	errServerTokenRateLimit        = errors.New("server token rate limit")
 	errPrivateRepository           = errors.New("private repository is not supported")
 	errRepositoryVisibilityUnknown = errors.New("repository visibility is missing")
 )
@@ -154,6 +157,9 @@ func ensurePublicRepository(ctx context.Context, gh *githubClient, owner, repo s
 		Private *bool `json:"private"`
 	}
 	if err := gh.getWithServerToken(ctx, path, &metadata); err != nil {
+		if errors.Is(err, errRateLimit) {
+			return errServerTokenRateLimit
+		}
 		return err
 	}
 	if metadata.Private == nil {
