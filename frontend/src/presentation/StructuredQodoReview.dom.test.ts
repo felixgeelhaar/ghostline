@@ -459,6 +459,57 @@ describe('structured Qodo review presentation', () => {
     expect(host.textContent).not.toContain('these findings do not describe the current head')
   })
 
+  it('labels each finding revision as current, stale, missing, or unknown against the PR head', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        reviewSession: { status: 'completed', commitSha: currentSha },
+        findings: [
+          { id: 'finding-current', title: 'Guard replay', status: 'open', gitSha: currentSha },
+          { id: 'finding-stale', title: 'Retry limit', status: 'open', gitSha: reviewedSha },
+          { id: 'finding-missing', title: 'Log redaction', status: 'open', reviewRunId: 'run-2' },
+        ],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: currentSha,
+    })
+    app.mount(host)
+    await nextTick()
+
+    const labels = [...host.querySelectorAll('.qodo-managed-findings > li')].map((item) => item.querySelector('.finding-revision-state')?.textContent?.trim())
+    expect(labels).toEqual([
+      'FINDING REVISION MATCHES PR HEAD',
+      'FINDING REVISION DOES NOT MATCH PR HEAD',
+      'FINDING REVISION MISSING',
+    ])
+  })
+
+  it('labels a finding revision as unknown when the imported PR head is unavailable', async () => {
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(StructuredQodoReview, {
+      review: {
+        ...review,
+        findings: [
+          { id: 'finding-raised', title: 'Guard replay', status: 'open', gitSha: reviewedSha },
+          { id: 'finding-missing', title: 'Log redaction', status: 'open' },
+        ],
+      },
+      pullRequestUrl: 'https://github.com/acme/payments/pull/42',
+      headSha: '',
+    })
+    app.mount(host)
+    await nextTick()
+
+    const labels = [...host.querySelectorAll('.qodo-managed-findings > li')].map((item) => item.querySelector('.finding-revision-state')?.textContent?.trim())
+    expect(labels).toEqual([
+      'PR HEAD UNKNOWN · FINDING REVISION CANNOT BE COMPARED',
+      'FINDING REVISION MISSING',
+    ])
+  })
+
   it('keeps missing finding revision visible when its linked run matches the PR head', async () => {
     host = document.createElement('div')
     document.body.append(host)
@@ -474,7 +525,7 @@ describe('structured Qodo review presentation', () => {
     app.mount(host)
     await nextTick()
 
-    expect(host.querySelector('.qodo-attention')?.textContent).toContain('Finding revision unconfirmed')
+    expect(host.querySelector('.qodo-attention')?.textContent).toContain('Finding revision missing')
     expect(host.querySelector('.qodo-attention')?.textContent).toContain('1 finding has no finding-specific revision')
     expect(host.textContent).toContain('QODO DID NOT RETURN A FINDING-SPECIFIC REVISION · LINKED RUN REVISION')
   })
