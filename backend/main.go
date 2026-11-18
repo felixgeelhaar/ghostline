@@ -117,6 +117,10 @@ func (a api) importPR(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if err := ensurePublicRepository(c.Request.Context(), a.gh, owner, repo); err != nil {
+		respondGitHubError(c, err)
+		return
+	}
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(owner), url.PathEscape(repo), number)
 	const maxSnapshotAttempts = 2
 	for attempt := 0; attempt < maxSnapshotAttempts; attempt++ {
@@ -129,6 +133,12 @@ func (a api) importPR(c *gin.Context) {
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub returned incomplete repository identity for this pull request."})
 			return
+		}
+		if !identity.Equal(domain.RepositoryIdentity{Owner: owner, Name: repo}) {
+			if err := ensurePublicRepository(c.Request.Context(), a.gh, identity.Owner, identity.Name); err != nil {
+				respondGitHubError(c, err)
+				return
+			}
 		}
 		path = fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(identity.Owner), url.PathEscape(identity.Name), rawPR.Number)
 		var rawCommits []githubCommit
@@ -206,6 +216,10 @@ func (a api) loadRevisionChecks(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "The revision must be a full 40-character commit SHA."})
 		return
 	}
+	if err := ensurePublicRepository(c.Request.Context(), a.gh, owner, repo); err != nil {
+		respondGitHubError(c, err)
+		return
+	}
 	c.JSON(http.StatusOK, fetchRevisionChecks(c.Request.Context(), a.gh, owner, repo, body.SHA))
 }
 
@@ -270,10 +284,18 @@ func (a api) loadQodoReview(c *gin.Context) {
 func respondGitHubError(c *gin.Context, err error) {
 	var statusErr statusError
 	switch {
-	case errors.Is(err, errNotFound):
+	case errors.Is(err, errRepositoryVisibilityUnknown):
+		c.JSON(http.StatusBadGateway, gin.H{"error": "Could not confirm that this repository is public; GitHub data was not loaded."})
+	// A private repository answers exactly like a missing one: the server token
+	// can see it, and a distinct reply would let callers probe for its existence.
+	case errors.Is(err, errNotFound), errors.Is(err, errPrivateRepository):
 		c.JSON(http.StatusNotFound, gin.H{"error": "Pull request not found. Check the URL and confirm the repository is public."})
+	case errors.Is(err, errServerTokenRejected):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "The server’s GitHub token was rejected, so repository visibility could not be checked. Replace the configured token."})
+	case errors.Is(err, errServerTokenRateLimit):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "The server’s GitHub token has reached its rate limit, so repository visibility could not be checked. Try again later."})
 	case errors.Is(err, errRateLimit):
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "GitHub’s public API rate limit has been reached. Try again later or configure GITHUB_TOKEN."})
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "GitHub’s public API rate limit has been reached. Try again later."})
 	case errors.As(err, &statusErr) && statusErr.code >= 500:
 		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub is having trouble right now. Try again shortly."})
 	default:
@@ -317,6 +339,7 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 	limited.POST("/import", client.importPR)
 	limited.POST("/checks", client.loadRevisionChecks)
 	limited.POST("/qodo-review", client.loadQodoReview)
+	limited.POST("/check-annotations", client.loadCheckAnnotations)
 	return r
 }
 

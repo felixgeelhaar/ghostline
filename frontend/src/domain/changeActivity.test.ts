@@ -124,8 +124,8 @@ describe('change activity', () => {
     const checks: RevisionChecks = {
       availability: 'available', revisionSha: commit.sha, revisionShortSha: commit.shortSha,
       revisionUrl: commit.url, items: [
-        { name: 'Queued scan', kind: 'check_run', status: 'in_progress', startedAt: '2026-11-04T09:12:00Z' },
-        { name: 'Undated scan', kind: 'check_run', status: 'queued' },
+        { id: 901, name: 'Queued scan', kind: 'check_run', status: 'in_progress', startedAt: '2026-11-04T09:12:00Z' },
+        { id: 902, name: 'Undated scan', kind: 'check_run', status: 'queued' },
       ],
     }
 
@@ -146,7 +146,7 @@ describe('change activity', () => {
     const mismatched: RevisionChecks = {
       availability: 'available', revisionSha: 'b'.repeat(40), revisionShortSha: 'bbbbbbb',
       revisionUrl: `https://github.com/acme/app/commit/${'b'.repeat(40)}`,
-      items: [{ name: 'stale', kind: 'check_run', status: 'completed', conclusion: 'success', completedAt: '2026-11-04T09:10:00Z' }],
+      items: [{ id: 903, name: 'stale', kind: 'check_run', status: 'completed', conclusion: 'success', completedAt: '2026-11-04T09:10:00Z' }],
     }
 
     expect(buildChangeActivity([], [], unavailable)).toEqual([])
@@ -157,8 +157,8 @@ describe('change activity', () => {
     const checks: RevisionChecks = {
       availability: 'available', revisionSha: commit.sha, revisionShortSha: commit.shortSha,
       revisionUrl: commit.url, items: [
-        { name: 'Dated scan', kind: 'check_run', status: 'completed', conclusion: 'success', completedAt: '2026-11-04T09:10:00Z' },
-        { name: 'Undated scan', kind: 'check_run', status: 'queued' },
+        { id: 904, name: 'Dated scan', kind: 'check_run', status: 'completed', conclusion: 'success', completedAt: '2026-11-04T09:10:00Z' },
+        { id: 905, name: 'Undated scan', kind: 'check_run', status: 'queued' },
       ],
     }
     const events = buildChangeActivity([commit], [], checks)
@@ -173,13 +173,13 @@ describe('change activity', () => {
     const checks: RevisionChecks = {
       availability: 'available', revisionSha: 'b'.repeat(40), revisionShortSha: 'bbbbbbb',
       revisionUrl: `https://github.com/acme/app/commit/${'b'.repeat(40)}`,
-      items: [{ name: 'Undated scan', kind: 'check_run', status: 'queued' }],
+      items: [{ id: 906, name: 'Undated scan', kind: 'check_run', status: 'queued' }],
     }
     const event = buildChangeActivity([], [], checks)
 
     expect(describeCheckActivity({ checks, events: event, revisionSha: checks.revisionSha })?.text).toContain('could not represent any of the 1 GitHub check records')
     expect(describeCheckActivity({ checks: { ...checks, items: [] }, events: [], revisionSha: checks.revisionSha })?.kind).toBe('info')
-    const complete = { ...checks, revisionSha: commit.sha, revisionShortSha: commit.shortSha, revisionUrl: commit.url, items: [{ name: 'Dated scan', kind: 'check_run' as const, status: 'queued', startedAt: '2026-11-04T09:12:00Z' }] }
+    const complete = { ...checks, revisionSha: commit.sha, revisionShortSha: commit.shortSha, revisionUrl: commit.url, items: [{ id: 907, name: 'Dated scan', kind: 'check_run' as const, status: 'queued', startedAt: '2026-11-04T09:12:00Z' }] }
     expect(describeCheckActivity({ checks: complete, events: buildChangeActivity([commit], [], complete), revisionSha: commit.sha })).toBeUndefined()
   })
 })
