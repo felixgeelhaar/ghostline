@@ -301,7 +301,7 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 	// OAuth callback URLs contain one-time credentials in their query string.
 	// Keep that path out of access logs while retaining request logging elsewhere.
 	r := gin.New()
-	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipPaths: []string{"/auth/callback"}}), gin.Recovery())
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipPaths: []string{"/auth/callback", "/api/health"}}), gin.Recovery())
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	if auth == nil {
 		auth = newAuthManager(authConfig{}, nil)
@@ -321,6 +321,14 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
+		if err := runContainerHealthcheck(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	cfg, err := loadRateLimitConfig(os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -331,7 +339,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	staticDirectory, err := loadStaticSiteConfig(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	r := newRouterWithAuth(newGitHubClient(), newQodoReviewClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity, slog.Default(), newAuthManager(auth, nil))
+	if err := registerStaticSite(r, staticDirectory); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -340,7 +357,7 @@ func main() {
 	if host == "" {
 		host = "127.0.0.1"
 	}
-	if err := r.Run(host + ":" + port); err != nil {
+	if err := r.Run(joinHostPort(host, port)); err != nil {
 		panic(err)
 	}
 }
