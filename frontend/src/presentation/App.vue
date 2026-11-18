@@ -1,20 +1,27 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { fetchCheckAnnotations } from '../application/fetchCheckAnnotations'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
-import { checkOutcome, headCommitLabel, orderChecks, summarizeChecks, type Check, type CheckTone } from '../domain/checks'
+import { fetchQodoReviewSession } from '../application/fetchQodoReviewSession'
+import { buildChangeActivity, countReviewsWithUnavailableDetails, describeCheckActivity } from '../domain/changeActivity'
+import { checkOutcome, checkSummaryPreview, headCommitLabel, orderChecks, summarizeChecks, type Check, type CheckTone } from '../domain/checks'
 import type { CheckAnnotationPage } from '../domain/checkAnnotations'
-import { findRecurringFindings, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
+import { findRecurringFindings, qodoHeadCoverage, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
+import type { QodoStructuredReview } from '../domain/qodoReviewSession'
 import { buildFindingTrace } from '../domain/trace'
-import { validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
+import { isSamePullRequest, validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
+import { GhostlineApiError } from '../application/apiError'
 import ReviewCard from './ReviewCard.vue'
 import DeepTrace from './DeepTrace.vue'
+import StructuredQodoReview from './StructuredQodoReview.vue'
+import { useGhostlineSession } from './useGhostlineSession'
 
 const url = ref('')
 const pr = ref<PullRequest>()
 const error = ref('')
+const showingPreviousSnapshot = ref(false)
 const loading = ref(false)
 const selectedRevision = ref('')
 const focusedChecks = ref<PullRequest['checks']>()
@@ -27,15 +34,33 @@ const annotationOpen = ref('')
 const annotationLoading = ref<Record<string, boolean>>({})
 const annotationErrors = ref<Record<string, string>>({})
 const annotationPageNumbers = ref<Record<string, number>>({})
+const qodoApiKey = ref('')
+const qodoStructuredReview = ref<QodoStructuredReview>()
+const qodoReviewError = ref('')
+const qodoReviewLoading = ref(false)
+const qodoKeyTransportSecure = computed(() => globalThis.isSecureContext === true)
+const { ghostlineSession, sessionLoading, sessionError, refreshGhostlineSession, handleSessionRejected, endSession } = useGhostlineSession()
 let traceTrigger: HTMLButtonElement | undefined
+let authChannel: BroadcastChannel | undefined
 let revisionRequest = 0
 let importRequest = 0
 let annotationGeneration = 0
 const annotationRequests = new Map<string, number>()
+let qodoRequest = 0
 const activeChecks = computed(() => selectedRevision.value ? focusedChecks.value : pr.value?.checks)
 const orderedChecks = computed(() => orderChecks(activeChecks.value?.availability === 'available' ? activeChecks.value.items : []))
 const checksSummary = computed(() => summarizeChecks(orderedChecks.value))
 const recurringFindings = computed(() => findRecurringFindings(pr.value?.qodoReviews.items ?? []))
+const changeActivity = computed(() => buildChangeActivity(pr.value?.commits ?? [], pr.value?.qodoReviews.items ?? [], activeChecks.value))
+const reviewsWithUnavailableDetails = computed(() => countReviewsWithUnavailableDetails(pr.value?.qodoReviews.items ?? []))
+const checkActivityNotice = computed(() => describeCheckActivity({
+  checks: activeChecks.value,
+  events: changeActivity.value,
+  loading: checksLoading.value,
+  error: checksError.value || undefined,
+  revisionSha: selectedRevision.value,
+}))
+const headCoverage = computed(() => pr.value ? qodoHeadCoverage(pr.value.qodoReviews, pr.value.checks.revisionSha || undefined, pr.value.commits) : undefined)
 const visibleCommits = computed(() => pr.value?.commits.filter((commit) => !selectedRevision.value || commit.sha === selectedRevision.value) ?? [])
 const selectedReviews = computed(() => reviewsForRevision(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
 const reviewCount = computed(() => reviewCountSummary(pr.value?.qodoReviews.items ?? [], selectedRevision.value || undefined))
@@ -45,19 +70,123 @@ const activeTrace = computed(() => {
 })
 const glyph: Record<CheckTone, string> = { pass: '✓', fail: '✕', running: '●', neutral: '–' }
 
+onMounted(() => {
+  if (typeof BroadcastChannel !== 'undefined') {
+    authChannel = new BroadcastChannel('ghostline-session')
+    authChannel.onmessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'session-changed') return
+      clearWorkspace()
+      void handleSessionRejected()
+    }
+  }
+  const currentURL = new URL(window.location.href)
+  const signInCompleted = currentURL.searchParams.get('ghostline_auth') === 'complete'
+  if (signInCompleted) {
+    currentURL.searchParams.delete('ghostline_auth')
+    window.history.replaceState(window.history.state, '', `${currentURL.pathname}${currentURL.search}${currentURL.hash}`)
+    authChannel?.postMessage({ type: 'session-changed' })
+  }
+  void refreshGhostlineSession()
+})
+
+onBeforeUnmount(() => authChannel?.close())
+
+function handleUnauthorized(error: unknown) {
+  if (ghostlineSession.value?.authenticated && error instanceof GhostlineApiError && error.code === 'AUTH_REQUIRED') {
+    void handleSessionRejected()
+  }
+}
+
+async function logout() {
+  try {
+    const response = await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' })
+    if (!response.ok) throw new Error()
+    clearWorkspace()
+    endSession()
+    authChannel?.postMessage({ type: 'session-changed' })
+  } catch {
+    sessionError.value = 'Ghostline could not end this session. Try again.'
+  }
+}
+
+function clearWorkspace() {
+  importRequest++
+  revisionRequest++
+  qodoRequest++
+  copyRequest++
+  url.value = ''
+  pr.value = undefined
+  error.value = ''
+  loading.value = false
+  selectedRevision.value = ''
+  focusedChecks.value = undefined
+  checksLoading.value = false
+  checksError.value = ''
+  selectedTraceId.value = ''
+  traceTrigger = undefined
+  copyResult.value = undefined
+  qodoApiKey.value = ''
+  qodoStructuredReview.value = undefined
+  qodoReviewError.value = ''
+  qodoReviewLoading.value = false
+}
+
 async function loadPR() {
   const request = ++importRequest
-  error.value = validatePullRequestURL(url.value) ?? ''
+  const requestedURL = url.value
+  error.value = validatePullRequestURL(requestedURL) ?? ''
   if (error.value) {
     loading.value = false
     return
   }
-  loading.value = true; pr.value = undefined; selectedRevision.value = ''; selectedTraceId.value = ''; traceTrigger = undefined; focusedChecks.value = undefined; checksError.value = ''; checksLoading.value = false; copyResult.value = undefined; copyRequest++; revisionRequest++; annotationGeneration++; annotationPages.value = {}; annotationOpen.value = ''; annotationLoading.value = {}; annotationErrors.value = {}; annotationRequests.clear()
+  const keepCurrentChange = isSamePullRequest(pr.value, requestedURL)
+  loading.value = true
+  if (!keepCurrentChange) {
+    pr.value = undefined
+    selectedRevision.value = ''
+    selectedTraceId.value = ''
+    traceTrigger = undefined
+    focusedChecks.value = undefined
+    checksError.value = ''
+    checksLoading.value = false
+    copyResult.value = undefined
+    qodoStructuredReview.value = undefined
+    qodoReviewError.value = ''
+  }
+  copyRequest++
+  annotationGeneration++
+  annotationPages.value = {}
+  if (!keepCurrentChange) revisionRequest++
+  qodoApiKey.value = ''
+  if (!keepCurrentChange) {
+    qodoRequest++
+    qodoReviewLoading.value = false
+  }
   try {
-    const importedPR = await importPullRequest(url.value)
-    if (request === importRequest) pr.value = importedPR
+    const importedPR = await importPullRequest(requestedURL)
+    if (request === importRequest) {
+      const focusedRevisionStillExists = importedPR.commits.some((commit) => commit.sha === selectedRevision.value)
+      if (selectedRevision.value && !focusedRevisionStillExists) {
+        revisionRequest++
+        selectedRevision.value = ''
+        focusedChecks.value = undefined
+        checksError.value = ''
+        checksLoading.value = false
+      } else if (selectedRevision.value && selectedRevision.value === importedPR.checks.revisionSha) {
+        revisionRequest++
+        focusedChecks.value = importedPR.checks
+        checksError.value = ''
+        checksLoading.value = false
+      }
+      pr.value = importedPR
+      showingPreviousSnapshot.value = false
+    }
   } catch (e) {
-    if (request === importRequest) error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
+    handleUnauthorized(e)
+    if (request === importRequest) {
+      error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
+      showingPreviousSnapshot.value = keepCurrentChange && pr.value !== undefined
+    }
   } finally {
     if (request === importRequest) loading.value = false
   }
@@ -84,6 +213,7 @@ async function loadAnnotations(check: Check, sha: string, page: number) {
       annotationPages.value = { ...annotationPages.value, [key]: result }
     }
   } catch (e) {
+    handleUnauthorized(e)
     if (generation === annotationGeneration && annotationRequests.get(key) === request && pr.value === importedPR && activeChecks.value?.revisionSha === sha && annotationOpen.value === `${sha}:${check.id}`) {
       annotationErrors.value = { ...annotationErrors.value, [key]: e instanceof Error ? e.message : 'Could not load GitHub annotations for this check.' }
     }
@@ -111,6 +241,27 @@ function showAnnotationPage(check: Check, page: number) {
   annotationPageNumbers.value = { ...annotationPageNumbers.value, [annotationPanelKey(sha, check.id)]: page }
   void loadAnnotations(check, sha, page)
 }
+async function loadStructuredQodoReview() {
+  const importedPR = pr.value
+  const apiKey = qodoApiKey.value
+  if (!importedPR || !apiKey || !qodoKeyTransportSecure.value) return
+  const request = ++qodoRequest
+  const requestedPRURL = importedPR.url
+  qodoApiKey.value = ''
+  qodoReviewError.value = ''
+  qodoReviewLoading.value = true
+  try {
+    const result = await fetchQodoReviewSession(requestedPRURL, apiKey)
+    if (request === qodoRequest && pr.value?.url === requestedPRURL) qodoStructuredReview.value = result
+  } catch (e) {
+    handleUnauthorized(e)
+    if (request === qodoRequest && pr.value?.url === requestedPRURL) {
+      qodoReviewError.value = e instanceof Error ? e.message : 'Could not load structured Qodo review data.'
+    }
+  } finally {
+    if (request === qodoRequest) qodoReviewLoading.value = false
+  }
+}
 async function focusRevision(sha: string) {
   const importedPR = pr.value
   if (!importedPR) return
@@ -128,7 +279,10 @@ async function focusRevision(sha: string) {
     const checks = await fetchRevisionChecks(importedPR.url, sha)
     if (request === revisionRequest && selectedRevision.value === sha) focusedChecks.value = checks
   } catch (e) {
-    if (request === revisionRequest && selectedRevision.value === sha) checksError.value = e instanceof Error ? e.message : 'Could not load checks for this revision.'
+    handleUnauthorized(e)
+    if (request === revisionRequest && selectedRevision.value === sha) {
+      checksError.value = e instanceof Error ? e.message : 'Could not load checks for this revision.'
+    }
   } finally {
     if (request === revisionRequest) checksLoading.value = false
   }
@@ -172,13 +326,36 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
 <template>
   <div class="shell">
     <a class="skip-link" href="#main-content">Skip to main content</a>
-    <header class="topbar"><a class="brand" href="#"><span class="brand-mark">G</span><span>GHOSTLINE<small>ENGINEERING CONTROL ROOM</small></span></a><span class="live"><i></i> SYSTEM READY</span></header>
+    <header class="topbar"><a class="brand" href="#"><span class="brand-mark">G</span><span>GHOSTLINE<small>ENGINEERING CONTROL ROOM</small></span></a><span v-if="ghostlineSession?.authenticated && ghostlineSession.login" class="account"><span>{{ ghostlineSession.login }}</span><button type="button" @click="logout">SIGN OUT</button></span><span v-else class="live"><i></i> SYSTEM READY</span></header>
     <main id="main-content" tabindex="-1">
+    <section v-if="sessionLoading && !ghostlineSession" class="auth-message" role="status"><p class="eyebrow">ACCESS CHECK</p><h1>Checking sign-in…</h1></section>
+    <section v-else-if="sessionError && !ghostlineSession" class="auth-message" role="alert"><p class="eyebrow">CONNECTION REQUIRED</p><h1>Can’t verify access.</h1><p>{{ sessionError }}</p><button type="button" @click="refreshGhostlineSession">TRY AGAIN</button></section>
+    <section v-else-if="ghostlineSession?.authRequired && !ghostlineSession.authenticated" class="auth-message"><p class="eyebrow">GHOSTLINE ACCESS</p><h1>Sign in to your control room.</h1><p>Use the GitHub account invited to this Ghostline instance. Only your account name is kept in the session; the OAuth access token is discarded after sign-in.</p><form action="/auth/login" method="post"><button class="github-sign-in" type="submit">SIGN IN WITH GITHUB <span aria-hidden="true">↗</span></button></form></section>
+    <div v-else-if="ghostlineSession && (!ghostlineSession.authRequired || ghostlineSession.authenticated)" class="workspace-content">
+    <p v-if="sessionError && ghostlineSession.authenticated" class="session-error" role="alert">{{ sessionError }}</p>
     <section class="hero"><p class="eyebrow">CHANGE INTELLIGENCE / 001</p><h1>See the work.<br><em>Trace the decisions.</em></h1><p class="lede">Import a pull request to inspect its revision history. Commit timestamps show when commits were authored, not when they were pushed.</p></section>
-    <section class="import-panel"><label for="pr-url">GITHUB PULL REQUEST</label><div class="input-row"><span class="prefix">↗</span><input id="pr-url" v-model="url" placeholder="https://github.com/owner/repo/pull/123" @keyup.enter="loadPR"><button :disabled="loading" @click="loadPR">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button></div><p v-if="error" class="error" role="alert">{{ error }}</p></section>
+    <section class="import-panel"><label for="pr-url">GITHUB PULL REQUEST</label><div class="input-row"><span class="prefix">↗</span><input id="pr-url" v-model="url" placeholder="https://github.com/owner/repo/pull/123" @keyup.enter="loadPR"><button :disabled="loading" @click="loadPR">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button></div><p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="showingPreviousSnapshot && pr" class="checks-note warn" role="status">GitHub refresh failed. Showing the last imported snapshot for {{ pr.owner }}/{{ pr.repo }}#{{ pr.number }}.</p></section>
     <section v-if="pr" class="change-card">
       <div class="change-heading"><div><span class="eyebrow">{{ pr.repository }} / PULL REQUEST #{{ pr.number }}</span><h2>{{ pr.title }}</h2></div><span class="state" :class="pr.state">{{ pr.state }}</span></div>
       <div class="meta"><span>{{ pr.commits.length }} COMMITS</span><span>OPENED {{ date(pr.createdAt) }}</span><a :href="pr.url" target="_blank" rel="noreferrer">VIEW ON GITHUB ↗</a></div>
+
+      <section v-if="pr.referencedIssues?.items.length || pr.referencedIssues?.availability === 'unavailable'" class="referenced-issues" aria-labelledby="referenced-issues-title">
+        <h3 id="referenced-issues-title" class="section-title">REFERENCED ISSUES · GITHUB STATE</h3>
+        <p v-if="pr.referencedIssues?.availability === 'unavailable'" class="checks-note warn" role="status">{{ pr.referencedIssues.reason || 'GitHub could not confirm the state of every referenced issue.' }}</p>
+        <ul>
+          <li v-for="issue in pr.referencedIssues?.items ?? []" :key="issue.number">
+            <div v-if="pr.merged && issue.state === 'open'" class="referenced-issue-warning" role="status">
+              <strong>Referenced issue #{{ issue.number }} is still open.</strong>
+              <div><a :href="pr.url" target="_blank" rel="noreferrer">VIEW MERGED PR #{{ pr.number }} ↗</a><a :href="issue.url" target="_blank" rel="noreferrer">VIEW ISSUE #{{ issue.number }} ↗</a></div>
+              <p>GitHub shows the issue as open; Ghostline does not decide whether the work is delivered.</p>
+            </div>
+            <div v-else class="referenced-issue-row">
+              <a :href="issue.url" target="_blank" rel="noreferrer">ISSUE #{{ issue.number }} ↗</a>
+              <span>{{ issue.state === 'unavailable' ? 'ISSUE STATE UNAVAILABLE' : issue.state.toUpperCase() }}</span>
+            </div>
+          </li>
+        </ul>
+      </section>
 
       <section class="checks" aria-labelledby="checks-title">
         <h3 id="checks-title" class="section-title"><span>CHECKS · {{ selectedRevision ? 'FOCUSED REVISION' : 'PR HEAD' }}</span><span v-if="activeChecks?.revisionSha"><a :href="activeChecks.revisionUrl" target="_blank" rel="noreferrer" :aria-label="`Revision ${activeChecks.revisionShortSha} on GitHub`">{{ activeChecks.revisionShortSha }} ↗</a></span></h3>
@@ -187,9 +364,33 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         <template v-else-if="activeChecks">
           <p v-if="activeChecks.availability === 'unavailable'" class="checks-note warn" role="status"><strong>Checks unavailable.</strong> {{ activeChecks.reason }}</p>
           <p v-else-if="activeChecks.items.length === 0" class="checks-note" role="status"><strong>No checks reported.</strong> GitHub returned no check runs or commit statuses for revision {{ activeChecks.revisionShortSha }}.</p>
-          <template v-else><p class="checks-summary" :class="checksSummary.tone" role="status"><span aria-hidden="true">{{ glyph[checksSummary.tone] }}</span>{{ checksSummary.label }}</p><ul class="check-list"><li v-for="(check, i) in orderedChecks" :key="`${check.kind}:${check.name}:${i}`"><span class="check-state" :class="checkOutcome(check).tone"><span aria-hidden="true">{{ glyph[checkOutcome(check).tone] }}</span>{{ checkOutcome(check).label }}</span><div class="check-name"><a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">{{ check.name }} <span aria-hidden="true">↗</span><span class="sr-only">(opens on GitHub)</span></a><span v-else>{{ check.name }}</span><small>{{ [check.source, check.url ? '' : 'no GitHub link reported'].filter(Boolean).join(' · ') }}</small><button v-if="check.kind === 'check_run' && check.id > 0" type="button" class="annotation-toggle" :aria-expanded="annotationOpen === `${activeChecks?.revisionSha}:${check.id}`" @click="toggleAnnotations(check)">INSPECT GITHUB ANNOTATIONS</button><section v-if="check.kind === 'check_run' && annotationOpen === `${activeChecks?.revisionSha}:${check.id}`" class="annotation-panel" :aria-label="`GitHub annotations for ${check.name} on revision ${activeChecks?.revisionShortSha}`"><p class="annotation-boundary">GitHub check annotations · revision {{ activeChecks?.revisionShortSha }} · <a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">check run source ↗</a></p><p v-if="annotationLoadingFor(activeChecks?.revisionSha ?? '', check.id)" role="status">Loading annotations from GitHub…</p><p v-else-if="annotationErrorFor(activeChecks?.revisionSha ?? '', check.id)" class="checks-note warn" role="status">{{ annotationErrorFor(activeChecks?.revisionSha ?? '', check.id) }}</p><p v-else-if="annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.items.length === 0" role="status">GitHub reported no line annotations for this check run and revision.</p><ul v-else class="annotation-list"><li v-for="(annotation, j) in annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.items" :key="`${annotation.path}:${annotation.startLine}:${j}`"><strong>{{ annotation.level.toUpperCase() }}<template v-if="annotation.title"> · {{ annotation.title }}</template></strong><p>{{ annotation.message }}</p><details v-if="annotation.details" class="annotation-details"><summary>RAW DETAILS</summary><pre>{{ annotation.details }}</pre></details><small>{{ annotation.path }}:{{ annotation.startLine }}<template v-if="annotation.endLine !== annotation.startLine">–{{ annotation.endLine }}</template></small><a v-if="annotation.sourceUrl" :href="annotation.sourceUrl" target="_blank" rel="noreferrer">VIEW SOURCE LINES ↗</a></li></ul><div v-if="annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.hasMore" class="annotation-pagination"><button type="button" :disabled="annotationLoadingFor(activeChecks?.revisionSha ?? '', check.id)" @click="showAnnotationPage(check, currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) + 1)">LOAD NEXT PAGE</button></div><div v-if="currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) > 1" class="annotation-pagination"><button type="button" @click="showAnnotationPage(check, currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) - 1)">PREVIOUS PAGE</button><span>PAGE {{ currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) }}</span></div></section></div></li></ul></template>
+          <template v-else><p class="checks-summary" :class="checksSummary.tone" role="status"><span aria-hidden="true">{{ glyph[checksSummary.tone] }}</span>{{ checksSummary.label }}</p><ul class="check-list"><li v-for="(check, i) in orderedChecks" :key="`${check.kind}:${check.name}:${i}`"><span class="check-state" :class="checkOutcome(check).tone"><span aria-hidden="true">{{ glyph[checkOutcome(check).tone] }}</span>{{ checkOutcome(check).label }}</span><div class="check-name"><a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">{{ check.name }} <span aria-hidden="true">↗</span><span class="sr-only">(opens on GitHub)</span></a><span v-else>{{ check.name }}</span><small>{{ [check.source, check.url ? '' : 'no GitHub link reported'].filter(Boolean).join(' · ') }}</small><small v-if="check.outputTitle || check.outputSummary || check.outputSummaryTruncated" class="check-output"><strong v-if="check.outputTitle">{{ check.outputTitle }}</strong><span v-if="check.outputSummary">{{ checkSummaryPreview(check.outputSummary).text }}</span><span v-if="check.outputSummaryTruncated || checkSummaryPreview(check.outputSummary || '').truncated" class="check-output-note">Preview shortened · open the linked check for full output.</span></small><button v-if="check.kind === 'check_run' && check.id > 0" type="button" class="annotation-toggle" :aria-expanded="annotationOpen === `${activeChecks?.revisionSha}:${check.id}`" @click="toggleAnnotations(check)">INSPECT GITHUB ANNOTATIONS</button><section v-if="check.kind === 'check_run' && annotationOpen === `${activeChecks?.revisionSha}:${check.id}`" class="annotation-panel" :aria-label="`GitHub annotations for ${check.name} on revision ${activeChecks?.revisionShortSha}`"><p class="annotation-boundary">GitHub check annotations · revision {{ activeChecks?.revisionShortSha }} · <a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">check run source ↗</a></p><p v-if="annotationLoadingFor(activeChecks?.revisionSha ?? '', check.id)" role="status">Loading annotations from GitHub…</p><p v-else-if="annotationErrorFor(activeChecks?.revisionSha ?? '', check.id)" class="checks-note warn" role="status">{{ annotationErrorFor(activeChecks?.revisionSha ?? '', check.id) }}</p><p v-else-if="annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.items.length === 0" role="status">GitHub reported no line annotations for this check run and revision.</p><ul v-else class="annotation-list"><li v-for="(annotation, j) in annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.items" :key="`${annotation.path}:${annotation.startLine}:${j}`"><strong>{{ annotation.level.toUpperCase() }}<template v-if="annotation.title"> · {{ annotation.title }}</template></strong><p>{{ annotation.message }}</p><details v-if="annotation.details" class="annotation-details"><summary>RAW DETAILS</summary><pre>{{ annotation.details }}</pre></details><small>{{ annotation.path }}:{{ annotation.startLine }}<template v-if="annotation.endLine !== annotation.startLine">–{{ annotation.endLine }}</template></small><a v-if="annotation.sourceUrl" :href="annotation.sourceUrl" target="_blank" rel="noreferrer">VIEW SOURCE LINES ↗</a></li></ul><div v-if="annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.hasMore" class="annotation-pagination"><button type="button" :disabled="annotationLoadingFor(activeChecks?.revisionSha ?? '', check.id)" @click="showAnnotationPage(check, currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) + 1)">LOAD NEXT PAGE</button></div><div v-if="currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) > 1" class="annotation-pagination"><button type="button" @click="showAnnotationPage(check, currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) - 1)">PREVIOUS PAGE</button><span>PAGE {{ currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) }}</span></div></section></div></li></ul></template>
         </template>
         <p class="footnote">GitHub reported these checks for revision {{ activeChecks?.revisionShortSha || selectedRevision.slice(0, 7) }} at fetch time. Results apply only to that revision. Re-import to refresh PR head checks.</p>
+      </section>
+
+      <section class="activity-index" aria-labelledby="activity-index-title">
+        <h3 id="activity-index-title" class="section-title"><span>CHANGE ACTIVITY · OBSERVED SOURCES</span><span>{{ changeActivity.length }} EVENTS</span></h3>
+        <p class="footnote">Events are ordered by their source timestamps. Check entries are GitHub’s latest records for the focused revision at fetch time, not a complete run history. Commit, check, and Qodo timestamps describe different source fields; sequence alone does not establish causation.</p>
+        <p v-if="pr.qodoReviews.availability === 'unavailable'" class="checks-note warn" role="status"><strong>Qodo activity unavailable.</strong> {{ pr.qodoReviews.reason }} This index may omit Qodo review events.</p>
+        <p v-else-if="pr.qodoReviews.unrecognizedCommentCount > 0" class="checks-note warn" role="status"><strong>{{ pr.qodoReviews.unrecognizedCommentCount }} additional Qodo comments could not be parsed.</strong> The activity index may omit review events. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect all comments on GitHub ↗</a></p>
+        <p v-if="pr.qodoReviews.availability === 'available' && reviewsWithUnavailableDetails > 0" class="checks-note warn" role="status"><strong>Finding details unavailable or incomplete for {{ reviewsWithUnavailableDetails }} recognized Qodo review comment{{ reviewsWithUnavailableDetails === 1 ? '' : 's' }}.</strong> The activity index may omit finding details. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect the source review on GitHub ↗</a></p>
+        <p v-if="checkActivityNotice" class="checks-note" :class="{ warn: checkActivityNotice.kind === 'warn' }" role="status">{{ checkActivityNotice.text }}</p>
+        <ol class="activity-list">
+          <li v-for="event in changeActivity" :key="event.id" :class="`activity-${event.kind}`">
+            <span class="activity-node" aria-hidden="true"></span>
+            <div class="activity-content">
+              <div class="activity-meta"><span>{{ event.timestampLabel }}</span><time :datetime="event.timestamp">{{ date(event.timestamp) }}</time></div>
+              <strong>{{ event.title }}</strong>
+              <p>{{ event.detail }} · {{ event.revisionLabel }}</p>
+              <div class="activity-links">
+                <a :href="event.sourceUrl" target="_blank" rel="noreferrer">{{ event.sourceLabel }} ↗</a>
+                <a v-if="event.markedRevision && !event.revision && event.markedRevision.url" :href="event.markedRevision.url" target="_blank" rel="noreferrer">VIEW MARKED REVISION {{ event.markedRevision.shortSha }} ↗</a>
+                <button v-if="event.revision" type="button" :aria-label="`Focus activity revision ${event.revision.shortSha}`" @click="focusRevision(event.revision.sha)">FOCUS REVISION</button>
+              </div>
+            </div>
+          </li>
+        </ol>
       </section>
 
       <h3 class="section-title"><span>REVISION TIMELINE <span v-if="selectedRevision">· FOCUSED</span></span><span>COMMIT TIME · OLDEST FIRST</span></h3>
@@ -200,6 +401,19 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
 
       <section class="qodo-reviews" aria-labelledby="qodo-reviews-title">
         <h3 id="qodo-reviews-title" class="section-title"><span>QODO REVIEW EVIDENCE <span v-if="selectedRevision">· MATCHED REVISION</span></span><span v-if="pr.qodoReviews.availability === 'available'">{{ reviewCount }}</span></h3>
+        <div v-if="headCoverage" class="review-coverage" :class="headCoverage.state" role="status" aria-live="polite">
+          <strong v-if="headCoverage.state === 'outside_history'">PUBLISHED COMMENT · MARKER OUTSIDE IMPORTED HISTORY</strong>
+          <strong v-else-if="headCoverage.state === 'current' || headCoverage.state === 'stale'">PUBLISHED COMMENT · PR HEAD {{ headCoverage.state.toUpperCase() }}</strong>
+          <strong v-else>QODO REVIEW COVERAGE · {{ headCoverage.state.toUpperCase() }}</strong>
+          <p>{{ headCoverage.detail }}</p>
+          <p v-if="headCoverage.state === 'current' || headCoverage.state === 'stale' || headCoverage.state === 'outside_history'" class="review-coverage-sources">
+            <a v-if="headCoverage.revisionUrl" :href="headCoverage.revisionUrl" target="_blank" rel="noreferrer">MARKED REVISION {{ headCoverage.revisionSha.slice(0, 7) }} ↗</a>
+            <a :href="headCoverage.sourceUrl" target="_blank" rel="noreferrer">SOURCE COMMENT ↗</a>
+          </p>
+          <p v-if="headCoverage.state === 'current' || headCoverage.state === 'stale' || headCoverage.state === 'outside_history'" class="review-coverage-caveat">A comment matched to the PR head does not establish the latest complete Qodo review.</p>
+          <p v-if="headCoverage.state === 'stale'" class="review-coverage-next">Inspect the current PR head in Qodo before treating these comments as feedback on the version you intend to ship.</p>
+          <p v-else-if="headCoverage.state === 'unknown'" class="review-coverage-next">Open the source comments and confirm which revision Qodo reviewed.</p>
+        </div>
         <p v-if="pr.qodoReviews.availability === 'unavailable'" class="checks-note warn" role="status"><strong>Qodo review unavailable.</strong> {{ pr.qodoReviews.reason }}</p>
         <p v-else-if="pr.qodoReviews.items.length === 0 && pr.qodoReviews.unrecognizedCommentCount > 0" class="checks-note warn" role="status"><strong>{{ pr.qodoReviews.unrecognizedCommentCount }} Qodo comment{{ pr.qodoReviews.unrecognizedCommentCount === 1 ? '' : 's' }} not parsed as review output.</strong> Ghostline recognized only the published summary and code-review formats. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect the pull request on GitHub ↗</a></p>
         <p v-else-if="pr.qodoReviews.items.length === 0" class="checks-note" role="status"><strong>No recognized Qodo review comment found.</strong> Ghostline found no published Qodo summary or code-review comment in the GitHub issue-comment feed.</p>
@@ -207,11 +421,49 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
         <ol v-else class="review-list"><li v-for="review in selectedReviews.matched" :key="review.id"><ReviewCard :review="review" :commits="pr.commits" @focus-revision="focusRevision" /></li></ol>
         <p v-if="pr.qodoReviews.availability === 'available' && pr.qodoReviews.items.length > 0 && pr.qodoReviews.unrecognizedCommentCount > 0" class="checks-note warn" role="status">{{ pr.qodoReviews.unrecognizedCommentCount }} additional Qodo comment{{ pr.qodoReviews.unrecognizedCommentCount === 1 ? '' : 's' }} could not be parsed as review output. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect all comments on GitHub ↗</a></p>
         <section v-if="selectedReviews.unmarked.length" class="unmarked-reviews"><h4 class="section-title"><span>REVISION NOT MARKED · CONTEXT ONLY</span></h4><ol class="review-list"><li v-for="review in selectedReviews.unmarked" :key="review.id"><ReviewCard :review="review" :commits="pr.commits" context-only @focus-revision="focusRevision" /></li></ol></section>
-        <section v-if="pr.qodoReviews.availability === 'available'" class="recurrence" aria-labelledby="recurrence-title"><h4 id="recurrence-title" class="section-title"><span>REPEATED FINDINGS · FULL IMPORT</span></h4><p v-if="recurringFindings.length === 0" class="checks-note" role="status">No repeated finding title appears in the Qodo comments returned for this import.</p><ol v-else class="recurrence-list"><li v-for="finding in recurringFindings" :key="finding.id"><div class="review-meta"><strong>{{ finding.title }}</strong><span class="recurrence-count">{{ finding.occurrences.length }} separate comments</span></div><ul><li v-for="occurrence in finding.occurrences" :key="occurrence.reviewId"><time :datetime="occurrence.createdAt">{{ date(occurrence.createdAt) }}</time><a v-if="occurrence.commitSha && occurrence.commitUrl" :href="occurrence.commitUrl" target="_blank" rel="noreferrer">REVISION {{ occurrence.commitSha.slice(0, 7) }} ↗</a><span v-else>REVISION NOT MARKED</span><a :href="occurrence.sourceUrl" target="_blank" rel="noreferrer">SOURCE FINDING ↗</a></li></ul><button type="button" class="trace-open" :aria-expanded="selectedTraceId === finding.id" :aria-controls="selectedTraceId === finding.id ? 'deep-trace' : undefined" @click="toggleTrace(finding.id, $event)">{{ selectedTraceId === finding.id ? 'CLOSE DEEP TRACE' : 'OPEN DEEP TRACE' }}</button></li></ol><DeepTrace v-if="activeTrace" :trace="activeTrace" @close="clearTrace" @focus-revision="focusRevision" /><p class="footnote">A repeated title is an observed match across separate Qodo comments. It does not establish what caused the repeat or whether a later change fixed it.</p></section>
+        <section v-if="pr.qodoReviews.availability === 'available'" class="recurrence" aria-labelledby="recurrence-title"><h4 id="recurrence-title" class="section-title"><span>POSSIBLE REPEATS · FULL IMPORT</span></h4><p v-if="recurringFindings.length === 0" class="checks-note" role="status">No candidate repeat across distinct marked revisions was found. Same-revision or unmarked title matches are not shown as possible repeats.</p><ol v-else class="recurrence-list"><li v-for="finding in recurringFindings" :key="finding.id"><div class="review-meta"><strong>{{ finding.title }}</strong><span class="recurrence-count">{{ finding.occurrences.length }} distinct revisions</span></div><ul><li v-for="occurrence in finding.occurrences" :key="occurrence.findingId"><time :datetime="occurrence.createdAt">QODO COMMENT {{ occurrence.reviewId }} · {{ date(occurrence.createdAt) }}</time><a v-if="occurrence.commitSha && occurrence.commitUrl" :href="occurrence.commitUrl" target="_blank" rel="noreferrer">REVISION {{ occurrence.commitSha.slice(0, 7) }} ↗</a><span v-else>REVISION NOT MARKED</span><a :href="occurrence.sourceUrl" target="_blank" rel="noreferrer">SOURCE FINDING ↗</a></li></ul><button type="button" class="trace-open" :aria-expanded="selectedTraceId === finding.id" :aria-controls="selectedTraceId === finding.id ? 'deep-trace' : undefined" @click="toggleTrace(finding.id, $event)">{{ selectedTraceId === finding.id ? 'CLOSE TRACE' : 'COMPARE SOURCE EVIDENCE' }}</button></li></ol><DeepTrace v-if="activeTrace" :trace="activeTrace" @close="clearTrace" @focus-revision="focusRevision" /><p class="footnote">A normalized title match is a discovery signal, not proof that separate comments describe the same defect, that a repair was attempted, or that a later change fixed it.</p></section>
         <p class="footnote">Qodo review outcomes are reviewer feedback, not independent proof of correctness. Findings and summaries apply to their linked revision. A finding missing from a later review does not by itself prove the change was fixed.</p>
+        <form class="qodo-connect" @submit.prevent="loadStructuredQodoReview">
+          <label for="qodo-api-key">OPTIONAL · LOAD STRUCTURED QODO REVIEW</label>
+          <div class="qodo-connect-row"><input id="qodo-api-key" v-model="qodoApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Personal Qodo API key" :disabled="!qodoKeyTransportSecure"><button id="load-qodo-review" type="submit" :disabled="!qodoApiKey || !qodoKeyTransportSecure">{{ qodoReviewLoading ? 'LOADING STRUCTURED REVIEW' : qodoStructuredReview ? 'REFRESH STRUCTURED REVIEW' : 'LOAD STRUCTURED REVIEW' }} <span>↗</span></button></div>
+          <p v-if="!qodoKeyTransportSecure" class="checks-note warn" role="status"><strong>Secure connection required.</strong> Open Ghostline over HTTPS before sending a Qodo key. Localhost is also allowed.</p>
+          <p v-else class="footnote">The key is used for this request only, sent in a header, and never saved by Ghostline. Use only a Ghostline instance you trust.</p>
+          <p v-if="qodoReviewLoading" class="checks-note" role="status">Loading structured review data for {{ pr.url }}…</p>
+          <p v-if="qodoReviewError" class="checks-note warn" role="alert">{{ qodoReviewError }}</p>
+        </form>
+        <StructuredQodoReview v-if="qodoStructuredReview && pr" :review="qodoStructuredReview" :pull-request-url="pr.url" :head-sha="pr.checks.revisionSha" />
       </section>
     </section>
+    </div>
     </main>
     <footer><span>GHOSTLINE // DAY 01</span><span>EVERY SIGNAL HAS A SOURCE.</span></footer>
   </div>
 </template>
+
+<style scoped>
+.check-name .check-output {
+  max-width: 760px;
+  margin-top: 8px;
+  line-height: 1.55;
+  letter-spacing: .015em;
+  overflow-wrap: anywhere;
+}
+
+.check-output strong {
+  display: block;
+  color: #c6cbdb;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.check-output span {
+  display: block;
+  color: #8a91a7;
+}
+
+.check-output .check-output-note {
+  margin-top: 4px;
+  color: #c6cbdb;
+  font-style: italic;
+}
+</style>

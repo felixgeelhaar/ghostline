@@ -87,8 +87,38 @@ func TestParseQodoDoesNotMarkUnreadableFindingGroupAsClean(t *testing.T) {
 	comments := []githubIssueComment{{ID: 27, User: githubUser{Login: "qodo-code-review[bot]"}, HTMLURL: "https://github.com/acme/app/pull/7#issuecomment-27", Body: `<h3>Code Review by Qodo</h3><p>Nice, no open findings for this group</p><details><summary>View medium (1)</summary><details><summary>Concern: stale result details</summary></details></details>`}}
 
 	got, unrecognized := parseQodoReviews(comments, acmeApp)
-	if unrecognized != 0 || len(got) != 1 || got[0].Kind != "findings" {
+	if unrecognized != 0 || len(got) != 1 || got[0].Kind != "findings" || got[0].UnparsedFindingCount != 1 {
 		t.Fatalf("a non-empty, unparsed finding group must not look clean: reviews=%+v unrecognized=%d", got, unrecognized)
+	}
+}
+
+func TestParseQodoCountsUnnumberedFindingWhenOtherFindingParses(t *testing.T) {
+	comments := []githubIssueComment{{
+		ID: 29, User: githubUser{Login: "qodo-code-review[bot]"}, HTMLURL: "https://github.com/acme/app/pull/7#issuecomment-29",
+		Body: `<h3>Code Review by Qodo</h3><details><summary>View medium (2)</summary><details><summary>1. Keep revision links scoped <code>🐞 Bug</code></summary><details><summary>Description</summary><pre>Use the imported revision.</pre></details></details><details><summary>Missing status check details</summary><p>Do not trust stale checks.</p></details></details>`,
+	}}
+
+	got, unrecognized := parseQodoReviews(comments, acmeApp)
+	if unrecognized != 0 || len(got) != 1 || got[0].Kind != "findings" {
+		t.Fatalf("review was not preserved: reviews=%+v unrecognized=%d", got, unrecognized)
+	}
+	if len(got[0].Findings) != 1 || got[0].Findings[0].Title != "Keep revision links scoped" || got[0].UnparsedFindingCount != 1 {
+		t.Fatalf("parsed and unparsed findings = %+v", got[0])
+	}
+}
+
+func TestParseQodoReportsPartiallyUnparsedFindings(t *testing.T) {
+	comments := []githubIssueComment{{
+		ID: 28, User: githubUser{Login: "qodo-code-review[bot]"}, HTMLURL: "https://github.com/acme/app/pull/7#issuecomment-28",
+		Body: `<h3>Code Review by Qodo</h3><details><summary>View medium (2)</summary><details><summary>1. Keep revision links scoped <code>🐞 Bug</code></summary><details><summary>Description</summary><pre>Use the imported revision.</pre></details></details><details><summary>2.</summary></details></details>`,
+	}}
+
+	got, unrecognized := parseQodoReviews(comments, acmeApp)
+	if unrecognized != 0 || len(got) != 1 {
+		t.Fatalf("review was not preserved: reviews=%+v unrecognized=%d", got, unrecognized)
+	}
+	if got[0].Kind != "findings" || len(got[0].Findings) != 1 || got[0].Findings[0].Title != "Keep revision links scoped" || got[0].UnparsedFindingCount != 1 {
+		t.Fatalf("parsed and unparsed findings = %+v", got[0])
 	}
 }
 

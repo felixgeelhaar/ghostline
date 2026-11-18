@@ -19,6 +19,7 @@ const QodoReviewSchema = z.object({
   kind: z.enum(['summary', 'findings', 'no_open_findings']),
   summary: z.string().optional(),
   findings: z.array(QodoFindingSchema),
+  unparsedFindingCount: z.number().int().nonnegative().optional(),
   commitSha: fullSha.optional(),
   commitUrl: z.url({ protocol: /^https$/ }).optional(),
   createdAt: z.string(),
@@ -35,6 +36,54 @@ export type QodoReview = QodoReviewSet['items'][number]
 export type QodoFinding = QodoReview['findings'][number]
 export type RevisionRef = { sha: string; shortSha: string; message: string; author: string; committedAt: string; url: string }
 
+export type QodoHeadCoverage =
+  | { state: 'current' | 'stale' | 'outside_history'; detail: string; revisionSha: string; revisionUrl?: string; sourceUrl: string }
+  | { state: 'unknown' | 'missing' | 'unavailable'; detail: string }
+
+// This describes whether published comments contain an explicit marker for
+// the supplied PR head. It does not establish the latest complete review run.
+export function qodoHeadCoverage(reviews: QodoReviewSet, headSha?: string, prCommits: Pick<RevisionRef, 'sha'>[] = []): QodoHeadCoverage {
+  if (reviews.availability === 'unavailable') return { state: 'unavailable', detail: reviews.reason }
+  if (!headSha) return { state: 'unknown', detail: 'GitHub did not identify the current PR head revision, so Qodo comment coverage cannot be compared.' }
+  if (reviews.items.length === 0) {
+    return reviews.unrecognizedCommentCount > 0
+      ? { state: 'unknown', detail: 'GitHub returned Qodo comments, but Ghostline could not recognize their review format or revision.' }
+      : { state: 'missing', detail: 'No recognized Qodo review comments were found for this pull request.' }
+  }
+
+  const newestFirst = [...reviews.items].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt) || right.id - left.id)
+  const current = newestFirst.find((review) => review.commitSha?.toLowerCase() === headSha.toLowerCase())
+  if (current) {
+    return {
+      state: 'current',
+      detail: 'A published Qodo comment explicitly marks the current pull request head revision.',
+      revisionSha: current.commitSha!,
+      ...(current.commitUrl ? { revisionUrl: current.commitUrl } : {}),
+      sourceUrl: current.url,
+    }
+  }
+
+  if (reviews.unrecognizedCommentCount > 0 || newestFirst.some((review) => !review.commitSha)) {
+    return { state: 'unknown', detail: 'Qodo comments are present, but revision markers or recognized comment coverage are incomplete.' }
+  }
+
+  const newestMarked = newestFirst.find((review) => review.commitSha)
+  if (newestMarked?.commitSha) {
+    const markerIsInPullRequest = prCommits.some((commit) => commit.sha.toLowerCase() === newestMarked.commitSha?.toLowerCase())
+    return {
+      state: markerIsInPullRequest ? 'stale' : 'outside_history',
+      detail: markerIsInPullRequest
+        ? 'Recognized Qodo comments mark earlier revisions in the imported pull request history only; none marks the current pull request head.'
+        : 'A published Qodo comment marks a revision outside the imported pull request history; Ghostline cannot determine how it relates to this change.',
+      revisionSha: newestMarked.commitSha,
+      ...(newestMarked.commitUrl ? { revisionUrl: newestMarked.commitUrl } : {}),
+      sourceUrl: newestMarked.url,
+    }
+  }
+
+  return { state: 'unknown', detail: 'Qodo comments are present, but none identifies the revision it reviewed.' }
+}
+
 export type LaterRevisionToInspect = RevisionRef & { relationBasis: 'github_pr_commit_order' }
 
 export function laterRevisionsToInspect(review: Pick<QodoReview, 'commitSha'>, commits: RevisionRef[]): LaterRevisionToInspect[] {
@@ -47,6 +96,7 @@ export function laterRevisionsToInspect(review: Pick<QodoReview, 'commitSha'>, c
 export type FindingOccurrence = {
   reviewId: number
   findingId: string
+  title: string
   createdAt: string
   url: string
   sourceUrl: string
@@ -63,6 +113,7 @@ export type RecurringFinding = {
   id: string
   title: string
   occurrences: FindingOccurrence[]
+  titleMatches?: FindingOccurrence[]
 }
 
 export function noOpenFindingsNote(review: Pick<QodoReview, 'commitSha'>): string {
@@ -106,6 +157,7 @@ export function findRecurringFindings(reviews: QodoReview[]): RecurringFinding[]
       groupedFinding.occurrences.push({
         reviewId: review.id,
         findingId: finding.id,
+        title: finding.title.trim().replace(/\s+/g, ' '),
         createdAt: review.createdAt,
         url: review.url,
         sourceUrl: finding.sourceUrl,
@@ -120,7 +172,16 @@ export function findRecurringFindings(reviews: QodoReview[]): RecurringFinding[]
       grouped.set(normalized, groupedFinding)
     }
   }
-  return [...grouped.values()].filter((finding) => finding.occurrences.length > 1)
+  return [...grouped.values()].flatMap((finding) => {
+    const occurrenceByRevision = new Map<string, FindingOccurrence>()
+    for (const occurrence of finding.occurrences) {
+      if (!occurrence.commitSha) continue
+      const revision = occurrence.commitSha.toLowerCase()
+      if (!occurrenceByRevision.has(revision)) occurrenceByRevision.set(revision, occurrence)
+    }
+    const occurrences = [...occurrenceByRevision.values()]
+    return occurrences.length > 1 ? [{ ...finding, occurrences, titleMatches: finding.occurrences }] : []
+  })
 }
 
 export function qodoReviewState(reviews: QodoReviewSet): 'recorded' | 'partial' | 'none' | 'unrecognized' | 'unavailable' {

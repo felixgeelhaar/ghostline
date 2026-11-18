@@ -62,8 +62,11 @@ async function copyGuidance(trace: FindingTrace) {
           <span>COMMENT #{{ occurrence.reviewId }}</span>
           <time :datetime="occurrence.createdAt">{{ date(occurrence.createdAt) }}</time>
         </div>
+        <p class="trace-repeat-role" :class="occurrence.possibleRepeatAnchor ? 'is-anchor' : 'is-context'">{{ occurrence.possibleRepeatAnchor ? 'COUNTED · DISTINCT MARKED REVISION' : occurrence.commitSha ? 'CONTEXT ONLY · SAME REVISION NOT COUNTED AGAIN' : 'CONTEXT ONLY · REVISION NOT MARKED' }}</p>
+        <h6 class="trace-event-title">{{ occurrence.title }}</h6>
+        <p class="trace-match-note">Possible match based on normalized title only. Compare the source evidence before treating this as the same issue.</p>
         <p v-if="[...occurrence.categories, occurrence.lifecycle, occurrence.severity, occurrence.actionLevel].some(Boolean)" class="finding-labels">{{ [...occurrence.categories, occurrence.lifecycle, occurrence.severity, occurrence.actionLevel].filter(Boolean).join(' · ') }}</p>
-        <p v-if="occurrence.description" class="finding-description">{{ occurrence.description }}</p>
+        <p v-if="occurrence.description" class="finding-description trace-event-description">{{ occurrence.description }}</p>
         <p v-if="occurrence.commitSha && occurrence.revisionInPullRequest" class="review-revision">REVIEWED PR REVISION <a v-if="occurrence.commitUrl" :href="occurrence.commitUrl" target="_blank" rel="noreferrer">{{ occurrence.commitSha.slice(0, 7) }} ↗</a><span v-else>{{ occurrence.commitSha.slice(0, 7) }}</span></p>
         <p v-else-if="occurrence.commitSha" class="review-revision unmarked">REVISION MARKED · NOT IN IMPORTED PR COMMIT LIST <a v-if="occurrence.commitUrl" :href="occurrence.commitUrl" target="_blank" rel="noreferrer">{{ occurrence.commitSha.slice(0, 7) }} ↗</a></p>
         <p v-else class="review-revision unmarked">REVISION NOT MARKED</p>
@@ -105,7 +108,7 @@ async function copyGuidance(trace: FindingTrace) {
       </ol>
     </section>
 
-    <p class="footnote">The title match and Qodo comment timestamps are observed evidence. They do not establish causation, a repair attempt, or a successful fix.</p>
+    <p class="footnote">Title matches and Qodo comment timestamps are observed evidence. They do not establish finding identity, causation, a repair attempt, or a successful fix.</p>
     <p class="trace-boundary">Ghostline observes published review comments. Use your existing IDE or coding agent to inspect and guide the work.</p>
   </section>
 </template>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { apiErrorMessage } from './apiError'
+import { apiErrorMessage, ghostlineApiError } from './apiError'
 import { importPullRequest } from './importPullRequest'
 import { fetchRevisionChecks } from './fetchRevisionChecks'
 
@@ -28,6 +28,14 @@ describe('apiErrorMessage', () => {
   it('uses the API error for other statuses and the fallback when absent', () => {
     expect(apiErrorMessage(new Response('{}', { status: 400 }), { error: 'bad url' }, 'fallback')).toBe('bad url')
     expect(apiErrorMessage(new Response('{}', { status: 500 }), null, 'fallback')).toBe('fallback')
+  })
+
+  it('marks only Ghostline authentication failures as session rejection', () => {
+    const error = ghostlineApiError(new Response('{}', { status: 401 }), { code: 'AUTH_REQUIRED', error: 'Sign in again.' }, 'fallback')
+    expect(error.status).toBe(401)
+    expect(error.code).toBe('AUTH_REQUIRED')
+    const qodoError = ghostlineApiError(new Response('{}', { status: 401 }), { error: 'Qodo key expired.' }, 'fallback')
+    expect(qodoError.code).toBeUndefined()
   })
 })
 

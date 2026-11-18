@@ -155,7 +155,7 @@ func TestRateLimitThroughTrustedProxy(t *testing.T) {
 
 func TestRateLimitedRoutes(t *testing.T) {
 	clock := &fakeClock{now: time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)}
-	limiter := newRateLimiter(2, time.Minute, clock.Now)
+	limiter := newRateLimiter(3, time.Minute, clock.Now)
 	router := newRouterWithLimiter(&githubClient{baseURL: "http://127.0.0.1:1", http: http.DefaultClient}, limiter, clientIdentity{})
 
 	post := func(path, remote string) *httptest.ResponseRecorder {
@@ -167,14 +167,14 @@ func TestRateLimitedRoutes(t *testing.T) {
 		return rec
 	}
 
-	// Requests within the limit reach the handler (400 for the invalid URL), not the limiter.
-	for i := 0; i < 2; i++ {
-		if rec := post("/api/import", "203.0.113.9:1000"); rec.Code != http.StatusBadRequest {
-			t.Fatalf("request %d: status %d, want 400", i, rec.Code)
+	// Each limited endpoint reaches its handler within the shared budget.
+	for _, path := range []string{"/api/import", "/api/checks", "/api/qodo-review"} {
+		if rec := post(path, "203.0.113.9:1000"); rec.Code == http.StatusTooManyRequests {
+			t.Fatalf("%s request was rate limited before the shared budget was exhausted", path)
 		}
 	}
-	// The budget is shared across /api/import and /api/checks for one client.
-	rec := post("/api/checks", "203.0.113.9:1000")
+	// A fourth request is rate limited regardless of which endpoint it uses.
+	rec := post("/api/import", "203.0.113.9:1000")
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("over limit: status %d, want 429", rec.Code)
 	}

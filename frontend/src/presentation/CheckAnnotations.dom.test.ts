@@ -7,6 +7,7 @@ import { fetchCheckAnnotations } from '../application/fetchCheckAnnotations'
 import type { PullRequest } from '../domain/pullRequest'
 import App from './App.vue'
 
+vi.mock('../application/fetchGhostlineSession', () => ({ fetchGhostlineSession: vi.fn().mockResolvedValue({ authRequired: false, authenticated: true }) }))
 vi.mock('../application/importPullRequest', () => ({ importPullRequest: vi.fn() }))
 vi.mock('../application/fetchRevisionChecks', () => ({ fetchRevisionChecks: vi.fn() }))
 vi.mock('../application/fetchCheckAnnotations', () => ({ fetchCheckAnnotations: vi.fn() }))
@@ -15,7 +16,7 @@ const head = 'b'.repeat(40)
 const older = 'a'.repeat(40)
 const run = (id: number) => ({ id, name: 'Nox security scan', kind: 'check_run' as const, status: 'completed', conclusion: 'failure', url: `https://github.com/acme/app/actions/runs/${id}` })
 const pullRequest: PullRequest = {
-  repository: 'acme/app', owner: 'acme', repo: 'app', number: 7, title: 'Payments', state: 'open',
+  repository: 'acme/app', owner: 'acme', repo: 'app', number: 7, title: 'Payments', state: 'open', merged: false,
   url: 'https://github.com/acme/app/pull/7', createdAt: '2026-11-04T08:00:00Z', updatedAt: '2026-11-04T11:00:00Z',
   commits: [
     { sha: older, shortSha: 'aaaaaaa', message: 'Older revision', author: 'Felix', committedAt: '2026-11-04T09:00:00Z', url: `https://github.com/acme/app/commit/${older}` },
@@ -23,6 +24,7 @@ const pullRequest: PullRequest = {
   ],
   checks: { availability: 'available', revisionSha: head, revisionShortSha: 'bbbbbbb', revisionUrl: `https://github.com/acme/app/commit/${head}`, items: [run(314)] },
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] },
+  referencedIssues: { availability: 'available', items: [] },
 }
 const page = (sha: string, checkRunId: number, message: string, details?: string) => ({
   revisionSha: sha, checkRunId, checkRunUrl: `https://github.com/acme/app/actions/runs/${checkRunId}`, page: 1, pageSize: 100, hasMore: false,
@@ -38,6 +40,7 @@ async function mountImportedPR() {
   document.body.append(host)
   app = createApp(App)
   app.mount(host)
+  await vi.waitFor(() => expect(host?.querySelector('#pr-url')).not.toBeNull())
   const input = host.querySelector<HTMLInputElement>('#pr-url')!
   input.value = pullRequest.url
   input.dispatchEvent(new Event('input', { bubbles: true }))

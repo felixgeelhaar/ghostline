@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchCheckAnnotations } from './fetchCheckAnnotations'
+import { GhostlineApiError } from './apiError'
 
 const sha = 'a'.repeat(40)
 const payload = {
@@ -10,6 +11,14 @@ const payload = {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('fetchCheckAnnotations', () => {
+  it('reports an expired Ghostline session as a typed API error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'Sign in with GitHub to continue.', code: 'AUTH_REQUIRED' }), { status: 401 })))
+
+    const error = await fetchCheckAnnotations('https://github.com/acme/app/pull/7', sha, 314, 1).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(GhostlineApiError)
+    expect(error).toMatchObject({ status: 401, code: 'AUTH_REQUIRED', message: 'Sign in with GitHub to continue.' })
+  })
+
   it('requests annotations using the imported PR, exact revision and check run', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }))
     vi.stubGlobal('fetch', fetch)
