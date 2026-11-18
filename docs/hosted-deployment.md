@@ -16,8 +16,8 @@ Start and inspect the service:
 (
   export GHOSTLINE_SESSION_SECRET="$(secret-manager read ghostline/session-secret)"
   export GITHUB_OAUTH_CLIENT_SECRET="$(secret-manager read ghostline/github-oauth-client-secret)"
-  docker compose --env-file .env.hosted -f compose.hosted.yml up --build -d
-  docker compose --env-file .env.hosted -f compose.hosted.yml ps
+  docker compose --env-file .env.hosted -f compose.hosted.yml up --build -d &&
+    docker compose --env-file .env.hosted -f compose.hosted.yml ps
 )
 ```
 
