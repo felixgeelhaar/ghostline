@@ -114,6 +114,7 @@ function clearWorkspace() {
   revisionRequest++
   qodoRequest++
   copyRequest++
+  resetAnnotations()
   url.value = ''
   pr.value = undefined
   error.value = ''

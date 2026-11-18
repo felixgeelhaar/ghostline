@@ -161,6 +161,25 @@ describe('GitHub check annotations', () => {
     expect(host!.querySelector('.check-list')).not.toBeNull()
   })
 
+  it('ignores a sign-in rejection from an annotation request made before another tab changed the session', async () => {
+    let rejectStale: (error: unknown) => void = () => {}
+    vi.mocked(fetchCheckAnnotations).mockImplementationOnce(() => new Promise((_, reject) => { rejectStale = reject }))
+    await mountImportedPR()
+
+    host!.querySelector<HTMLButtonElement>('.annotation-toggle')!.click()
+    await vi.waitFor(() => expect(host?.textContent).toContain('Loading annotations from GitHub…'))
+    const otherTab = new BroadcastChannel('ghostline-session')
+    otherTab.postMessage({ type: 'session-changed' })
+    otherTab.close()
+    await vi.waitFor(() => expect(fetchGhostlineSession).toHaveBeenCalledTimes(2))
+    await settle()
+
+    rejectStale(new GhostlineApiError(401, 'Sign in to continue.', 'AUTH_REQUIRED'))
+    await settle()
+
+    expect(fetchGhostlineSession).toHaveBeenCalledTimes(2)
+  })
+
   it('closes a panel opened during a same-PR refresh once the refreshed data arrives', async () => {
     let finishRefresh!: (value: PullRequest) => void
     vi.mocked(fetchCheckAnnotations)
