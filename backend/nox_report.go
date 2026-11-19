@@ -335,18 +335,27 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		// promise it is immutable historical execution provenance. Do not use it
 		// to claim that the workflow definition was trusted at run time.
 		baseSHA := noxWorkflowRunBaseSHA(*run, number)
-		if fullSHA.MatchString(baseSHA) {
-			baseWorkflowSHA, baseErr := noxWorkflowBlobSHA(ctx, budget, owner, repo, baseSHA)
-			// A mismatch is useful to reject an obviously changed workflow, but
-			// a match is still only corroborating context, not attestation.
-			if baseErr == nil && !domain.IsTrustedNoxWorkflowRevision(baseWorkflowSHA, revisionWorkflowSHA) {
-				result.Reason = "The Nox workflow definition differs from the base revision associated with this run; its report is not trusted."
-				continue
-			}
-			if errors.Is(baseErr, errNoxInspectionLimit) || errors.Is(baseErr, errRateLimit) {
-				result.Reason = noxRequestFailureReason(baseErr)
-				return result
-			}
+		// A report is trusted only when the workflow matches the base: a pull
+		// request (including one from a fork, where GitHub omits the base SHA)
+		// could otherwise edit or add the workflow and publish a clean report.
+		if !fullSHA.MatchString(baseSHA) {
+			result.Reason = "GitHub did not identify the base revision for this run, so its Nox workflow could not be verified; its report is not trusted."
+			continue
+		}
+		baseWorkflowSHA, baseErr := noxWorkflowBlobSHA(ctx, budget, owner, repo, baseSHA)
+		if errors.Is(baseErr, errNoxInspectionLimit) || errors.Is(baseErr, errRateLimit) {
+			result.Reason = noxRequestFailureReason(baseErr)
+			return result
+		}
+		if baseErr != nil {
+			result.Reason = "Ghostline could not verify the Nox workflow at the base revision associated with this run; its report is not trusted."
+			continue
+		}
+		// A mismatch rejects a changed workflow; a match is still only
+		// corroborating context, not attestation.
+		if !domain.IsTrustedNoxWorkflowRevision(baseWorkflowSHA, revisionWorkflowSHA) {
+			result.Reason = "The Nox workflow definition differs from the base revision associated with this run; its report is not trusted."
+			continue
 		}
 		artifactsForRun := make([]workflowArtifact, 0)
 		for page := 1; page <= maxNoxPages; page++ {
@@ -640,13 +649,16 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 			}
 			rule := sarifRuleForResult(result, run.Tool.Driver.Rules, ruleByID)
 			suppressions := make([]domain.NoxSuppression, 0, min(len(result.Suppressions), domain.MaxNoxSuppressionsPerFinding))
+			acceptedBeyondRetained := false
 			for index, suppression := range result.Suppressions {
 				if index >= domain.MaxNoxSuppressionsPerFinding {
-					break
+					// Only the first records are kept, but every record decides suppression.
+					acceptedBeyondRetained = acceptedBeyondRetained || suppression.Status == "accepted"
+					continue
 				}
 				suppressions = append(suppressions, domain.NoxSuppression{Status: suppression.Status, Kind: suppression.Kind, Justification: suppression.Justification})
 			}
-			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, ResultLevel: result.Level, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressions: suppressions, SuppressionsTruncated: len(result.Suppressions) > domain.MaxNoxSuppressionsPerFinding}
+			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, ResultLevel: result.Level, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressions: suppressions, Suppressed: acceptedBeyondRetained, SuppressionsTruncated: len(result.Suppressions) > domain.MaxNoxSuppressionsPerFinding}
 			if len(result.Locations) > 0 {
 				location := result.Locations[0].PhysicalLocation
 				value.Path = location.ArtifactLocation.URI

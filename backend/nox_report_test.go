@@ -948,3 +948,72 @@ func TestLoadNoxReportDownloadsWithTokenOnlyAfterConfirmingPublicRepository(t *t
 		})
 	}
 }
+
+func TestParseNoxSARIFCountsAcceptedSuppressionBeyondRetainedRecords(t *testing.T) {
+	const sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	records := make([]string, 0, domain.MaxNoxSuppressionsPerFinding+1)
+	for i := 0; i < domain.MaxNoxSuppressionsPerFinding; i++ {
+		records = append(records, `{"kind":"external","status":"underReview","justification":"Discussing it"}`)
+	}
+	records = append(records, `{"kind":"external","status":"accepted","justification":"Approved later"}`)
+	data := []byte(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[{"ruleId":"SEC-001","message":{"text":"Accepted after many reviews."},"suppressions":[` + strings.Join(records, ",") + `]}]}]}`)
+	report, err := parseNoxSARIF(data, sha, 1, "https://github.com/acme/app/actions/runs/1", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ActiveCount != 0 || report.SuppressedCount != 1 || !report.Findings[0].Suppressed || !report.Findings[0].SuppressionsTruncated {
+		t.Fatalf("an accepted suppression after the retained records must still count: %+v", report)
+	}
+}
+
+func TestLoadNoxReportRejectsReportWhenBaseWorkflowCannotBeVerified(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	baseSHA := strings.Repeat("b", 40)
+	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	digest := sha256.Sum256(archive)
+	for _, tc := range []struct {
+		name         string
+		pullRequests []any
+		baseWorkflow func(http.ResponseWriter)
+	}{
+		{"workflow added by the pull request", []any{map[string]any{"number": 7, "base": map[string]string{"sha": baseSHA}}}, func(w http.ResponseWriter) { w.WriteHeader(http.StatusNotFound) }},
+		{"malformed base blob SHA", []any{map[string]any{"number": 7, "base": map[string]string{"sha": baseSHA}}}, func(w http.ResponseWriter) { _, _ = w.Write([]byte(`{"sha":"not-a-sha"}`)) }},
+		{"no base SHA from GitHub", []any{map[string]any{"number": 7}}, func(w http.ResponseWriter) { t.Error("base workflow requested without a base SHA") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var downloads int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/repos/acme/app/pulls/7":
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": baseSHA, "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+				case "/repos/acme/app/contents/" + domain.NoxSecurityWorkflowPath:
+					if r.URL.Query().Get("ref") == sha {
+						_, _ = w.Write([]byte(`{"sha":"` + noxTrustedWorkflowBlobSHA + `"}`))
+						return
+					}
+					tc.baseWorkflow(w)
+				case "/repos/acme/app/actions/workflows/nox.yml/runs":
+					_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{
+						map[string]any{"id": 11, "path": domain.NoxSecurityWorkflowPath, "name": "Security", "event": "pull_request", "head_sha": sha, "conclusion": "success", "html_url": "https://github.com/acme/app/actions/runs/11", "created_at": "2026-11-15T13:58:00Z", "pull_requests": tc.pullRequests},
+					}})
+				case "/repos/acme/app/actions/runs/11/artifacts":
+					_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{
+						"id": 44, "name": noxArtifactName, "size_in_bytes": len(archive), "digest": "sha256:" + hex.EncodeToString(digest[:]),
+						"url": "https://api.github.com/repos/acme/app/actions/artifacts/44", "created_at": "2026-11-15T13:58:17Z", "expires_at": "2099-11-22T13:58:16Z",
+						"workflow_run": map[string]any{"id": 11, "head_sha": sha},
+					}}})
+				case "/repos/acme/app/actions/artifacts/44/zip":
+					downloads++
+					_, _ = w.Write(archive)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			report := loadNoxReport(context.Background(), &githubClient{baseURL: srv.URL, http: srv.Client()}, "acme", "app", 7, sha)
+			if report.Availability == noxReportAvailable || downloads != 0 {
+				t.Fatalf("unverified workflow accepted: availability=%s reason=%q downloads=%d", report.Availability, report.Reason, downloads)
+			}
+		})
+	}
+}
