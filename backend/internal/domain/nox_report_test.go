@@ -295,3 +295,37 @@ func TestNoxScannedCommitMatches(t *testing.T) {
 		}
 	}
 }
+
+func TestParseNoxFindingKeepsSuppressionDetailOffActiveFindings(t *testing.T) {
+	tests := []struct {
+		name  string
+		value NoxSARIFFinding
+	}{
+		{
+			name: "one accepted and one rejected record",
+			value: NoxSARIFFinding{RuleID: "SEC-1", Suppressions: []NoxSuppression{
+				{Status: "accepted", Kind: "external", Justification: "Tracked elsewhere"},
+				{Status: "rejected", Kind: "inSource", Justification: "Not agreed"},
+			}},
+		},
+		{
+			name: "caller summary for a result that is not suppressed",
+			value: NoxSARIFFinding{RuleID: "SEC-1", SuppressionKind: "external", SuppressionJustification: "Tracked elsewhere",
+				SuppressionStatuses: []string{"accepted", "underReview"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			finding, ok := ParseNoxFinding(tt.value)
+			if !ok {
+				t.Fatal("ParseNoxFinding() skipped a failing result")
+			}
+			if finding.Suppressed {
+				t.Fatal("finding is suppressed, want active")
+			}
+			if finding.SuppressionKind != "" || finding.SuppressionJustification != "" {
+				t.Fatalf("active finding shows suppression detail %q / %q", finding.SuppressionKind, finding.SuppressionJustification)
+			}
+		})
+	}
+}

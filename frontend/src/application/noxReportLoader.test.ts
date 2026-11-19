@@ -75,4 +75,43 @@ describe('revision-bound Nox report loader', () => {
     expect(onError).toHaveBeenCalledWith(failure)
     expect(publish).toHaveBeenCalledWith({ loading: false, error: failure.message })
   })
+
+  it('fetches only the settled revision when focus changes quickly', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchReport = vi.fn((_url: string, sha: string) => Promise.resolve(report(sha)))
+      const publish = vi.fn()
+      const loader = createNoxReportLoader({ fetchReport, publish, isCurrent: (_url, sha) => sha === shaB, settleDelayMs: 300 })
+
+      const first = loader.loadWhenSettled(url, shaA)
+      await vi.advanceTimersByTimeAsync(100)
+      const second = loader.loadWhenSettled(url, shaB)
+      expect(publish).toHaveBeenLastCalledWith({ loading: true, error: '' })
+      await vi.advanceTimersByTimeAsync(300)
+      await Promise.all([first, second])
+
+      expect(fetchReport).toHaveBeenCalledTimes(1)
+      expect(fetchReport).toHaveBeenCalledWith(url, shaB)
+      expect(publish).toHaveBeenCalledWith({ loading: false, report: report(shaB), error: '' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not fetch a settling revision after the view is cleared', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchReport = vi.fn((_url: string, sha: string) => Promise.resolve(report(sha)))
+      const loader = createNoxReportLoader({ fetchReport, publish: vi.fn(), isCurrent: () => true, settleDelayMs: 300 })
+
+      const pending = loader.loadWhenSettled(url, shaA)
+      loader.invalidate()
+      await vi.advanceTimersByTimeAsync(300)
+      await pending
+
+      expect(fetchReport).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

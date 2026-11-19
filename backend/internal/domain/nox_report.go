@@ -297,6 +297,12 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 	if finding.Title == "" {
 		finding.Title = BoundedNoxText(value.RuleName, 1000)
 	}
+	// Suppression detail describes why a result is not counted; an active
+	// result has none, even when one of its records was accepted.
+	if !finding.Suppressed {
+		finding.SuppressionKind = ""
+		finding.SuppressionJustification = ""
+	}
 	for _, suppression := range value.Suppressions {
 		if !finding.Suppressed || !NoxSuppressionStatusAccepted(suppression.Status) || finding.SuppressionKind != "" || finding.SuppressionJustification != "" {
 			continue
@@ -318,10 +324,6 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 			Status: BoundedNoxText(suppression.Status, 100), Kind: BoundedNoxText(suppression.Kind, 100),
 			Justification: BoundedNoxText(suppression.Justification, 1000),
 		})
-		if finding.SuppressionKind == "" && suppression.Status == "accepted" {
-			finding.SuppressionKind = BoundedNoxText(suppression.Kind, 100)
-			finding.SuppressionJustification = BoundedNoxText(suppression.Justification, 1000)
-		}
 	}
 	if finding.Message == "" {
 		finding.Message = BoundedNoxText(value.Markdown, 2000)

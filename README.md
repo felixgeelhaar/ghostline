@@ -59,7 +59,7 @@ The `Security` GitHub Actions workflow runs the SHA-pinned Nox Marketplace actio
 docker compose up --build
 ```
 
-Open http://localhost:5173 (or set `GHOSTLINE_PORT` if that port is occupied). Compose binds the frontend to all network interfaces by default, so other devices on the LAN can use `http://<host-lan-ip>:5173`; set `GHOSTLINE_BIND_ADDRESS` to a specific interface address to restrict access. The development frontend proxies API requests to the backend container. Compose forwards `GITHUB_TOKEN` from the environment to the backend only for repository visibility checks; public pull-request data requests remain unauthenticated and use GitHub's public API quota.
+Open http://localhost:5173 (or set `GHOSTLINE_PORT` if that port is occupied). Compose binds the frontend to all network interfaces by default, so other devices on the LAN can use `http://<host-lan-ip>:5173`; set `GHOSTLINE_BIND_ADDRESS` to a specific interface address to restrict access. The development frontend proxies API requests to the backend container. Compose forwards `GITHUB_TOKEN` from the environment to the backend for repository visibility checks and, once a repository is confirmed public, for downloading its `nox-results` artifact (see above; displaying Nox reports needs a token with Actions read access). Other public pull-request data requests remain unauthenticated and use GitHub's public API quota.
 
 ### Protected hosted-mode sign-in
 

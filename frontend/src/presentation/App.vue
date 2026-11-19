@@ -354,7 +354,7 @@ async function focusRevision(sha: string) {
   checksError.value = ''
   checksLoading.value = false
   const request = ++revisionRequest
-  void loadNoxReport(importedPR, sha)
+  void noxReportLoader.loadWhenSettled(importedPR.url, sha)
   if (sha === importedPR.checks.revisionSha) {
     focusedChecks.value = importedPR.checks
     return
