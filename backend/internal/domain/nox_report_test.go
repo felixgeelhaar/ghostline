@@ -188,3 +188,91 @@ func TestSelectNoxArtifactsForRevision(t *testing.T) {
 		t.Fatalf("unexpected selected artifact candidates: %+v", selected)
 	}
 }
+
+func TestNoxScanControlChangeNamesFilesThatSteerTheScan(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		changed []string
+		want    string
+	}{
+		{name: "application code only", changed: []string{"backend/main.go", "docs/nox.md", "frontend/.gitignore.example"}},
+		{name: "workflow", changed: []string{"README.md", NoxSecurityWorkflowPath}, want: NoxSecurityWorkflowPath},
+		{name: "baseline", changed: []string{".nox/baseline.json"}, want: ".nox/baseline.json"},
+		{name: "other nox state", changed: []string{".nox/vex.json"}, want: ".nox/vex.json"},
+		{name: "project config", changed: []string{".nox.yaml"}, want: ".nox.yaml"},
+		{name: "root gitignore", changed: []string{".gitignore"}, want: ".gitignore"},
+		{name: "nested gitignore", changed: []string{"backend/internal/.gitignore"}, want: "backend/internal/.gitignore"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, changed := NoxScanControlChange(test.changed)
+			if changed != (test.want != "") || got != test.want {
+				t.Fatalf("NoxScanControlChange(%v) = %q, %v; want %q", test.changed, got, changed, test.want)
+			}
+		})
+	}
+}
+
+func TestNoxConfigCanMoveBaseline(t *testing.T) {
+	if !NoxConfigMovesBaseline("policy:\n  baseline_path: security/accepted.json\n") {
+		t.Fatal("a .nox.yaml that relocates the baseline was not detected")
+	}
+	if NoxConfigMovesBaseline("scan:\n  exclude: []\n") {
+		t.Fatal("a .nox.yaml without baseline_path was treated as relocating the baseline")
+	}
+}
+
+func TestParseNoxFindingSkipsSARIFEvaluationsThatAreNotFindings(t *testing.T) {
+	for _, kind := range []string{"pass", "notApplicable"} {
+		if _, include := ParseNoxFinding(NoxSARIFFinding{RuleID: "SEC-1", ResultLevel: "none", Kind: kind, Message: "Checked"}); include {
+			t.Fatalf("SARIF kind %q was presented as a finding", kind)
+		}
+	}
+	for _, kind := range []string{"", "fail", "review", "open", "informational"} {
+		if _, include := ParseNoxFinding(NoxSARIFFinding{RuleID: "SEC-1", ResultLevel: "warning", Kind: kind, Message: "Check"}); !include {
+			t.Fatalf("SARIF kind %q was dropped; an omitted kind defaults to fail", kind)
+		}
+	}
+}
+
+func TestParseNoxFindingDecidesSuppressionFromEveryRecordStatus(t *testing.T) {
+	retained := []NoxSuppression{{Status: "accepted", Kind: "external", Justification: "baseline"}}
+	for _, test := range []struct {
+		name     string
+		statuses []string
+		want     bool
+	}{
+		{name: "all accepted beyond retained", statuses: []string{"accepted", "", "accepted"}, want: true},
+		{name: "rejected beyond retained", statuses: []string{"accepted", "rejected"}},
+		{name: "under review beyond retained", statuses: []string{"accepted", "underReview"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			finding, _ := ParseNoxFinding(NoxSARIFFinding{RuleID: "SEC-1", Suppressions: retained, SuppressionStatuses: test.statuses, SuppressionsTruncated: true})
+			if finding.Suppressed != test.want {
+				t.Fatalf("Suppressed = %v, want %v", finding.Suppressed, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateNoxSARIFAcceptsOnlyCompleteNoxRuns(t *testing.T) {
+	if err := ValidateNoxSARIFLog("2.1.0", 1); err != nil {
+		t.Fatalf("valid log rejected: %v", err)
+	}
+	for _, test := range []struct {
+		version string
+		runs    int
+	}{{"2.0.0", 1}, {"2.1.0", 0}} {
+		if ValidateNoxSARIFLog(test.version, test.runs) == nil {
+			t.Fatalf("log version %q with %d runs was accepted", test.version, test.runs)
+		}
+	}
+	if err := ValidateNoxSARIFRun("Nox", true); err != nil {
+		t.Fatalf("valid run rejected: %v", err)
+	}
+	if ValidateNoxSARIFRun("Other", true) == nil {
+		t.Fatal("a run from another scanner was accepted")
+	}
+	if ValidateNoxSARIFRun("Nox", false) == nil {
+		t.Fatal("a run without a results array was accepted; SARIF 2.1.0 §3.14.23 defaults it to null")
+	}
+}

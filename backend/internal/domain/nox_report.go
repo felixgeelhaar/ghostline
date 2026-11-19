@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"net/url"
 	"path"
 	"sort"
@@ -55,6 +56,73 @@ func IsNoxScannerName(value string) bool {
 func IsTrustedNoxWorkflowRevision(baseBlobSHA, revisionBlobSHA string) bool {
 	return len(baseBlobSHA) == 40 && len(revisionBlobSHA) == 40 &&
 		isHexSHA(baseBlobSHA) && isHexSHA(revisionBlobSHA) && baseBlobSHA == revisionBlobSHA
+}
+
+// NoxScanControlChange reports the first changed path that can change what a
+// Nox scan reports without changing the workflow: the workflow itself, project
+// configuration (.nox.yaml), Nox state such as the baseline (.nox/), and any
+// .gitignore, whose patterns Nox skips by default. A pull request that changes
+// one of these cannot vouch for its own report.
+func NoxScanControlChange(changedPaths []string) (string, bool) {
+	for _, changed := range changedPaths {
+		if isNoxScanControlPath(changed) {
+			return changed, true
+		}
+	}
+	return "", false
+}
+
+func isNoxScanControlPath(value string) bool {
+	return value == NoxSecurityWorkflowPath || value == ".nox.yaml" || value == ".nox.yml" ||
+		strings.HasPrefix(value, ".nox/") || path.Base(value) == ".gitignore"
+}
+
+// NoxConfigMovesBaseline reports whether .nox.yaml points Nox at a baseline
+// outside .nox/, which NoxScanControlChange cannot verify.
+func NoxConfigMovesBaseline(config string) bool {
+	return strings.Contains(config, "baseline_path")
+}
+
+// ValidateNoxSARIFLog accepts only SARIF 2.1.0 logs with at least one run.
+func ValidateNoxSARIFLog(version string, runCount int) error {
+	if version != "2.1.0" || runCount == 0 {
+		return errors.New("unsupported or empty SARIF log")
+	}
+	return nil
+}
+
+// ValidateNoxSARIFRun accepts a Nox run that recorded a results array. Per
+// SARIF 2.1.0 §3.14.23 an absent results member defaults to null, meaning the
+// tool did not start or could not begin its analysis; only an empty array
+// means the scan ran and found nothing.
+func ValidateNoxSARIFRun(scannerName string, hasResults bool) error {
+	if !IsNoxScannerName(scannerName) {
+		return errors.New("artifact contains a report from a different scanner")
+	}
+	if !hasResults {
+		return errors.New("Nox SARIF run has no results array")
+	}
+	return nil
+}
+
+// isNoxSARIFFindingKind excludes SARIF evaluations that found no violation.
+// An omitted kind defaults to "fail" (SARIF 2.1.0 §3.27.9).
+func isNoxSARIFFindingKind(kind string) bool {
+	return kind != "pass" && kind != "notApplicable"
+}
+
+// NoxSuppressionStatusesInEffect applies SARIF's rule to every record of a
+// result: suppressed only when there is at least one record and all accepted.
+func NoxSuppressionStatusesInEffect(statuses []string) bool {
+	if len(statuses) == 0 {
+		return false
+	}
+	for _, status := range statuses {
+		if !NoxSuppressionStatusAccepted(status) {
+			return false
+		}
+	}
+	return true
 }
 
 func isHexSHA(value string) bool {
@@ -171,6 +239,7 @@ type NoxSARIFFinding struct {
 	RuleTitle                string
 	RuleSeverity             string
 	ResultLevel              string
+	Kind                     string
 	Message                  string
 	Markdown                 string
 	Path                     string
@@ -180,11 +249,17 @@ type NoxSARIFFinding struct {
 	SuppressionKind          string
 	SuppressionJustification string
 	Suppressions             []NoxSuppression
-	SuppressionsTruncated    bool
+	// SuppressionStatuses holds the status of every source record, including
+	// records beyond those retained in Suppressions.
+	SuppressionStatuses   []string
+	SuppressionsTruncated bool
 }
 
 // ParseNoxFinding converts one Nox SARIF result to Ghostline's domain model.
 func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
+	if !isNoxSARIFFindingKind(value.Kind) {
+		return NoxFinding{}, false
+	}
 	path := SafeNoxPath(value.Path)
 	line := 0
 	if path != "" && value.Line > 0 {
@@ -198,7 +273,7 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 		Path:     path,
 		Line:     line,
 		// When records were truncated, the caller decided from all of them.
-		Suppressed:               value.Suppressed || (!value.SuppressionsTruncated && NoxSuppressionsInEffect(value.Suppressions)),
+		Suppressed:               value.Suppressed || noxSuppressionDecision(value),
 		SuppressionKind:          BoundedNoxText(value.SuppressionKind, 100),
 		SuppressionJustification: BoundedNoxText(value.SuppressionJustification, 1000),
 		SuppressionsTruncated:    value.SuppressionsTruncated || len(value.Suppressions) > MaxNoxSuppressionsPerFinding,
@@ -254,6 +329,15 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 		}
 	}
 	return finding, true
+}
+
+// noxSuppressionDecision decides from every record when the source supplied
+// all statuses, and otherwise from the retained records unless they were cut.
+func noxSuppressionDecision(value NoxSARIFFinding) bool {
+	if value.SuppressionStatuses != nil {
+		return NoxSuppressionStatusesInEffect(value.SuppressionStatuses)
+	}
+	return !value.SuppressionsTruncated && NoxSuppressionsInEffect(value.Suppressions)
 }
 
 // SummarizeNoxFindings keeps the visible result list bounded while preserving

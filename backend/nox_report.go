@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -30,6 +31,8 @@ const (
 	noxPageSize          = 100
 	maxNoxPages          = 10
 	maxNoxGitHubRequests = 32
+	// GitHub's compare response lists at most 300 files; a full list may be cut.
+	noxCompareFileLimit = 300
 )
 
 const noxInspectionIncompleteReason = "GitHub evidence exceeded Ghostline’s inspection limit. The report may exist outside the inspected history; narrow the revision or try again later."
@@ -235,6 +238,7 @@ type sarifResult struct {
 	RuleID    string `json:"ruleId"`
 	RuleIndex *int   `json:"ruleIndex"`
 	Level     string `json:"level"`
+	Kind      string `json:"kind"`
 	Message   struct {
 		Text     string `json:"text"`
 		Markdown string `json:"markdown"`
@@ -336,6 +340,11 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		result.Reason = "GitHub could not verify the Nox workflow at the scanned revision."
 		return result
 	}
+	if reason := noxConfigTrustReason(ctx, budget, owner, repo, sha); reason != "" {
+		result.Reason = reason
+		return result
+	}
+	scanControlChanges := map[string]noxScanControlResult{}
 
 	var latestExpired *noxArtifactCandidate
 	expiredArtifactFound := false
@@ -367,6 +376,25 @@ runs:
 		// corroborating context, not attestation.
 		if !domain.IsTrustedNoxWorkflowRevision(baseWorkflowSHA, revisionWorkflowSHA) {
 			result.Reason = "The Nox workflow definition differs from the base revision associated with this run; its report is not trusted."
+			continue
+		}
+		// Files besides the workflow also steer the scan (configuration,
+		// baseline, ignore rules). A PR that changes one cannot vouch for itself.
+		control, checked := scanControlChanges[baseSHA]
+		if !checked {
+			control.path, control.err = noxScanControlChange(ctx, budget, owner, repo, baseSHA, sha)
+			scanControlChanges[baseSHA] = control
+		}
+		if errors.Is(control.err, errNoxInspectionLimit) || errors.Is(control.err, errRateLimit) {
+			result.Reason = noxRequestFailureReason(control.err)
+			return result
+		}
+		if control.err != nil {
+			result.Reason = "Ghostline could not verify which scan-control files this pull request changes; its report is not trusted."
+			continue
+		}
+		if control.path != "" {
+			result.Reason = fmt.Sprintf("This pull request changes %s, which controls what the Nox scan reports; its report is not trusted.", control.path)
 			continue
 		}
 		artifactsForRun := make([]workflowArtifact, 0)
@@ -531,6 +559,69 @@ func noxWorkflowBlobSHA(ctx context.Context, budget *noxGitHubRequestBudget, own
 	return strings.ToLower(content.SHA), nil
 }
 
+type noxScanControlResult struct {
+	path string
+	err  error
+}
+
+// noxScanControlChange returns the first scan-control file the pull request
+// changes between its base and the scanned revision, including renames.
+func noxScanControlChange(ctx context.Context, budget *noxGitHubRequestBudget, owner, repo, baseSHA, sha string) (string, error) {
+	var comparison struct {
+		Files *[]struct {
+			Filename         string `json:"filename"`
+			PreviousFilename string `json:"previous_filename"`
+		} `json:"files"`
+	}
+	requestPath := fmt.Sprintf("/repos/%s/%s/compare/%s...%s", url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(baseSHA), url.PathEscape(sha))
+	if err := budget.get(ctx, requestPath, &comparison); err != nil {
+		return "", err
+	}
+	if comparison.Files == nil {
+		return "", errors.New("GitHub did not list the compared files")
+	}
+	if len(*comparison.Files) >= noxCompareFileLimit {
+		return "", errors.New("GitHub's compared file list may be truncated")
+	}
+	paths := make([]string, 0, 2*len(*comparison.Files))
+	for _, file := range *comparison.Files {
+		paths = append(paths, file.Filename)
+		if file.PreviousFilename != "" {
+			paths = append(paths, file.PreviousFilename)
+		}
+	}
+	changed, _ := domain.NoxScanControlChange(paths)
+	return changed, nil
+}
+
+// noxConfigTrustReason rejects a report when .nox.yaml at the scanned revision
+// points Nox at a baseline outside the files Ghostline checks.
+func noxConfigTrustReason(ctx context.Context, budget *noxGitHubRequestBudget, owner, repo, sha string) string {
+	var content struct {
+		Encoding string `json:"encoding"`
+		Content  string `json:"content"`
+	}
+	requestPath := fmt.Sprintf("/repos/%s/%s/contents/.nox.yaml?ref=%s", url.PathEscape(owner), url.PathEscape(repo), url.QueryEscape(sha))
+	err := budget.get(ctx, requestPath, &content)
+	if errors.Is(err, errNotFound) {
+		return ""
+	}
+	if errors.Is(err, errNoxInspectionLimit) || errors.Is(err, errRateLimit) {
+		return noxRequestFailureReason(err)
+	}
+	if err != nil || content.Encoding != "base64" {
+		return "Ghostline could not read the Nox configuration at the scanned revision; its report is not trusted."
+	}
+	config, err := base64.StdEncoding.DecodeString(strings.NewReplacer("\n", "", "\r", "").Replace(content.Content))
+	if err != nil {
+		return "Ghostline could not read the Nox configuration at the scanned revision; its report is not trusted."
+	}
+	if domain.NoxConfigMovesBaseline(string(config)) {
+		return "The Nox configuration at this revision sets a custom baseline_path, which Ghostline cannot verify; its report is not trusted."
+	}
+	return ""
+}
+
 func setNoxArtifactProvenance(report *noxReport, candidate noxArtifactCandidate) {
 	report.RunID = candidate.run.ID
 	report.RunName = candidate.run.Name
@@ -653,20 +744,14 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 	if err := json.Unmarshal(data, &log); err != nil {
 		return noxReport{}, err
 	}
-	if log.Version != "2.1.0" || len(log.Runs) == 0 {
-		return noxReport{}, errors.New("unsupported or empty SARIF log")
+	if err := domain.ValidateNoxSARIFLog(log.Version, len(log.Runs)); err != nil {
+		return noxReport{}, err
 	}
 	report := noxReport{Availability: noxReportAvailable, RevisionSHA: sha, RunID: runID, RunURL: safeURL(runURL), CreatedAt: createdAt, ExpiresAt: expiresAt, Findings: []noxFinding{}}
 	findingSummary := domain.NewNoxFindingSummaryBuilder()
 	for _, run := range log.Runs {
-		if !domain.IsNoxScannerName(run.Tool.Driver.Name) {
-			return noxReport{}, errors.New("artifact contains a report from a different scanner")
-		}
-		// SARIF 2.1.0 §3.14.23: an absent results member defaults to null, which
-		// records that the tool did not start or could not begin its analysis.
-		// Only an empty array means the scan ran and found nothing.
-		if run.Results == nil {
-			return noxReport{}, errors.New("Nox SARIF run has no results array")
+		if err := domain.ValidateNoxSARIFRun(run.Tool.Driver.Name, run.Results != nil); err != nil {
+			return noxReport{}, err
 		}
 		for _, invocation := range run.Invocations {
 			if invocation.ExecutionSuccessful != nil && (*invocation.ExecutionSuccessful == false || report.ScanSuccessful == nil) {
@@ -687,17 +772,17 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 			}
 			rule := sarifRuleForResult(result, run.Tool.Driver.Rules, ruleByID)
 			suppressions := make([]domain.NoxSuppression, 0, min(len(result.Suppressions), domain.MaxNoxSuppressionsPerFinding))
-			// Only the first records are kept for display, but every record
-			// decides whether the result is suppressed.
-			inEffect := len(result.Suppressions) > 0
+			// Only the first records are kept for display, but the domain decides
+			// suppression from every record's status.
+			statuses := make([]string, 0, len(result.Suppressions))
 			for index, suppression := range result.Suppressions {
-				inEffect = inEffect && domain.NoxSuppressionStatusAccepted(suppression.Status)
+				statuses = append(statuses, suppression.Status)
 				if index < domain.MaxNoxSuppressionsPerFinding {
 					suppressions = append(suppressions, domain.NoxSuppression{Status: suppression.Status, Kind: suppression.Kind, Justification: suppression.Justification})
 				}
 			}
 			truncated := len(result.Suppressions) > domain.MaxNoxSuppressionsPerFinding
-			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, ResultLevel: result.Level, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressions: suppressions, Suppressed: truncated && inEffect, SuppressionsTruncated: truncated}
+			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, ResultLevel: result.Level, Kind: result.Kind, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressions: suppressions, SuppressionStatuses: statuses, SuppressionsTruncated: truncated}
 			if len(result.Locations) > 0 {
 				location := result.Locations[0].PhysicalLocation
 				value.Path = location.ArtifactLocation.URI
@@ -713,9 +798,6 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 		if err != nil || closing != json.Delim(']') {
 			return noxReport{}, errors.New("Nox SARIF run results array is incomplete")
 		}
-	}
-	if len(log.Runs) == 0 {
-		return noxReport{}, errors.New("SARIF contains no runs")
 	}
 	summary := findingSummary.Build()
 	report.TotalCount = summary.TotalCount

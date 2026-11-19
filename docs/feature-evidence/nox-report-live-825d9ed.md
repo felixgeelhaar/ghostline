@@ -14,3 +14,4 @@ What the screenshot does not show:
 
 - It does not show that the findings are valid, that the scan was complete, or that the revision is safe. The report describes only the inspected revision and the artifact it came from.
 - It shows one revision. A later commit on the PR is not covered by this report.
+- The run behind this report predates #82. At that time the Security workflow checked out GitHub's merge preview of `825d9ed` with `main`, not `825d9ed` itself, so the scanned tree may differ from the revision the panel names. The panel's layout and labels are what this screenshot shows. Since #82, the workflow scans the PR head commit.

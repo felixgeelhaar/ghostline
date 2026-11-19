@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -31,7 +32,16 @@ func (transport noxWorkflowTestTransport) RoundTrip(request *http.Request) (*htt
 			StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"sha":"` + noxTrustedWorkflowBlobSHA + `"}`)), Request: request,
 		}, nil
 	}
-	return transport.fallback.RoundTrip(request)
+	response, err := transport.fallback.RoundTrip(request)
+	// Unless a test serves its own comparison, the pull request changed no
+	// scan-control files.
+	if err == nil && response.StatusCode == http.StatusNotFound && strings.Contains(request.URL.Path, "/compare/") {
+		_ = response.Body.Close()
+		return &http.Response{
+			StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"files":[]}`)), Request: request,
+		}, nil
+	}
+	return response, err
 }
 
 func noxTestGitHubClient(server *httptest.Server) *githubClient {
@@ -1103,6 +1113,8 @@ func newNoxScenario(t *testing.T, sha string, runsPages [][]noxScenarioRun) (*gi
 			}
 			downloads++
 			_, _ = w.Write(archive)
+		case strings.HasPrefix(r.URL.Path, "/repos/acme/app/compare/"):
+			_, _ = w.Write([]byte(`{"files":[]}`)) // the PR changed no scan-control files
 		default:
 			http.NotFound(w, r)
 		}
@@ -1254,5 +1266,124 @@ func TestLoadNoxReportKeepsCandidateReasonWithItsProvenanceWhenHistoryIsTruncate
 	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
 	if report.Availability != noxReportUnavailable || report.ArtifactID != 77 || report.Reason == "" || report.Reason == noxInspectionIncompleteReason {
 		t.Fatalf("the shown artifact's provenance was not paired with its own failure reason: %+v", report)
+	}
+}
+
+func TestParseNoxSARIFSkipsPassingEvaluations(t *testing.T) {
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	data := `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[
+		{"ruleId":"SEC-1","kind":"pass","level":"none","message":{"text":"Checked"}},
+		{"ruleId":"SEC-2","kind":"notApplicable","level":"none","message":{"text":"Not applicable"}},
+		{"ruleId":"SEC-3","level":"warning","message":{"text":"Real finding"}}]}]}`
+	report, err := parseNoxSARIF([]byte(data), sha, 1, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.TotalCount != 1 || report.ActiveCount != 1 || len(report.Findings) != 1 || report.Findings[0].RuleID != "SEC-3" {
+		t.Fatalf("passing evaluations were counted as findings: %+v", report)
+	}
+}
+
+// scanControlScenario serves one matching run with a valid report. compare and
+// noxConfig, when set, answer the comparison and the .nox.yaml lookup.
+func scanControlScenario(t *testing.T, sha string, compare func(http.ResponseWriter), noxConfig string) *httptest.Server {
+	t.Helper()
+	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	digest := sha256.Sum256(archive)
+	base := strings.Repeat("b", 40)
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/acme/app/pulls/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": base, "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+		case r.URL.Path == "/repos/acme/app/actions/workflows/nox.yml/runs":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 11, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": base}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}}})
+		case r.URL.Path == "/repos/acme/app/compare/"+base+"..."+sha && compare != nil:
+			compare(w)
+		case r.URL.Path == "/repos/acme/app/contents/.nox.yaml" && noxConfig != "":
+			if r.URL.Query().Get("ref") != sha {
+				t.Errorf(".nox.yaml was read at %q, not the scanned revision", r.URL.Query().Get("ref"))
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"type": "file", "encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte(noxConfig))})
+		case r.URL.Path == "/repos/acme/app/actions/runs/11/artifacts":
+			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{"id": 44, "name": noxArtifactName, "digest": "sha256:" + hex.EncodeToString(digest[:]), "workflow_run": map[string]any{"id": 11, "head_sha": sha}}}})
+		case r.URL.Path == "/repos/acme/app/actions/artifacts/44/zip":
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func TestLoadNoxReportRejectsReportWhenPullRequestChangesScanControlFile(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	for _, test := range []struct{ name, file, previous string }{
+		{name: "baseline", file: ".nox/baseline.json"},
+		{name: "project config", file: ".nox.yaml"},
+		{name: "nested gitignore", file: "backend/.gitignore"},
+		{name: "renamed away from baseline", file: "docs/old-baseline.json", previous: ".nox/baseline.json"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			srv := scanControlScenario(t, sha, func(w http.ResponseWriter) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"files": []any{map[string]any{"filename": "README.md"}, map[string]any{"filename": test.file, "previous_filename": test.previous}}})
+			}, "")
+			defer srv.Close()
+			report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
+			named := test.file
+			if test.previous != "" {
+				named = test.previous
+			}
+			if report.Availability != noxReportUnavailable || !strings.Contains(report.Reason, named) || !strings.Contains(report.Reason, "not trusted") {
+				t.Fatalf("a report from a PR that changed %s was accepted: %+v", named, report)
+			}
+		})
+	}
+}
+
+func TestLoadNoxReportRejectsReportWhenScanControlChangesCannotBeVerified(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	for _, test := range []struct {
+		name    string
+		compare func(http.ResponseWriter)
+	}{
+		{name: "comparison unavailable", compare: func(w http.ResponseWriter) { http.Error(w, "boom", http.StatusUnprocessableEntity) }},
+		{name: "file list may be truncated", compare: func(w http.ResponseWriter) {
+			files := make([]map[string]any, noxCompareFileLimit)
+			for index := range files {
+				files[index] = map[string]any{"filename": fmt.Sprintf("src/file-%d.go", index)}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": files})
+		}},
+		{name: "file list missing", compare: func(w http.ResponseWriter) { _, _ = w.Write([]byte(`{}`)) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			srv := scanControlScenario(t, sha, test.compare, "")
+			defer srv.Close()
+			report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
+			if report.Availability != noxReportUnavailable || !strings.Contains(report.Reason, "not trusted") {
+				t.Fatalf("an unverifiable comparison was treated as trusted: %+v", report)
+			}
+		})
+	}
+}
+
+func TestLoadNoxReportRejectsReportWhenConfigMovesBaseline(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	srv := scanControlScenario(t, sha, nil, "policy:\n  baseline_path: security/accepted.json\n")
+	defer srv.Close()
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
+	if report.Availability != noxReportUnavailable || !strings.Contains(report.Reason, "baseline") {
+		t.Fatalf("a report whose baseline lives outside the checked files was accepted: %+v", report)
+	}
+}
+
+func TestLoadNoxReportAcceptsReportWhenNoScanControlFileChanged(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	srv := scanControlScenario(t, sha, func(w http.ResponseWriter) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"files": []any{map[string]any{"filename": "backend/main.go"}}})
+	}, "scan:\n  exclude: []\n")
+	defer srv.Close()
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
+	if report.Availability != noxReportAvailable {
+		t.Fatalf("a report from a PR that changed only application code was rejected: %+v", report)
 	}
 }
