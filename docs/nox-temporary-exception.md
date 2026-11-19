@@ -28,11 +28,19 @@ The maintainer explicitly extended this exception ([decision](https://github.com
 
 The two OpenSSL advisories join the original four under the same boundary and review date. picomatch is a build- and dev-time dependency of vite, vitest, tinyglobby, fdir and @vue/language-core. It matches glob patterns from repository configuration, not request input. Reachability with attacker-controlled patterns is not established. As with the original four, the amendment records accepted risk; it does not mean the advisories are fixed or unreachable.
 
+## Amendment: 2026-11-18, Alpine OpenSSL in the Go image
+
+Since the evening of 2026-11-18, Nox reports four high Alpine advisories for OpenSSL 3.5.9-r0 in the pinned `golang:1.27.4-alpine` image: ALPINE-CVE-2026-95691, ALPINE-CVE-2026-95692, ALPINE-CVE-2026-88823 and ALPINE-CVE-2026-107496. Each appears in `Dockerfile` and `Dockerfile.dev`, so there are 8 findings. Alpine v3.24 ships the fix in 3.5.9-r1, but no `golang` Alpine digest includes it yet.
+
+In `Dockerfile` the image is the backend build stage only: the `CGO_ENABLED=0` binary is copied into a `scratch` image that contains no OpenSSL. `Dockerfile.dev` runs from the image, so it installs `libssl3` and `libcrypto3` 3.5.9-r1 or later and fails the build if they are unavailable. Nox inventories the base image, not the built one, so the findings remain.
+
+The maintainer decided to baseline the 8 fingerprints in `.nox/baseline.json`, tracked in [issue #78](https://github.com/felixgeelhaar/ghostline/issues/78), with a review date of 2026-11-25. Remove them when the pinned Go Alpine digest ships OpenSSL 3.5.9-r1 or later. This records accepted risk; it does not mean the advisories are fixed in the base image.
+
 ## Exception boundary
 
 The original four OpenSSL fingerprints and the three added on 2026-11-17 are baselined in `.nox/baseline.json` through 2026-11-20 to unblock the current release. Nox baselines do not expire automatically. The maintainer must review this record and issue #45 by the review date, remove the six OpenSSL baseline entries as soon as a supported runtime with OpenSSL 3.5.10 or later is available, and seek a new explicit decision before extending the exception. OpenSSL findings in the production builder are not baselined.
 
-The exception does not cover findings other than the seven listed above; the two zlib entries are recorded in the section on the Go builder image. Keep Nox and Warden enabled and preserve the scan output with the release evidence.
+The exception does not cover findings other than the seven listed above; the two zlib entries and the eight Alpine OpenSSL entries are recorded in their own sections. Keep Nox and Warden enabled and preserve the scan output with the release evidence.
 
 ## Exit criteria
 
