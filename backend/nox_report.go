@@ -340,7 +340,6 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 	var latestExpired *noxArtifactCandidate
 	expiredArtifactFound := false
 	candidateFailureRecorded := false
-	artifactHistoryTruncated := false
 runs:
 	for i := range matchingRuns {
 		run := &matchingRuns[i]
@@ -371,6 +370,7 @@ runs:
 			continue
 		}
 		artifactsForRun := make([]workflowArtifact, 0)
+		artifactHistoryTruncated := false
 		for page := 1; page <= maxNoxPages; page++ {
 			var response workflowArtifactsResponse
 			artifactsPath := fmt.Sprintf("/repos/%s/%s/actions/runs/%d/artifacts?name=%s&per_page=%d&page=%d", url.PathEscape(owner), url.PathEscape(repo), run.ID, url.QueryEscape(noxArtifactName), noxPageSize, page)
@@ -456,10 +456,14 @@ runs:
 			}
 			return parsed
 		}
+		if artifactHistoryTruncated {
+			// This run's unlisted artifacts may hold its report; an older run's
+			// report must not stand in for it.
+			return noxInspectionIncompleteResult(result, candidateFailureRecorded)
+		}
 	}
-	if workflowHistoryTruncated || artifactHistoryTruncated {
-		result.Reason = noxInspectionIncompleteReason
-		return result
+	if workflowHistoryTruncated {
+		return noxInspectionIncompleteResult(result, candidateFailureRecorded)
 	}
 	if result.ArtifactID != 0 {
 		return result
@@ -471,6 +475,15 @@ runs:
 	}
 	if result.Reason == "" {
 		result.Reason = "No retained Nox report was published for this revision."
+	}
+	return result
+}
+
+// noxInspectionIncompleteResult reports an inspection gap without separating a
+// shown artifact's provenance from the reason recorded for that artifact.
+func noxInspectionIncompleteResult(result noxReport, candidateFailureRecorded bool) noxReport {
+	if !candidateFailureRecorded {
+		result.Reason = noxInspectionIncompleteReason
 	}
 	return result
 }

@@ -1197,3 +1197,62 @@ func TestParseNoxSARIFDoesNotTreatAbsentResultsAsACleanScan(t *testing.T) {
 		t.Fatalf("an empty results array is a completed scan with no results: %v", err)
 	}
 }
+
+// truncatedArtifactRunServer serves two matching runs: run 12 (newer) whose
+// artifact history fills every inspected page, and run 11 (older) with a valid
+// report. lastPageArtifact, when set, is placed on run 12's final page.
+func truncatedArtifactRunServer(t *testing.T, sha string, lastPageArtifact map[string]any) *httptest.Server {
+	t.Helper()
+	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	digest := sha256.Sum256(archive)
+	run := func(id int, createdAt string) map[string]any {
+		return map[string]any{"id": id, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": createdAt, "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/acme/app/pulls/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+		case r.URL.Path == "/repos/acme/app/actions/workflows/nox.yml/runs":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{run(12, "2026-11-15T14:00:00Z"), run(11, "2026-11-15T13:00:00Z")}})
+		case r.URL.Path == "/repos/acme/app/actions/runs/12/artifacts":
+			artifacts := make([]map[string]any, noxPageSize)
+			w.Header().Set("Link", `<https://api.github.com/next>; rel="next"`)
+			for index := range artifacts {
+				artifacts[index] = map[string]any{"id": index + 100, "name": noxArtifactName, "workflow_run": map[string]any{"id": 12, "head_sha": "ffffffffffffffffffffffffffffffffffffffff"}}
+			}
+			if lastPageArtifact != nil && r.URL.Query().Get("page") == strconv.Itoa(maxNoxPages) {
+				artifacts[0] = lastPageArtifact
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": artifacts})
+		case r.URL.Path == "/repos/acme/app/actions/runs/11/artifacts":
+			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{"id": 44, "name": noxArtifactName, "digest": "sha256:" + hex.EncodeToString(digest[:]), "workflow_run": map[string]any{"id": 11, "head_sha": sha}}}})
+		case strings.HasPrefix(r.URL.Path, "/repos/acme/app/actions/artifacts/") && strings.HasSuffix(r.URL.Path, "/zip"):
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func TestLoadNoxReportDoesNotSkipPastTruncatedNewerRunToOlderReport(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	srv := truncatedArtifactRunServer(t, sha, nil)
+	defer srv.Close()
+
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
+	if report.Availability != noxReportUnavailable || report.Reason != noxInspectionIncompleteReason || report.ArtifactID != 0 {
+		t.Fatalf("an older run's report was shown although the newer run's artifacts were not fully inspected: %+v", report)
+	}
+}
+
+func TestLoadNoxReportKeepsCandidateReasonWithItsProvenanceWhenHistoryIsTruncated(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	badDigest := map[string]any{"id": 77, "name": noxArtifactName, "digest": "sha256:" + strings.Repeat("0", 64), "workflow_run": map[string]any{"id": 12, "head_sha": sha}}
+	srv := truncatedArtifactRunServer(t, sha, badDigest)
+	defer srv.Close()
+
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
+	if report.Availability != noxReportUnavailable || report.ArtifactID != 77 || report.Reason == "" || report.Reason == noxInspectionIncompleteReason {
+		t.Fatalf("the shown artifact's provenance was not paired with its own failure reason: %+v", report)
+	}
+}
