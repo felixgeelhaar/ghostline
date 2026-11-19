@@ -27,6 +27,13 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      # The scan output directory must be created by this run. A checked-out
+      # `nox-results` (a symlink or a directory with planted files) would
+      # otherwise redirect the scan, gate, and record writes or ship files the
+      # scan never produced. `rm -rf` on a symlink removes the link, not its target.
+      - name: Clear scan output directory
+        run: rm -rf nox-results
+
       # Nox 1.67.0 includes the severity-specific SARIF rule descriptors from
       # Nox-HQ/nox#1068. Keep the action and scanner versions explicit.
       - name: Run Nox security scan
@@ -59,9 +66,9 @@ jobs:
 
       # Nox reports do not name the commit they scanned. Record the checked-out
       # commit next to them so consumers can confirm a report describes the
-      # revision it is attributed to. Written by the workflow after the scan;
-      # removing the path first means a symlink or directory from the scanned tree cannot
-      # redirect the write. Only trustworthy while this workflow file matches
+      # revision it is attributed to. Written by the workflow after the scan
+      # into the output directory this run created; removing the path first
+      # keeps a file Nox may have left there from being reused. Only trustworthy while this workflow file matches
       # the PR base, which Ghostline checks before reading the record.
       - name: Record scanned commit
         if: always() && hashFiles('nox-results/**') != ''
