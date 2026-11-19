@@ -3,13 +3,18 @@ import { z } from 'zod'
 const webURL = z.url({ protocol: /^https?$/ })
 const fullSha = z.string().regex(/^[0-9a-f]{40}$/)
 
-export const CheckSchema = z.object({
-  id: z.number().int().positive().optional(), name: z.string(), kind: z.enum(['check_run', 'commit_status']), source: z.string().optional(),
-  status: z.string(), conclusion: z.string().optional(), url: webURL.optional(),
+const checkFields = {
+  name: z.string(), source: z.string().optional(), status: z.string(),
+  conclusion: z.string().optional(), url: webURL.optional(),
   startedAt: z.string().datetime().optional(), completedAt: z.string().datetime().optional(),
   createdAt: z.string().datetime().optional(), updatedAt: z.string().datetime().optional(),
   outputTitle: z.string().optional(), outputSummary: z.string().optional(), outputSummaryTruncated: z.boolean().optional(),
-})
+}
+
+export const CheckSchema = z.discriminatedUnion('kind', [
+  z.object({ ...checkFields, kind: z.literal('check_run'), id: z.number().int().positive() }),
+  z.object({ ...checkFields, kind: z.literal('commit_status'), id: z.number().int().positive().optional() }),
+])
 export type Check = z.infer<typeof CheckSchema>
 
 // Checks always describe one exact commit reported by GitHub.

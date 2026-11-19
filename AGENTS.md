@@ -10,7 +10,7 @@ Ghostline is a change-centric engineering control room. It imports public GitHub
 - Run with Docker Compose: `docker compose up --build`.
 - Verify Go: `go test ./... -count=1` and `go vet ./...`.
 - Verify frontend: `cd frontend && npm ci && npm test && npm run build`.
-- Run the repository security scan: `nox --format all --output .nox/results scan . --tracked-only`.
+- Run the repository security scan: `nox --format all --output .nox/results scan . --tracked-only`, then `nox ci-gate --input .nox/results/findings.json --baseline .nox/baseline.json`.
 - The configured Warden pre-commit and pre-push gates run these checks; follow `.warden.yaml` when changing the gate.
 
 ## Project rules
@@ -23,3 +23,4 @@ Ghostline is a change-centric engineering control room. It imports public GitHub
 6. **Show the working software before release.** For each release, run the app and include screenshot evidence of the working software in the release notes or delivery. Capture the actual release candidate so users can see what they are getting.
 7. **One day, one pull request.** Keep each day's hackathon work in its own focused pull request. Applies to the daily build and delivery workflow; separate PRs make each day's scope, review, checks, and evidence easy to follow.
 8. **Bind async results to the item that asked for them.** Applies to frontend actions that fetch, copy, or report something for a displayed pull request or revision. Take the repository and revision from the imported pull request or the clicked item, never from editable input such as the import field. Apply a result only while its request is still the latest for that view (for example, a request counter checked after `await`), and test the case where an earlier request settles last. Otherwise an edited field or a quick second click shows one item's data under another.
+9. **Apply the Qodo quality gate before calling work done.** Applies to local Qodo reviews and pull-request findings. Check each reported bug, rule violation, or requirement gap against the ticket, acceptance criteria, project rules, and code. Fix every confirmed High or Medium finding, including Medium Bugs; report every Low finding for a human decision. Back disagreements with source or test evidence. A confirmed High or Medium finding, incomplete required check, or review that does not cover the current PR head blocks completion. If a fix-and-review cycle stops making progress, stop and report what remains instead of calling the task done.

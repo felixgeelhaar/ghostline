@@ -2,7 +2,7 @@
 
 ## Short specification
 
-Ghostline is a change-centric engineering control room for engineers using coding agents. It imports a **public GitHub pull request** and presents its metadata, a source-labeled activity index, revision-linked GitHub checks, published Qodo review feedback, and Nox findings from the matching GitHub Actions report artifact. Nox results are accepted only when the artifact belongs to a workflow run for the requested PR revision; Ghostline shows the report source and expiry. When GitHub supplies a PR base SHA, Ghostline rejects an observed workflow-file mismatch, but a matching workflow is only corroborating context because GitHub does not document that field as immutable execution provenance. GitHub check summaries and Nox SARIF remain linked to their original sources. It compares an explicit revision marker in a published Qodo comment with the current PR head; “current” means that comment names the head SHA, not that Ghostline found the latest complete review run. Repeated Qodo finding titles can be traced across comments when their revision markers support it. It also checks issue references in the PR description and highlights issues that remain open after the PR is merged. Warden runs local developer gates and Nox scans; repository CI also runs Nox.
+Ghostline is a change-centric engineering control room for engineers using coding agents. Its current slice imports a **public GitHub pull request** and presents the change’s metadata, a source-labeled activity index of commit and published Qodo comment timestamps, revision-linked GitHub checks and check-run line annotations, Nox findings from the matching GitHub Actions report artifact, and review details. Nox results are accepted only when the artifact belongs to a workflow run for the requested PR revision; Ghostline shows the report source and expiry. When GitHub supplies a PR base SHA, Ghostline rejects an observed workflow-file mismatch, but a matching workflow is only corroborating context because GitHub does not document that field as immutable execution provenance. For GitHub check runs it preserves the source title and shows a bounded text preview of the source summary; oversized previews are labeled, and the linked GitHub check remains the source for full output. This preview is check output; Nox findings come from the report artifact described below. It compares an explicit revision marker in a published Qodo comment with the current PR head; “current” means that comment names the head SHA, not that Ghostline found the latest complete review run. Repeated Qodo finding titles can be traced across comments when their revision markers support it. It also checks issue references in the PR description and highlights issues that remain open after the PR is merged. Warden runs local developer gates and Nox scans; repository CI also runs Nox. Ghostline ingests Nox SARIF only from the matching workflow artifact, as described below.
 
 The screenshot below shows the running app after importing Ghostline PR #56 at its earlier head `685decd`. The displayed Qodo comment, marked revision, and finding link to GitHub; this is live repository evidence captured for the feature, not a replay.
 
@@ -29,16 +29,16 @@ Ghostline is a small Go API and Vue single-page application. It has no database 
 ```text
 Browser (Vue 3 + TypeScript)
   presentation: App.vue, ReviewCard.vue, DeepTrace.vue
-  application: fetchGhostlineSession, importPullRequest, fetchRevisionChecks, fetchQodoReviewSession
+  application: fetchGhostlineSession, importPullRequest, fetchRevisionChecks, fetchQodoReviewSession, fetchCheckAnnotations
   domain: pullRequest, checks, reviews, trace, change activity, referenced issues
-          │ /auth/*, /api/session, /api/import, /api/checks, /api/nox-report, /api/qodo-review
+          │ /auth/*, /api/session, /api/import, /api/checks, /api/check-annotations, /api/nox-report, /api/qodo-review
           ▼
 Go + Gin API
   GitHub OAuth callback, signed session, account-ID allowlist middleware
   HTTP handlers and GitHub response normalization
-  GitHub client, referenced-issue lookup, check aggregation, Nox artifact/SARIF parsing, Qodo comment parsing
+  GitHub client, referenced-issue lookup, check aggregation and annotation paging, Nox artifact/SARIF parsing, Qodo comment parsing
   fixed-endpoint Qodo MCP client
-          ├─ HTTPS GitHub REST API → GitHub: pull requests, commits, checks, Actions runs/artifacts, published comments, referenced issues
+          ├─ HTTPS GitHub REST API → GitHub: pull requests, commits, checks, check annotations, Actions runs/artifacts, published comments, referenced issues
           └─ HTTPS Qodo MCP → Qodo: structured findings and review runs
 ```
 
@@ -46,7 +46,11 @@ The frontend validates API payloads with Zod at the boundary in `frontend/src/do
 
 For code changes, preserve these domain boundaries and use test-driven development: write or update a focused failing test for the behavior first, then implement the smallest change that makes it pass.
 
-The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, look up up to 20 issue references from the PR description, normalize the response, and render the source-labeled activity index and review evidence. `POST /api/nox-report` accepts a PR URL and full revision SHA, confirms that the revision belongs to a public PR, finds a matching `pull_request` run from `.github/workflows/nox.yml` and its `nox-results` artifact, verifies that the workflow file has the same Git blob SHA at the scanned revision and PR base, checks run/SHA identity and the mandatory published SHA-256 digest, then parses bounded Nox SARIF 2.1.0 without extracting files. GitHub request volume is capped at 32 API calls per report lookup, and workflow/artifact lookup is capped at ten pages of 100 records. If a request or history cap prevents a complete search, the response says the inspection was incomplete rather than claiming the report is missing. It presents findings with the exact SHA, workflow run, and artifact retention dates. Missing, expired, oversized, mismatched, unsupported, or inaccessible reports are explicitly unavailable; Ghostline does not describe them as clean. `POST /api/checks` fetches checks for a focused full commit SHA. `POST /api/qodo-review` sends the imported PR URL and a one-request Qodo key to Qodo's fixed MCP endpoint, then validates and normalizes the structured result. The key is never written to storage or returned to the browser by the API. Checks, Nox reports, and review sessions are tied to the revisions their source returned.
+The main request is `POST /api/import`: validate the submitted PR URL, fetch PR metadata and commits, fetch checks for the PR head, recheck the head SHA to avoid mixing snapshots after a force-push, fetch published Qodo issue comments, look up up to 20 issue references from the PR description, normalize the response, and render the source-labeled activity index and review evidence. Issue references are limited to `#N` and same-repository GitHub issue URLs; returned issues are validated against their repository and number. Failed or capped lookups are shown as unavailable. A merged PR with an open referenced issue is flagged with links to the PR and issue; Ghostline does not determine whether the issue’s work was delivered. The activity index orders commit metadata times, check-run start/completion/update times, commit-status creation/update times, and Qodo comment times while preserving each source's timestamp label and native check/status ID. Check entries are GitHub's latest records for the focused revision at fetch time, not a complete run history. The timeline does not treat sequence as causation. Check-run titles and bounded summaries stay attached to their source-linked check. `POST /api/checks` fetches checks for a focused full commit SHA. `POST /api/check-annotations` fetches one GitHub annotation page for an identified check run. `POST /api/qodo-review` sends the imported PR URL and a one-request Qodo key to Qodo's fixed MCP endpoint, then validates and normalizes the structured result. The key is never written to storage or returned to the browser by the API. `POST /api/nox-report` accepts a PR URL and full revision SHA, confirms that the revision belongs to a public PR, finds a matching `pull_request` run from `.github/workflows/nox.yml` and its `nox-results` artifact, verifies that the workflow file has the same Git blob SHA at the scanned revision and PR base, checks run/SHA identity and the mandatory published SHA-256 digest, then parses bounded Nox SARIF 2.1.0 without extracting files. GitHub request volume is capped at 32 API calls per report lookup, and workflow/artifact lookup is capped at ten pages of 100 records. If a request or history cap prevents a complete search, the response says the inspection was incomplete rather than claiming the report is missing. It presents findings with the exact SHA, workflow run, and artifact retention dates. Missing, expired, oversized, mismatched, unsupported, or inaccessible reports are explicitly unavailable; Ghostline does not describe them as clean. Checks, annotations, Nox reports, and review sessions are labeled with the revision their source returned.
+
+For a check run, `POST /api/check-annotations` verifies that the target repository is public, confirms the run's head SHA matches the requested revision, and retrieves GitHub's paginated annotations. The response links annotations to their source file and line range on that exact commit. Pagination follows GitHub's `Link` header so a full final page does not imply another page. A check run without a usable source URL can still return its annotations.
+
+The [check-run annotations screenshot](evidence/check-run-annotations.md) shows this panel using a clearly labeled recorded replay. It displays three sampled annotations from a public GitHub Nox run; it is not a live scan or a live GitHub fetch.
 
 ## Setup and verification
 
@@ -68,17 +72,19 @@ npm ci
 npm run dev
 ```
 
-Open the URL Vite prints. The frontend proxies `/api` requests to `http://localhost:8080`. Public GitHub metadata and checks work without credentials but have a low rate limit; set the backend's `GITHUB_TOKEN` to raise it. Downloading a published Actions artifact for a Nox report also requires a token authorized to read Actions artifacts in the target repository. Without that access Ghostline marks the report unavailable, not clean. Do not expose a privileged token through the unauthenticated local or hosted API. Never commit or paste a token into a report.
+Open the URL Vite prints. The frontend proxies `/api` requests to `http://localhost:8080`. Public GitHub API access works without credentials and uses GitHub's public API quota. If `GITHUB_TOKEN` is configured, it is used only for repository visibility metadata; pull-request data requests remain unauthenticated and the token does not raise their quota. The one exception is the Nox report artifact download: GitHub requires authentication for it even on public repositories, so after the visibility check confirms the repository is public, Ghostline downloads it with the token, which needs read access to Actions artifacts. Without that access Ghostline marks the report unavailable, not clean. Never commit or paste a token into a report.
 
 Local mode leaves sign-in disabled. Protected OAuth mode is supported only when a trusted HTTPS ingress serves Ghostline at the same public origin as `GITHUB_OAUTH_CALLBACK_URL`; direct access to the local HTTP Vite URL is rejected by the same-origin check. Configure `GHOSTLINE_AUTH_MODE=required`, GitHub OAuth client ID and secret, the matching HTTPS callback, a 32-byte `GHOSTLINE_SESSION_SECRET`, and one or more numeric IDs in `GHOSTLINE_ALLOWED_GITHUB_IDS`. If the ingress proxies requests to Vite, set `GHOSTLINE_TRUSTED_PROXY_CIDRS` to its peer CIDRs and configure it to overwrite `X-Real-IP`. Local Vite proxies `/api` and `/auth` to the backend.
 
-To run both services in containers:
+To run the local Vite development stack in containers:
 
 ```sh
 docker compose up --build
 ```
 
-Open `http://localhost:5173`, or the configured `GHOSTLINE_PORT`, for the unauthenticated local demo. Compose exposes the frontend on network interfaces by default; use `GHOSTLINE_BIND_ADDRESS` to select a bind address. The Compose backend does not currently receive `GITHUB_TOKEN`, so it cannot download Nox Actions artifacts unless a token is configured securely for the host. Do not add a privileged token to the unauthenticated development Compose service. Compose accepts the GitHub OAuth configuration described in the [README](../README.md#protected-hosted-mode-sign-in), but protected sign-in works only through the matching HTTPS ingress, and its frontend remains a Vite development server rather than production hosting.
+Open `http://localhost:5173` for the unauthenticated local demo. Compose exposes the frontend on network interfaces by default; use `GHOSTLINE_BIND_ADDRESS` to select a bind address. Compose forwards `GITHUB_TOKEN` from the environment to the backend when set. The token is used only for repository visibility metadata; public PR, check, review-comment, annotation, workflow-run, and referenced-issue data are fetched without credentials; only the Nox artifact download uses it, after the visibility check. If a repository becomes private after the metadata check, GitHub rejects the later unauthenticated data request. Never commit or paste a token into a report. This stack runs Vite and is intended for local or trusted demos.
+
+For the production-built, same-origin container, follow the [hosted deployment guide](hosted-deployment.md). It requires protected GitHub sign-in and an HTTPS ingress; it remains a single-instance deployment because authentication and rate-limit state are held in process memory.
 
 Run the project checks:
 
@@ -92,6 +98,8 @@ Warden configures pre-commit and pre-push gates in `.warden.yaml`. It runs the G
 
 For detailed Qodo setup and review-evidence semantics, see [Qodo workflow](qodo-workflow.md). Repository rules for agents are in [AGENTS.md](../AGENTS.md).
 
+The intended ticket-to-merge checks, review decisions, and a verified example are documented in [factory verification](factory-verification.md).
+
 For current trust boundaries, abuse cases, and hosting limitations, see the [threat model](threat-model.md).
 
 ## Feature evidence
@@ -103,3 +111,5 @@ The running change activity index, imported from Ghostline PR #49, is shown in [
 The current source-backed review timeline, imported from Ghostline PR #50 at revision `4bae19d`, is shown in [this screenshot](feature-evidence/activity-index-review-timeline.jpg). It shows observed commit and published Qodo comment events; it does not imply that event order proves a repair relationship. Parser-incompleteness and partial-check-placement warnings are edge states covered by tests, not present in this PR's current records.
 
 The [live referenced-issues panel](feature-evidence/referenced-issue-live-2026-11-13.jpg) shows issue states imported from a public pull request. This example’s referenced issues are now closed; the merged/open warning is covered by UI tests using explicit fixtures.
+
+The [production-mode sign-in screen](feature-evidence/hosted-production-sign-in.jpg) is served by the Go process from the built Vue bundle. It was captured from a local production-configured run with test OAuth settings; no GitHub sign-in was completed. The production Docker image itself is built and smoke-tested by the `Production container smoke test` CI job.

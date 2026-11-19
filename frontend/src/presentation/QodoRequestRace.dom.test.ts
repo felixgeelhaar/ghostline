@@ -327,7 +327,7 @@ describe('structured Qodo review request binding', () => {
 
     expect(host?.textContent).toContain('Loading GitHub checks')
     expect(host?.textContent).toContain('GitHub unavailable')
-    pendingChecks.resolve({ ...makePR(7).checks, items: [{ name: 'Focused check', kind: 'check_run', status: 'completed', conclusion: 'success' }] })
+    pendingChecks.resolve({ ...makePR(7).checks, items: [{ id: 803, name: 'Focused check', kind: 'check_run', status: 'completed', conclusion: 'success' }] })
     await settle()
     expect(host?.textContent).not.toContain('Loading GitHub checks')
     expect(host?.textContent).toContain('Focused check')
@@ -335,9 +335,9 @@ describe('structured Qodo review request binding', () => {
 
   it('uses freshly imported head checks for a focused head revision', async () => {
     const initial = makePR(7)
-    initial.checks.items = [{ name: 'Old head check', kind: 'check_run', status: 'completed', conclusion: 'failure' }]
+    initial.checks.items = [{ id: 804, name: 'Old head check', kind: 'check_run', status: 'completed', conclusion: 'failure' }]
     const refreshed = makePR(7)
-    refreshed.checks.items = [{ name: 'Fresh head check', kind: 'check_run', status: 'completed', conclusion: 'success' }]
+    refreshed.checks.items = [{ id: 805, name: 'Fresh head check', kind: 'check_run', status: 'completed', conclusion: 'success' }]
     vi.mocked(importPullRequest).mockResolvedValueOnce(initial).mockResolvedValueOnce(refreshed)
     await mount()
 

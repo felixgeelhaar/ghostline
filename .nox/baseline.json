@@ -2,20 +2,84 @@
   "schema_version": "1.0.0",
   "entries": [
     {
+      "fingerprint": "9a110e91cae3bfbc489b1f6c2c6202b4ae9067996e83e4d6d43c3d18d2e2c866",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile",
+      "severity": "high",
+      "reason": "Tracked in https://github.com/felixgeelhaar/ghostline/issues/78. ALPINE-CVE-2026-95692 (openssl 3.5.9-r0, fixed in 3.5.9-r1) is in the pinned golang:1.27.4-alpine image used only as the backend build stage; the CGO_ENABLED=0 static binary is copied into a scratch image that contains no OpenSSL. No golang Alpine digest ships 3.5.9-r1 yet. Maintainer decision 2026-11-18; review by 2026-11-25. Remove when the FROM digest includes openssl >= 3.5.9-r1.",
+      "created_at": "2026-11-19T00:00:00Z"
+    },
+    {
+      "fingerprint": "9ee5f9d355c44f486a9fbf5b4136ba8348823c11fe94e2c673f5fea9530e8656",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile",
+      "severity": "high",
+      "reason": "Tracked in https://github.com/felixgeelhaar/ghostline/issues/78. ALPINE-CVE-2026-88823 (openssl 3.5.9-r0, fixed in 3.5.9-r1) is in the pinned golang:1.27.4-alpine image used only as the backend build stage; the CGO_ENABLED=0 static binary is copied into a scratch image that contains no OpenSSL. No golang Alpine digest ships 3.5.9-r1 yet. Maintainer decision 2026-11-18; review by 2026-11-25. Remove when the FROM digest includes openssl >= 3.5.9-r1.",
+      "created_at": "2026-11-19T00:00:00Z"
+    },
+    {
+      "fingerprint": "a81c45ed519e99e43991102fef399e43d4ac7d8522077c25b0a0f61067cd0551",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile",
+      "severity": "high",
+      "reason": "Tracked in https://github.com/felixgeelhaar/ghostline/issues/78. ALPINE-CVE-2026-107496 (openssl 3.5.9-r0, fixed in 3.5.9-r1) is in the pinned golang:1.27.4-alpine image used only as the backend build stage; the CGO_ENABLED=0 static binary is copied into a scratch image that contains no OpenSSL. No golang Alpine digest ships 3.5.9-r1 yet. Maintainer decision 2026-11-18; review by 2026-11-25. Remove when the FROM digest includes openssl >= 3.5.9-r1.",
+      "created_at": "2026-11-19T00:00:00Z"
+    },
+    {
+      "fingerprint": "ed3664cac066d70a3acbdf9038f9912b34eb0bae0811cd427e0ae1503fedaf44",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile",
+      "severity": "high",
+      "reason": "Tracked in https://github.com/felixgeelhaar/ghostline/issues/78. ALPINE-CVE-2026-95691 (openssl 3.5.9-r0, fixed in 3.5.9-r1) is in the pinned golang:1.27.4-alpine image used only as the backend build stage; the CGO_ENABLED=0 static binary is copied into a scratch image that contains no OpenSSL. No golang Alpine digest ships 3.5.9-r1 yet. Maintainer decision 2026-11-18; review by 2026-11-25. Remove when the FROM digest includes openssl >= 3.5.9-r1.",
+      "created_at": "2026-11-19T00:00:00Z"
+    },
+    {
+      "fingerprint": "7ff83671f182ad0cf1632f34eed4f0cb1244957319d34b7303e1d7b73012a43c",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile.dev",
+      "severity": "high",
+      "reason": "Tracked in https://github.com/felixgeelhaar/ghostline/issues/78. ALPINE-CVE-2026-95692 (openssl 3.5.9-r0, fixed in 3.5.9-r1) is in the pinned golang:1.27.4-alpine base of the development image, which installs libssl3/libcrypto3 >= 3.5.9-r1 and fails the build if unavailable; Nox inventories the FROM image, not the built one. No golang Alpine digest ships 3.5.9-r1 yet. Maintainer decision 2026-11-18; review by 2026-11-25. Remove when the FROM digest includes openssl >= 3.5.9-r1.",
+      "created_at": "2026-11-19T00:00:00Z"
+    },
+    {
+      "fingerprint": "9755735806d5b5631d9e9adf11b5bd0c61c8ff1b02770100de693c6c937818c0",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile.dev",
+      "severity": "high",
+      "reason": "Tracked in https://github.com/felixgeelhaar/ghostline/issues/78. ALPINE-CVE-2026-88823 (openssl 3.5.9-r0, fixed in 3.5.9-r1) is in the pinned golang:1.27.4-alpine base of the development image, which installs libssl3/libcrypto3 >= 3.5.9-r1 and fails the build if unavailable; Nox inventories the FROM image, not the built one. No golang Alpine digest ships 3.5.9-r1 yet. Maintainer decision 2026-11-18; review by 2026-11-25. Remove when the FROM digest includes openssl >= 3.5.9-r1.",
+      "created_at": "2026-11-19T00:00:00Z"
+    },
+    {
+      "fingerprint": "9ff38427378510493b8e9c0baff0b9532c848868fe768ab5a2244192407b9867",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile.dev",
+      "severity": "high",
+      "reason": "Tracked in https://github.com/felixgeelhaar/ghostline/issues/78. ALPINE-CVE-2026-107496 (openssl 3.5.9-r0, fixed in 3.5.9-r1) is in the pinned golang:1.27.4-alpine base of the development image, which installs libssl3/libcrypto3 >= 3.5.9-r1 and fails the build if unavailable; Nox inventories the FROM image, not the built one. No golang Alpine digest ships 3.5.9-r1 yet. Maintainer decision 2026-11-18; review by 2026-11-25. Remove when the FROM digest includes openssl >= 3.5.9-r1.",
+      "created_at": "2026-11-19T00:00:00Z"
+    },
+    {
+      "fingerprint": "bc269b5eb3ff8bb4eceaa8f71ee21902be97558b5d6d893cfff56ce70505f2fa",
+      "rule_id": "VULN-001",
+      "file_path": "Dockerfile.dev",
+      "severity": "high",
+      "reason": "Tracked in https://github.com/felixgeelhaar/ghostline/issues/78. ALPINE-CVE-2026-95691 (openssl 3.5.9-r0, fixed in 3.5.9-r1) is in the pinned golang:1.27.4-alpine base of the development image, which installs libssl3/libcrypto3 >= 3.5.9-r1 and fails the build if unavailable; Nox inventories the FROM image, not the built one. No golang Alpine digest ships 3.5.9-r1 yet. Maintainer decision 2026-11-18; review by 2026-11-25. Remove when the FROM digest includes openssl >= 3.5.9-r1.",
+      "created_at": "2026-11-19T00:00:00Z"
+    },
+    {
       "fingerprint": "41131eda8752e6de09401f8c4866ec55ec1e19705e88f31926584175a8567eb1",
       "rule_id": "VULN-001",
       "file_path": "Dockerfile",
       "severity": "medium",
-      "reason": "ALPINE-CVE-2026-4738 (zlib 1.3.2-r1) is in the pinned golang:1.27-alpine base image; no upstream digest ships the fixed zlib 1.4-r0 yet. The Dockerfile installs zlib>=1.4-r0 during the build and fails if that version is unavailable, but Nox inventories the base image, not the built one. Remove this entry when the FROM digest moves to an image with zlib >= 1.4-r0.",
+      "reason": "ALPINE-CVE-2026-4738 (zlib 1.3.2-r1) is in the pinned golang:1.27.4-alpine image used only as the backend build stage; the statically linked binary is copied into a scratch image that contains no zlib. No golang Alpine digest ships zlib 1.4-r0 yet, and the Debian builder carries 229 critical or high advisories. Remove when the FROM digest includes zlib >= 1.4-r0. Maintainer decision on PR #62 (2026-11-18), see docs/nox-temporary-exception.md.",
       "created_at": "2026-11-10T20:25:45.47479Z"
     },
     {
-      "fingerprint": "23662a6371f601220a63a88283a1fbf47a7d8f37b2dfcfef55c212c9762efc67",
+      "fingerprint": "241d7b7fe049c814c60c3966c0d00dc216a37a8276ee5554935dccb082ecb95e",
       "rule_id": "VULN-001",
-      "file_path": "frontend/Dockerfile",
+      "file_path": "Dockerfile.dev",
       "severity": "medium",
-      "reason": "ALPINE-CVE-2026-4738 affects zlib 1.3.2-r1 embedded in node:22.23.5-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a. Alpine v3.24 has not published fixed zlib 1.4-r0 yet. The Dockerfile installs zlib>=1.4-r0 and fails the build if unavailable; Nox inventories the FROM image rather than the post-install image. Remove when the base digest includes fixed zlib.",
-      "created_at": "2026-11-10T20:25:45.47479Z"
+      "reason": "ALPINE-CVE-2026-4738 (zlib 1.3.2-r1) is in the pinned golang:1.27.4-alpine base image of the development image. The Dockerfile installs zlib>=1.4-r0 and fails the build if it is unavailable; Nox inventories the FROM image, not the built one. Remove when the FROM digest includes zlib >= 1.4-r0. Maintainer decision on PR #62 (2026-11-18), see docs/nox-temporary-exception.md.",
+      "created_at": "2026-11-18T00:00:00Z"
     },
     {
       "fingerprint": "132cceb6c386492d0d153cb33f4d1098807e55d62d90db0eb6fc5b054fdc8f23",
@@ -48,6 +112,38 @@
       "severity": "medium",
       "reason": "Temporary maintainer-approved release exception through 2026-11-20; review by this date, and remove the baseline as soon as a supported Node runtime ships OpenSSL 3.5.10+. Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. Nox confirmed four OpenSSL 3.5.9 advisories in the pinned Node image; vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed.",
       "created_at": "2026-11-13T20:14:12.127752Z"
+    },
+    {
+      "fingerprint": "6d7de04ef2452a7d66a9403cc17b38d572628df7cfcba7b84d6247e68e253540",
+      "rule_id": "VULN-001",
+      "file_path": "frontend/Dockerfile",
+      "severity": "high",
+      "reason": "Temporary release exception through 2026-11-20, approved by the maintainer on 2026-11-17 (https://github.com/felixgeelhaar/ghostline/issues/45#issuecomment-6960376515), extending the existing exception for OpenSSL 3.5.9 in the pinned Node image to two advisories Nox reported on 2026-11-17 (CVE-2026-124709, CVE-2026-35190). Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. No supported Node release (22.23.5, 24.22.3, 26.13.1) and no Alpine v3.24 libssl3 package ships OpenSSL 3.5.10 as of 2026-11-17. Vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed; remove it when the base image ships OpenSSL 3.5.10+.",
+      "created_at": "2026-11-17T20:22:48.485532Z"
+    },
+    {
+      "fingerprint": "95bf7d85016061671297507f50d7548e02acb780b350df0bc615d0767279122e",
+      "rule_id": "VULN-001",
+      "file_path": "frontend/Dockerfile",
+      "severity": "medium",
+      "reason": "Temporary release exception through 2026-11-20, approved by the maintainer on 2026-11-17 (https://github.com/felixgeelhaar/ghostline/issues/45#issuecomment-6960376515), extending the existing exception for OpenSSL 3.5.9 in the pinned Node image to two advisories Nox reported on 2026-11-17 (CVE-2026-124709, CVE-2026-35190). Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. No supported Node release (22.23.5, 24.22.3, 26.13.1) and no Alpine v3.24 libssl3 package ships OpenSSL 3.5.10 as of 2026-11-17. Vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed; remove it when the base image ships OpenSSL 3.5.10+.",
+      "created_at": "2026-11-17T20:22:48.485532Z"
+    },
+    {
+      "fingerprint": "7bfac57a77d7f0d83c2bb31b2c0bbf1b8dde061a0c1b5152318becb5fa1176b5",
+      "rule_id": "VULN-001",
+      "file_path": "frontend/package-lock.json",
+      "severity": "high",
+      "reason": "Exception approved by the maintainer on 2026-11-17 (https://github.com/felixgeelhaar/ghostline/issues/45#issuecomment-6960376515); review by 2026-11-20. GHSA-fc5q-39xc-vjpf (ReDoS through repeated extglobs) affects picomatch <= 4.0.7 and no patched release exists. picomatch is a build- and dev-time dependency of vite, vitest, tinyglobby, fdir and @vue/language-core; it matches glob patterns from repository configuration, not request input, and is not part of the built frontend bundle. Reachability with attacker-controlled patterns is not established. This baseline records accepted interim risk and is not evidence the finding is fixed; remove it when a patched picomatch is available and the lockfile is updated.",
+      "created_at": "2026-11-17T20:22:48.485532Z"
+    },
+    {
+      "fingerprint": "467016718eafce00cd231a402e18bcf976555fe4fd421a4a9e794aed224a1b91",
+      "rule_id": "AI-038",
+      "file_path": "README.md",
+      "severity": "medium",
+      "reason": "Confirmed false positive, approved by the maintainer on 2026-11-17 (https://github.com/felixgeelhaar/ghostline/issues/66#issuecomment-6961483840); review by 2026-12-17. Nox intermittently reports AI-038 (embedding API key stored with vectors) at README.md:22 columns 5-58, but that line is the 11-character setup command `cd frontend` at every reported revision (the same fingerprint at 5bb582a and 7a72b8b), the README holds no key material, and the repository has no embedding or vector-store code. Only this fingerprint is baselined: any other AI-038 fingerprint stays unbaselined and is reported by Nox. The hosted gate currently blocks only net-new critical or high findings, so a new medium AI-038 finding is reported without failing the check. Remove this entry if Nox reports a different location for this fingerprint.",
+      "created_at": "2026-11-17T21:27:16.655870Z"
     }
   ]
 }

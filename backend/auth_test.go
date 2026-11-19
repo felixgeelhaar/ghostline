@@ -24,7 +24,9 @@ func TestLoadAuthConfig(t *testing.T) {
 		required bool
 	}{
 		{name: "disabled local demo", env: map[string]string{}, valid: true},
+		{name: "production rejects disabled auth", env: map[string]string{"GHOSTLINE_ENV": "production"}},
 		{name: "hosted auth configured", env: map[string]string{
+			"GHOSTLINE_ENV":       "production",
 			"GHOSTLINE_AUTH_MODE": "required", "GITHUB_OAUTH_CLIENT_ID": "client-id",
 			"GITHUB_OAUTH_CLIENT_SECRET": "client-secret", "GITHUB_OAUTH_CALLBACK_URL": "https://ghostline.example/auth/callback",
 			"GHOSTLINE_SESSION_SECRET": strings.Repeat("s", 32), "GHOSTLINE_ALLOWED_GITHUB_IDS": "42, 43",
@@ -674,5 +676,28 @@ func TestOAuthCallbackQueryIsNotWrittenToAccessLogs(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if strings.Contains(logs.String(), "one-time-secret") || strings.Contains(logs.String(), "state-secret") {
 		t.Fatalf("OAuth callback query was written to access logs: %s", logs.String())
+	}
+}
+
+func TestHealthProbeIsNotWrittenToAccessLogs(t *testing.T) {
+	previousWriter := gin.DefaultWriter
+	previousMode := gin.Mode()
+	var logs bytes.Buffer
+	gin.DefaultWriter = &logs
+	defer func() {
+		gin.DefaultWriter = previousWriter
+		gin.SetMode(previousMode)
+	}()
+	gin.SetMode(gin.TestMode)
+
+	router := newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(10, time.Minute, time.Now), clientIdentity{}, nil, newAuthManager(authConfig{}, nil))
+	request := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("health status = %d, want 200", response.Code)
+	}
+	if strings.Contains(logs.String(), "/api/health") {
+		t.Fatalf("health probe was written to access logs: %s", logs.String())
 	}
 }

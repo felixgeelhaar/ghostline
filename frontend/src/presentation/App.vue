@@ -4,10 +4,12 @@ import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
 import { fetchNoxReport } from '../application/fetchNoxReport'
 import { createNoxReportLoader } from '../application/noxReportLoader'
+import { fetchCheckAnnotations } from '../application/fetchCheckAnnotations'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
 import { fetchQodoReviewSession } from '../application/fetchQodoReviewSession'
 import { buildChangeActivity, countReviewsWithUnavailableDetails, describeCheckActivity } from '../domain/changeActivity'
-import { checkOutcome, checkSummaryPreview, headCommitLabel, orderChecks, summarizeChecks, type CheckTone } from '../domain/checks'
+import { checkOutcome, checkSummaryPreview, headCommitLabel, orderChecks, summarizeChecks, type Check, type CheckTone } from '../domain/checks'
+import type { CheckAnnotationPage } from '../domain/checkAnnotations'
 import { findRecurringFindings, qodoHeadCoverage, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import type { QodoStructuredReview } from '../domain/qodoReviewSession'
 import type { NoxReport } from '../domain/noxReport'
@@ -34,6 +36,11 @@ const noxLoading = ref(false)
 const noxError = ref('')
 const selectedTraceId = ref('')
 const copyResult = ref<CopyResult>()
+const annotationPages = ref<Record<string, CheckAnnotationPage>>({})
+const annotationOpen = ref('')
+const annotationLoading = ref<Record<string, boolean>>({})
+const annotationErrors = ref<Record<string, string>>({})
+const annotationPageNumbers = ref<Record<string, number>>({})
 const qodoApiKey = ref('')
 const qodoStructuredReview = ref<QodoStructuredReview>()
 const qodoReviewError = ref('')
@@ -44,6 +51,8 @@ let traceTrigger: HTMLButtonElement | undefined
 let authChannel: BroadcastChannel | undefined
 let revisionRequest = 0
 let importRequest = 0
+let annotationGeneration = 0
+const annotationRequests = new Map<string, number>()
 let qodoRequest = 0
 const activeChecks = computed(() => selectedRevision.value ? focusedChecks.value : pr.value?.checks)
 const orderedChecks = computed(() => orderChecks(activeChecks.value?.availability === 'available' ? activeChecks.value.items : []))
@@ -127,6 +136,7 @@ function clearWorkspace() {
   qodoRequest++
   noxReportLoader.invalidate()
   copyRequest++
+  resetAnnotations()
   url.value = ''
   pr.value = undefined
   error.value = ''
@@ -179,6 +189,7 @@ async function loadPR() {
     qodoReviewError.value = ''
   }
   copyRequest++
+  resetAnnotations()
   if (!keepCurrentChange) {
     revisionRequest++
   }
@@ -214,6 +225,7 @@ async function loadPR() {
         checksError.value = ''
         checksLoading.value = false
       }
+      resetAnnotations()
       pr.value = importedPR
       if (selectedRevision.value) void loadNoxReport(importedPR, selectedRevision.value)
       else if (importedPR.checks.revisionSha) void loadNoxReport(importedPR, importedPR.checks.revisionSha)
@@ -236,6 +248,79 @@ async function loadPR() {
   } finally {
     if (request === importRequest) loading.value = false
   }
+}
+// Annotation state is reset when an import starts and again when its result is
+// applied: a refresh can return new check runs, and a request made against the
+// replaced pull-request object must not leave an open panel without a page.
+function resetAnnotations() {
+  annotationGeneration++
+  annotationRequests.clear()
+  annotationPages.value = {}
+  annotationOpen.value = ''
+  annotationLoading.value = {}
+  annotationErrors.value = {}
+  annotationPageNumbers.value = {}
+}
+// A page is cached under its revision, check run and page number, and the panel
+// reads only its own key, so a response can never appear under another item.
+// It is kept unless a newer import or a newer request for the same key replaced it.
+function isLatestAnnotationRequest(key: string, request: number, generation: number) {
+  return generation === annotationGeneration && annotationRequests.get(key) === request
+}
+function annotationKey(sha: string, checkRunId: number, page: number) { return `${sha}:${checkRunId}:${page}` }
+function annotationPanelKey(sha: string, checkRunId: number) { return `${sha}:${checkRunId}` }
+function currentAnnotationPage(sha: string, checkRunId: number) { return annotationPageNumbers.value[annotationPanelKey(sha, checkRunId)] ?? 1 }
+function annotationsFor(sha: string, checkRunId: number) { return annotationPages.value[annotationKey(sha, checkRunId, currentAnnotationPage(sha, checkRunId))] }
+function annotationLoadingFor(sha: string, checkRunId: number) { return annotationLoading.value[annotationKey(sha, checkRunId, currentAnnotationPage(sha, checkRunId))] }
+function annotationErrorFor(sha: string, checkRunId: number) { return annotationErrors.value[annotationKey(sha, checkRunId, currentAnnotationPage(sha, checkRunId))] }
+async function loadAnnotations(check: Check, sha: string, page: number) {
+  if (check.kind !== 'check_run') return
+  const importedPR = pr.value
+  if (!importedPR) return
+  const key = annotationKey(sha, check.id, page)
+  const generation = annotationGeneration
+  const request = (annotationRequests.get(key) ?? 0) + 1
+  annotationRequests.set(key, request)
+  annotationLoading.value = { ...annotationLoading.value, [key]: true }
+  annotationErrors.value = { ...annotationErrors.value, [key]: '' }
+  try {
+    const result = await fetchCheckAnnotations(importedPR.url, sha, check.id, page)
+    if (isLatestAnnotationRequest(key, request, generation)) {
+      annotationPages.value = { ...annotationPages.value, [key]: result }
+    }
+  } catch (e) {
+    // A request from a reset workspace can't speak for the current session.
+    if (!isLatestAnnotationRequest(key, request, generation)) return
+    handleUnauthorized(e)
+    annotationErrors.value = { ...annotationErrors.value, [key]: e instanceof Error ? e.message : 'Could not load GitHub annotations for this check.' }
+  } finally {
+    if (isLatestAnnotationRequest(key, request, generation)) annotationLoading.value = { ...annotationLoading.value, [key]: false }
+  }
+}
+function toggleAnnotations(check: Check) {
+  if (check.kind !== 'check_run') return
+  const sha = activeChecks.value?.revisionSha
+  if (!sha) return
+  const panelKey = `${sha}:${check.id}`
+  if (annotationOpen.value === panelKey) {
+    annotationOpen.value = ''
+    return
+  }
+  annotationOpen.value = panelKey
+  annotationPageNumbers.value = { ...annotationPageNumbers.value, [panelKey]: 1 }
+  const key = annotationKey(sha, check.id, 1)
+  if (!annotationPages.value[key] && !annotationLoading.value[key]) void loadAnnotations(check, sha, 1)
+}
+function showAnnotationPage(check: Check, page: number) {
+  const sha = activeChecks.value?.revisionSha
+  if (!sha || check.kind !== 'check_run') return
+  annotationPageNumbers.value = { ...annotationPageNumbers.value, [annotationPanelKey(sha, check.id)]: page }
+  const key = annotationKey(sha, check.id, page)
+  if (annotationPages.value[key]) {
+    annotationErrors.value = { ...annotationErrors.value, [key]: '' }
+    return
+  }
+  if (!annotationLoading.value[key]) void loadAnnotations(check, sha, page)
 }
 async function loadStructuredQodoReview() {
   const importedPR = pr.value
@@ -377,7 +462,7 @@ function optionalDate(value?: string) { return value ? date(value) : 'not report
         <template v-else-if="activeChecks">
           <p v-if="activeChecks.availability === 'unavailable'" class="checks-note warn" role="status"><strong>Checks unavailable.</strong> {{ activeChecks.reason }}</p>
           <p v-else-if="activeChecks.items.length === 0" class="checks-note" role="status"><strong>No checks reported.</strong> GitHub returned no check runs or commit statuses for revision {{ activeChecks.revisionShortSha }}.</p>
-          <template v-else><p class="checks-summary" :class="checksSummary.tone" role="status"><span aria-hidden="true">{{ glyph[checksSummary.tone] }}</span>{{ checksSummary.label }}</p><ul class="check-list"><li v-for="(check, i) in orderedChecks" :key="`${check.kind}:${check.name}:${i}`"><span class="check-state" :class="checkOutcome(check).tone"><span aria-hidden="true">{{ glyph[checkOutcome(check).tone] }}</span>{{ checkOutcome(check).label }}</span><span class="check-name"><a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">{{ check.name }} <span aria-hidden="true">↗</span><span class="sr-only">(opens on GitHub)</span></a><span v-else>{{ check.name }}</span><small>{{ [check.source, check.url ? '' : 'no GitHub link reported'].filter(Boolean).join(' · ') }}</small><small v-if="check.outputTitle || check.outputSummary || check.outputSummaryTruncated" class="check-output"><strong v-if="check.outputTitle">{{ check.outputTitle }}</strong><span v-if="check.outputSummary">{{ checkSummaryPreview(check.outputSummary).text }}</span><span v-if="check.outputSummaryTruncated || checkSummaryPreview(check.outputSummary || '').truncated" class="check-output-note">Preview shortened · open the linked check for full output.</span></small></span></li></ul></template>
+          <template v-else><p class="checks-summary" :class="checksSummary.tone" role="status"><span aria-hidden="true">{{ glyph[checksSummary.tone] }}</span>{{ checksSummary.label }}</p><ul class="check-list"><li v-for="(check, i) in orderedChecks" :key="`${check.kind}:${check.name}:${i}`"><span class="check-state" :class="checkOutcome(check).tone"><span aria-hidden="true">{{ glyph[checkOutcome(check).tone] }}</span>{{ checkOutcome(check).label }}</span><div class="check-name"><a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">{{ check.name }} <span aria-hidden="true">↗</span><span class="sr-only">(opens on GitHub)</span></a><span v-else>{{ check.name }}</span><small>{{ [check.source, check.url ? '' : 'no GitHub link reported'].filter(Boolean).join(' · ') }}</small><small v-if="check.outputTitle || check.outputSummary || check.outputSummaryTruncated" class="check-output"><strong v-if="check.outputTitle">{{ check.outputTitle }}</strong><span v-if="check.outputSummary">{{ checkSummaryPreview(check.outputSummary).text }}</span><span v-if="check.outputSummaryTruncated || checkSummaryPreview(check.outputSummary || '').truncated" class="check-output-note">Preview shortened · open the linked check for full output.</span></small><button v-if="check.kind === 'check_run' && check.id > 0" type="button" class="annotation-toggle" :aria-expanded="annotationOpen === `${activeChecks?.revisionSha}:${check.id}`" @click="toggleAnnotations(check)">INSPECT GITHUB ANNOTATIONS</button><section v-if="check.kind === 'check_run' && annotationOpen === `${activeChecks?.revisionSha}:${check.id}`" class="annotation-panel" :aria-label="`GitHub annotations for ${check.name} on revision ${activeChecks?.revisionShortSha}`"><p class="annotation-boundary">GitHub check annotations · revision {{ activeChecks?.revisionShortSha }} · <a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">check run source ↗</a></p><p v-if="annotationLoadingFor(activeChecks?.revisionSha ?? '', check.id)" role="status">Loading annotations from GitHub…</p><p v-else-if="annotationErrorFor(activeChecks?.revisionSha ?? '', check.id)" class="checks-note warn" role="status">{{ annotationErrorFor(activeChecks?.revisionSha ?? '', check.id) }}</p><p v-else-if="annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.items.length === 0" role="status">GitHub reported no line annotations for this check run and revision.</p><ul v-else class="annotation-list"><li v-for="(annotation, j) in annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.items" :key="`${annotation.path}:${annotation.startLine}:${j}`"><strong>{{ annotation.level.toUpperCase() }}<template v-if="annotation.title"> · {{ annotation.title }}</template></strong><p>{{ annotation.message }}</p><details v-if="annotation.details" class="annotation-details"><summary>RAW DETAILS</summary><pre>{{ annotation.details }}</pre></details><small>{{ annotation.path }}:{{ annotation.startLine }}<template v-if="annotation.endLine !== annotation.startLine">–{{ annotation.endLine }}</template></small><a v-if="annotation.sourceUrl" :href="annotation.sourceUrl" target="_blank" rel="noreferrer">VIEW SOURCE LINES ↗</a></li></ul><div v-if="annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.hasMore" class="annotation-pagination"><button type="button" :disabled="annotationLoadingFor(activeChecks?.revisionSha ?? '', check.id)" @click="showAnnotationPage(check, currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) + 1)">LOAD NEXT PAGE</button></div><div v-if="currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) > 1" class="annotation-pagination"><button type="button" @click="showAnnotationPage(check, currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) - 1)">PREVIOUS PAGE</button><span>PAGE {{ currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) }}</span></div></section></div></li></ul></template>
         </template>
         <p class="footnote">GitHub reported these checks for revision {{ activeChecks?.revisionShortSha || selectedRevision.slice(0, 7) }} at fetch time. Results apply only to that revision. Re-import to refresh PR head checks.</p>
       </section>
@@ -462,7 +547,7 @@ function optionalDate(value?: string) { return value ? date(value) : 'not report
         <ol v-else class="review-list"><li v-for="review in selectedReviews.matched" :key="review.id"><ReviewCard :review="review" :commits="pr.commits" @focus-revision="focusRevision" /></li></ol>
         <p v-if="pr.qodoReviews.availability === 'available' && pr.qodoReviews.items.length > 0 && pr.qodoReviews.unrecognizedCommentCount > 0" class="checks-note warn" role="status">{{ pr.qodoReviews.unrecognizedCommentCount }} additional Qodo comment{{ pr.qodoReviews.unrecognizedCommentCount === 1 ? '' : 's' }} could not be parsed as review output. <a :href="pr.url" target="_blank" rel="noreferrer">Inspect all comments on GitHub ↗</a></p>
         <section v-if="selectedReviews.unmarked.length" class="unmarked-reviews"><h4 class="section-title"><span>REVISION NOT MARKED · CONTEXT ONLY</span></h4><ol class="review-list"><li v-for="review in selectedReviews.unmarked" :key="review.id"><ReviewCard :review="review" :commits="pr.commits" context-only @focus-revision="focusRevision" /></li></ol></section>
-        <section v-if="pr.qodoReviews.availability === 'available'" class="recurrence" aria-labelledby="recurrence-title"><h4 id="recurrence-title" class="section-title"><span>REPEATED FINDINGS · FULL IMPORT</span></h4><p v-if="recurringFindings.length === 0" class="checks-note" role="status">No repeated finding title appears in the Qodo comments returned for this import.</p><ol v-else class="recurrence-list"><li v-for="finding in recurringFindings" :key="finding.id"><div class="review-meta"><strong>{{ finding.title }}</strong><span class="recurrence-count">{{ finding.occurrences.length }} separate comments</span></div><ul><li v-for="occurrence in finding.occurrences" :key="occurrence.reviewId"><time :datetime="occurrence.createdAt">{{ date(occurrence.createdAt) }}</time><a v-if="occurrence.commitSha && occurrence.commitUrl" :href="occurrence.commitUrl" target="_blank" rel="noreferrer">REVISION {{ occurrence.commitSha.slice(0, 7) }} ↗</a><span v-else>REVISION NOT MARKED</span><a :href="occurrence.sourceUrl" target="_blank" rel="noreferrer">SOURCE FINDING ↗</a></li></ul><button type="button" class="trace-open" :aria-expanded="selectedTraceId === finding.id" :aria-controls="selectedTraceId === finding.id ? 'deep-trace' : undefined" @click="toggleTrace(finding.id, $event)">{{ selectedTraceId === finding.id ? 'CLOSE DEEP TRACE' : 'OPEN DEEP TRACE' }}</button></li></ol><DeepTrace v-if="activeTrace" :trace="activeTrace" @close="clearTrace" @focus-revision="focusRevision" /><p class="footnote">A repeated title is an observed match across separate Qodo comments. It does not establish what caused the repeat or whether a later change fixed it.</p></section>
+        <section v-if="pr.qodoReviews.availability === 'available'" class="recurrence" aria-labelledby="recurrence-title"><h4 id="recurrence-title" class="section-title"><span>POSSIBLE REPEATS · FULL IMPORT</span></h4><p v-if="recurringFindings.length === 0" class="checks-note" role="status">No candidate repeat across distinct marked revisions was found. Same-revision or unmarked title matches are not shown as possible repeats.</p><ol v-else class="recurrence-list"><li v-for="finding in recurringFindings" :key="finding.id"><div class="review-meta"><strong>{{ finding.title }}</strong><span class="recurrence-count">{{ finding.occurrences.length }} distinct revisions</span></div><ul><li v-for="occurrence in finding.occurrences" :key="occurrence.findingId"><time :datetime="occurrence.createdAt">QODO COMMENT {{ occurrence.reviewId }} · {{ date(occurrence.createdAt) }}</time><a v-if="occurrence.commitSha && occurrence.commitUrl" :href="occurrence.commitUrl" target="_blank" rel="noreferrer">REVISION {{ occurrence.commitSha.slice(0, 7) }} ↗</a><span v-else>REVISION NOT MARKED</span><a :href="occurrence.sourceUrl" target="_blank" rel="noreferrer">SOURCE FINDING ↗</a></li></ul><button type="button" class="trace-open" :aria-expanded="selectedTraceId === finding.id" :aria-controls="selectedTraceId === finding.id ? 'deep-trace' : undefined" @click="toggleTrace(finding.id, $event)">{{ selectedTraceId === finding.id ? 'CLOSE TRACE' : 'COMPARE SOURCE EVIDENCE' }}</button></li></ol><DeepTrace v-if="activeTrace" :trace="activeTrace" @close="clearTrace" @focus-revision="focusRevision" /><p class="footnote">A normalized title match is a discovery signal, not proof that separate comments describe the same defect, that a repair was attempted, or that a later change fixed it.</p></section>
         <p class="footnote">Qodo review outcomes are reviewer feedback, not independent proof of correctness. Findings and summaries apply to their linked revision. A finding missing from a later review does not by itself prove the change was fixed.</p>
         <form class="qodo-connect" @submit.prevent="loadStructuredQodoReview">
           <label for="qodo-api-key">OPTIONAL · LOAD STRUCTURED QODO REVIEW</label>
