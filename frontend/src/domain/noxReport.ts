@@ -81,7 +81,7 @@ export function noxReportNeedsAttention(report: NoxReport): boolean {
     || report.findings.length > 0
     || report.suppressedCount > 0
     || report.runConclusion !== 'success'
-    || report.scanSuccessful === false
+    || report.scanSuccessful !== true
     || report.runStatus === 'queued'
     || report.runStatus === 'in_progress'
 }
@@ -92,7 +92,8 @@ export function noxReportCanShowZeroFindingNote(report: NoxReport): boolean {
     && report.runConclusion === 'success'
     && report.runStatus !== 'queued'
     && report.runStatus !== 'in_progress'
-    && report.scanSuccessful !== false
+    // A zero-result report is clean only when SARIF says the scan completed.
+    && report.scanSuccessful === true
 }
 
 function workflowOutcome(conclusion: string): string {
@@ -115,6 +116,7 @@ function scanStatusSuffix(report: Extract<NoxReport, { availability: 'available'
   }
   if (report.runConclusion !== 'success' && report.scanSuccessful === true) return `scan completed; workflow ${workflowOutcome(report.runConclusion)}`
   if (report.runConclusion !== 'success' && report.scanSuccessful === undefined) return `workflow ${workflowOutcome(report.runConclusion)}; scan completeness unknown`
+  if (report.scanSuccessful === undefined) return 'workflow succeeded; scan completeness unknown'
   return ''
 }
 

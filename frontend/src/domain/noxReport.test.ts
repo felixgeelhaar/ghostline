@@ -82,7 +82,7 @@ describe('Nox report evidence schema', () => {
     expect(noxReportHeadline(cancelled)).toBe('Workflow cancelled · scan completeness unknown')
     expect(noxReportCanShowZeroFindingNote(cancelled)).toBe(false)
     expect(noxReportCanShowZeroFindingNote(NoxReportSchema.parse({
-      ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [],
+      ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [], scanSuccessful: true,
     }))).toBe(true)
   })
 
@@ -97,7 +97,7 @@ describe('Nox report evidence schema', () => {
 
   it('marks findings and unsuccessful workflows for attention', () => {
     expect(noxReportNeedsAttention(NoxReportSchema.parse(valid))).toBe(true)
-    expect(noxReportNeedsAttention(NoxReportSchema.parse({ ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [] }))).toBe(false)
+    expect(noxReportNeedsAttention(NoxReportSchema.parse({ ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [], scanSuccessful: true }))).toBe(false)
     expect(noxReportNeedsAttention(NoxReportSchema.parse({ ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [], runConclusion: 'failure', scanSuccessful: false }))).toBe(true)
     expect(noxReportNeedsAttention(NoxReportSchema.parse({ availability: 'unavailable', revisionSha: sha, reason: 'Not retained', totalCount: 0, activeCount: 0, suppressedCount: 0, truncated: false, findings: [] }))).toBe(true)
   })
@@ -107,10 +107,20 @@ describe('Nox report evidence schema', () => {
     expect(noxReportHeadline(failed)).toBe('Scan did not complete successfully · results may be incomplete')
     expect(noxReportHeadline(NoxReportSchema.parse({ ...valid, totalCount: 2, activeCount: 2, findings: [valid.findings[0], { ...valid.findings[0], ruleId: 'SEC-2' }], runConclusion: 'failure', scanSuccessful: false })))
       .toBe('2 active security findings reported · scan did not complete successfully')
-    expect(noxReportHeadline(NoxReportSchema.parse({ ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [] })))
+    expect(noxReportHeadline(NoxReportSchema.parse({ ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [], scanSuccessful: true })))
       .toBe('No security findings reported')
     expect(noxReportHeadline(NoxReportSchema.parse({ availability: 'unavailable', revisionSha: sha, reason: 'Artifact expired', totalCount: 0, activeCount: 0, suppressedCount: 0, truncated: false, findings: [] })))
       .toBe('Nox report unavailable')
+  })
+
+  it('does not describe a zero-result report as clean when the scan did not report completion', () => {
+    const unknown = NoxReportSchema.parse({ ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [] })
+    expect(noxReportHeadline(unknown)).toBe('Workflow succeeded · scan completeness unknown')
+    expect(noxReportCanShowZeroFindingNote(unknown)).toBe(false)
+    expect(noxReportNeedsAttention(unknown)).toBe(true)
+    const completed = NoxReportSchema.parse({ ...valid, totalCount: 0, activeCount: 0, suppressedCount: 0, findings: [], scanSuccessful: true })
+    expect(noxReportCanShowZeroFindingNote(completed)).toBe(true)
+    expect(noxReportNeedsAttention(completed)).toBe(false)
   })
 
   it('keeps suppressed results visible and does not describe them as clear or fixed', () => {
@@ -119,6 +129,7 @@ describe('Nox report evidence schema', () => {
       totalCount: 1,
       activeCount: 0,
       suppressedCount: 1,
+      scanSuccessful: true,
       findings: [{ ruleId: 'SEC-1', title: 'Known issue', severity: 'medium', message: 'Still reported.', suppressed: true, suppressionKind: 'external', suppressionJustification: 'Accepted baseline' }],
     })
     expect(noxReportNeedsAttention(suppressed)).toBe(true)

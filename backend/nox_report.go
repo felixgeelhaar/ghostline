@@ -669,16 +669,17 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 			}
 			rule := sarifRuleForResult(result, run.Tool.Driver.Rules, ruleByID)
 			suppressions := make([]domain.NoxSuppression, 0, min(len(result.Suppressions), domain.MaxNoxSuppressionsPerFinding))
-			acceptedBeyondRetained := false
+			// Only the first records are kept for display, but every record
+			// decides whether the result is suppressed.
+			inEffect := len(result.Suppressions) > 0
 			for index, suppression := range result.Suppressions {
-				if index >= domain.MaxNoxSuppressionsPerFinding {
-					// Only the first records are kept, but every record decides suppression.
-					acceptedBeyondRetained = acceptedBeyondRetained || suppression.Status == "accepted"
-					continue
+				inEffect = inEffect && domain.NoxSuppressionStatusAccepted(suppression.Status)
+				if index < domain.MaxNoxSuppressionsPerFinding {
+					suppressions = append(suppressions, domain.NoxSuppression{Status: suppression.Status, Kind: suppression.Kind, Justification: suppression.Justification})
 				}
-				suppressions = append(suppressions, domain.NoxSuppression{Status: suppression.Status, Kind: suppression.Kind, Justification: suppression.Justification})
 			}
-			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, ResultLevel: result.Level, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressions: suppressions, Suppressed: acceptedBeyondRetained, SuppressionsTruncated: len(result.Suppressions) > domain.MaxNoxSuppressionsPerFinding}
+			truncated := len(result.Suppressions) > domain.MaxNoxSuppressionsPerFinding
+			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, ResultLevel: result.Level, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressions: suppressions, Suppressed: truncated && inEffect, SuppressionsTruncated: truncated}
 			if len(result.Locations) > 0 {
 				location := result.Locations[0].PhysicalLocation
 				value.Path = location.ArtifactLocation.URI

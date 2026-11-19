@@ -28,7 +28,7 @@ const pr: PullRequest = {
 
 function report(revisionSha: string, count = 0, runConclusion = 'success'): Extract<NoxReport, { availability: 'available' }> {
   return {
-    availability: 'available', revisionSha, runId: 12, runName: 'Nox Security', runConclusion,
+    availability: 'available', revisionSha, runId: 12, runName: 'Nox Security', runConclusion, scanSuccessful: true,
     runUrl: 'https://github.com/acme/app/actions/runs/12', artifactId: 3, artifactUrl: 'https://github.com/acme/app/actions/runs/12',
     artifactDigest: 'sha256:abc', createdAt: '2026-11-15T13:58:17Z', expiresAt: '2026-11-22T13:58:16Z',
     totalCount: count, activeCount: count, suppressedCount: 0, truncated: false,
@@ -95,7 +95,7 @@ describe('revision-linked Nox report', () => {
   })
 
   it('does not show the zero-result note when GitHub omits the workflow outcome', async () => {
-    vi.mocked(fetchNoxReport).mockResolvedValue({ ...report(headSha, 0), runStatus: 'completed', runConclusion: undefined })
+    vi.mocked(fetchNoxReport).mockResolvedValue({ ...report(headSha, 0), runStatus: 'completed', runConclusion: undefined, scanSuccessful: undefined })
     await importPR()
     await vi.waitFor(() => expect(host!.querySelector('.nox-summary strong')?.textContent).toContain('Workflow outcome unavailable'))
     expect(host!.querySelector('.nox-report')?.textContent).not.toContain('not an independent guarantee')

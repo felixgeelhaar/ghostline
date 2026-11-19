@@ -191,13 +191,14 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 		line = value.Line
 	}
 	finding := NoxFinding{
-		RuleID:                   BoundedNoxText(value.RuleID, 200),
-		Title:                    BoundedNoxText(value.RuleTitle, 1000),
-		Severity:                 NoxSeverity(value.ResultLevel),
-		Message:                  BoundedNoxText(value.Message, 2000),
-		Path:                     path,
-		Line:                     line,
-		Suppressed:               value.Suppressed || HasAcceptedNoxSuppression(value.Suppressions),
+		RuleID:   BoundedNoxText(value.RuleID, 200),
+		Title:    BoundedNoxText(value.RuleTitle, 1000),
+		Severity: NoxSeverity(value.ResultLevel),
+		Message:  BoundedNoxText(value.Message, 2000),
+		Path:     path,
+		Line:     line,
+		// When records were truncated, the caller decided from all of them.
+		Suppressed:               value.Suppressed || (!value.SuppressionsTruncated && NoxSuppressionsInEffect(value.Suppressions)),
 		SuppressionKind:          BoundedNoxText(value.SuppressionKind, 100),
 		SuppressionJustification: BoundedNoxText(value.SuppressionJustification, 1000),
 		SuppressionsTruncated:    value.SuppressionsTruncated || len(value.Suppressions) > MaxNoxSuppressionsPerFinding,
@@ -209,7 +210,7 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 		finding.Title = BoundedNoxText(value.RuleName, 1000)
 	}
 	for _, suppression := range value.Suppressions {
-		if suppression.Status != "accepted" || finding.SuppressionKind != "" || finding.SuppressionJustification != "" {
+		if !finding.Suppressed || !NoxSuppressionStatusAccepted(suppression.Status) || finding.SuppressionKind != "" || finding.SuppressionJustification != "" {
 			continue
 		}
 		kind := BoundedNoxText(suppression.Kind, 100)
@@ -266,14 +267,24 @@ func SummarizeNoxFindings(findings []NoxFinding) NoxReport {
 	return NoxReport{Findings: summary.Findings, TotalCount: summary.TotalCount, ActiveCount: summary.ActiveCount, SuppressedCount: summary.SuppressedCount, Truncated: summary.Truncated}
 }
 
-// HasAcceptedNoxSuppression reports whether SARIF records an accepted suppression.
-func HasAcceptedNoxSuppression(suppressions []NoxSuppression) bool {
+// NoxSuppressionStatusAccepted applies SARIF 2.1.0's rule that a missing
+// suppression status means accepted.
+func NoxSuppressionStatusAccepted(status string) bool {
+	return status == "" || status == "accepted"
+}
+
+// NoxSuppressionsInEffect reports whether SARIF suppresses a result: it needs at
+// least one suppression, and a rejected or under-review record keeps it active.
+func NoxSuppressionsInEffect(suppressions []NoxSuppression) bool {
+	if len(suppressions) == 0 {
+		return false
+	}
 	for _, suppression := range suppressions {
-		if suppression.Status == "accepted" {
-			return true
+		if !NoxSuppressionStatusAccepted(suppression.Status) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // NoxSeverity normalizes SARIF severity labels for the interface.

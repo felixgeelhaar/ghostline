@@ -952,20 +952,35 @@ func TestLoadNoxReportDownloadsWithTokenOnlyAfterConfirmingPublicRepository(t *t
 	}
 }
 
-func TestParseNoxSARIFCountsAcceptedSuppressionBeyondRetainedRecords(t *testing.T) {
+func TestParseNoxSARIFAppliesEverySuppressionRecordBeyondRetainedOnes(t *testing.T) {
 	const sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	records := make([]string, 0, domain.MaxNoxSuppressionsPerFinding+1)
 	for i := 0; i < domain.MaxNoxSuppressionsPerFinding; i++ {
-		records = append(records, `{"kind":"external","status":"underReview","justification":"Discussing it"}`)
+		records = append(records, `{"kind":"external","status":"accepted","justification":"Approved"}`)
 	}
-	records = append(records, `{"kind":"external","status":"accepted","justification":"Approved later"}`)
-	data := []byte(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[{"ruleId":"SEC-001","message":{"text":"Accepted after many reviews."},"suppressions":[` + strings.Join(records, ",") + `]}]}]}`)
+	records = append(records, `{"kind":"external","status":"rejected","justification":"Rejected later"}`)
+	data := []byte(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[{"ruleId":"SEC-001","message":{"text":"Rejected after many approvals."},"suppressions":[` + strings.Join(records, ",") + `]}]}]}`)
 	report, err := parseNoxSARIF(data, sha, 1, "https://github.com/acme/app/actions/runs/1", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.ActiveCount != 0 || report.SuppressedCount != 1 || !report.Findings[0].Suppressed || !report.Findings[0].SuppressionsTruncated {
-		t.Fatalf("an accepted suppression after the retained records must still count: %+v", report)
+	if report.ActiveCount != 1 || report.SuppressedCount != 0 || report.Findings[0].Suppressed || !report.Findings[0].SuppressionsTruncated {
+		t.Fatalf("a rejected record beyond the retained ones must keep the result active: %+v", report)
+	}
+}
+
+func TestParseNoxSARIFFollowsSARIFSuppressionStatusRules(t *testing.T) {
+	const sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	data := []byte(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[` +
+		`{"ruleId":"NO-STATUS","message":{"text":"In-source suppression without a status."},"suppressions":[{"kind":"inSource"}]},` +
+		`{"ruleId":"MIXED","message":{"text":"Accepted and rejected."},"suppressions":[{"kind":"external","status":"accepted"},{"kind":"external","status":"rejected"}]}` +
+		`]}]}`)
+	report, err := parseNoxSARIF(data, sha, 1, "https://github.com/acme/app/actions/runs/1", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Findings[0].Suppressed || report.Findings[1].Suppressed || report.ActiveCount != 1 || report.SuppressedCount != 1 {
+		t.Fatalf("a missing status counts as accepted and any rejected record keeps a result active: %+v", report)
 	}
 }
 
