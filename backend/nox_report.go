@@ -340,6 +340,7 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 	var latestExpired *noxArtifactCandidate
 	expiredArtifactFound := false
 	candidateFailureRecorded := false
+	artifactHistoryTruncated := false
 runs:
 	for i := range matchingRuns {
 		run := &matchingRuns[i]
@@ -408,8 +409,9 @@ runs:
 				break
 			}
 			if page == maxNoxPages {
-				result.Reason = noxInspectionIncompleteReason
-				return result
+				// Keep the candidates already listed: one of them may be a valid
+				// report. The miss is reported as incomplete only if none loads.
+				artifactHistoryTruncated = true
 			}
 		}
 		candidates := make([]domain.NoxArtifactCandidate, 0, len(artifactsForRun))
@@ -455,7 +457,7 @@ runs:
 			return parsed
 		}
 	}
-	if workflowHistoryTruncated {
+	if workflowHistoryTruncated || artifactHistoryTruncated {
 		result.Reason = noxInspectionIncompleteReason
 		return result
 	}
@@ -647,6 +649,9 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 		if !domain.IsNoxScannerName(run.Tool.Driver.Name) {
 			return noxReport{}, errors.New("artifact contains a report from a different scanner")
 		}
+		// SARIF 2.1.0 §3.14.23: an absent results member defaults to null, which
+		// records that the tool did not start or could not begin its analysis.
+		// Only an empty array means the scan ran and found nothing.
 		if run.Results == nil {
 			return noxReport{}, errors.New("Nox SARIF run has no results array")
 		}

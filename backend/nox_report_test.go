@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1142,5 +1143,57 @@ func TestLoadNoxReportReasonMatchesTheReportedArtifact(t *testing.T) {
 	report := loadNoxReport(context.Background(), gh, "acme", "app", 7, sha)
 	if report.Availability == noxReportAvailable || report.RunID != 11 || strings.Contains(report.Reason, "differs from the base") {
 		t.Fatalf("reason does not describe the reported run's download failure: run=%d reason=%q", report.RunID, report.Reason)
+	}
+}
+
+func TestLoadNoxReportUsesValidArtifactFromFullFinalArtifactPage(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	digest := sha256.Sum256(archive)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/acme/app/pulls/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+		case r.URL.Path == "/repos/acme/app/actions/workflows/nox.yml/runs":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 11, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}}})
+		case r.URL.Path == "/repos/acme/app/actions/runs/11/artifacts":
+			artifacts := make([]map[string]any, noxPageSize)
+			w.Header().Set("Link", `<https://api.github.com/next>; rel="next"`) // every page is full with more to follow
+			for index := range artifacts {
+				artifacts[index] = map[string]any{"id": index + 100, "name": noxArtifactName, "workflow_run": map[string]any{"id": 11, "head_sha": "ffffffffffffffffffffffffffffffffffffffff"}}
+			}
+			if r.URL.Query().Get("page") == strconv.Itoa(maxNoxPages) {
+				artifacts[0] = map[string]any{"id": 44, "name": noxArtifactName, "digest": "sha256:" + hex.EncodeToString(digest[:]), "workflow_run": map[string]any{"id": 11, "head_sha": sha}}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": artifacts})
+		case r.URL.Path == "/repos/acme/app/actions/artifacts/44/zip":
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
+	if report.Availability != noxReportAvailable || report.ArtifactID != 44 {
+		t.Fatalf("valid artifact on the last inspected page was reported unavailable: %+v", report)
+	}
+}
+
+func TestParseNoxSARIFDoesNotTreatAbsentResultsAsACleanScan(t *testing.T) {
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	for _, test := range []struct{ name, runs string }{
+		{name: "absent", runs: `[{"tool":{"driver":{"name":"Nox"}}}]`},
+		{name: "null", runs: `[{"tool":{"driver":{"name":"Nox"}},"results":null}]`},
+		{name: "absent beside a run with results", runs: `[{"tool":{"driver":{"name":"Nox"}},"results":[]},{"tool":{"driver":{"name":"Nox"}}}]`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := parseNoxSARIF([]byte(`{"version":"2.1.0","runs":`+test.runs+`}`), sha, 1, "", "", ""); err == nil {
+				t.Fatal("a run without a results array was accepted; SARIF 2.1.0 §3.14.23 defaults it to null (analysis did not run)")
+			}
+		})
+	}
+	if _, err := parseNoxSARIF([]byte(`{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`), sha, 1, "", "", ""); err != nil {
+		t.Fatalf("an empty results array is a completed scan with no results: %v", err)
 	}
 }
