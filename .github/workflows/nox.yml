@@ -62,9 +62,12 @@ jobs:
     needs: [nox]
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Queue every main-branch report: with the default single pending slot, a newer
+    # run would replace a pending one and that scan's findings would never be filed.
     concurrency:
       group: nox-issue-sync-${{ github.repository }}
       cancel-in-progress: false
+      queue: max
     permissions:
       actions: read
       contents: read
