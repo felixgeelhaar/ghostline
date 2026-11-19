@@ -125,6 +125,19 @@ func NoxSuppressionStatusesInEffect(statuses []string) bool {
 	return true
 }
 
+// NoxScannedCommitMatches reports whether the Security workflow's record of the
+// commit it checked out and scanned names exactly the attributed revision.
+func NoxScannedCommitMatches(record, revisionSHA string) bool {
+	commit := strings.ToLower(strings.TrimSpace(record))
+	return len(commit) == 40 && isHexSHA(commit) && commit == strings.ToLower(revisionSHA)
+}
+
+// IsNoxScannedCommitRecord reports whether the record names one full commit SHA.
+func IsNoxScannedCommitRecord(record string) bool {
+	commit := strings.TrimSpace(record)
+	return len(commit) == 40 && isHexSHA(commit)
+}
+
 func isHexSHA(value string) bool {
 	for _, char := range value {
 		if !(char >= '0' && char <= '9' || char >= 'a' && char <= 'f' || char >= 'A' && char <= 'F') {

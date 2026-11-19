@@ -319,7 +319,7 @@ func TestNoxReportJSONUsesStableFieldNames(t *testing.T) {
 
 func TestLoadNoxReportUsesOnlyArtifactForExactPullRequestRevision(t *testing.T) {
 	const sha = "cccccccccccccccccccccccccccccccccccccccc"
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
 	var artifactRequests int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -392,7 +392,7 @@ func TestLoadNoxReportDoesNotAttributeSharedCommitRunToAnotherPullRequest(t *tes
 
 func TestLoadNoxReportFallsBackToOlderRetainedArtifactWhenNewestExpired(t *testing.T) {
 	const sha = "cccccccccccccccccccccccccccccccccccccccc"
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
 	var downloadedArtifactID string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -432,7 +432,7 @@ func TestLoadNoxReportFallsBackToOlderRetainedArtifactWhenNewestExpired(t *testi
 
 func TestLoadNoxReportFallsBackToOlderRetainedArtifactWhenNewestInvalid(t *testing.T) {
 	const sha = "cccccccccccccccccccccccccccccccccccccccc"
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
 	var downloaded []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -472,7 +472,7 @@ func TestLoadNoxReportFallsBackToOlderRetainedArtifactWhenNewestInvalid(t *testi
 
 func TestLoadNoxReportFallsBackToOlderArtifactAfterTemporaryDownloadFailure(t *testing.T) {
 	const sha = "cccccccccccccccccccccccccccccccccccccccc"
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
 	var downloaded []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -513,7 +513,7 @@ func TestLoadNoxReportFallsBackToOlderArtifactAfterTemporaryDownloadFailure(t *t
 
 func TestLoadNoxReportFallsBackWhenNewestArtifactDisappears(t *testing.T) {
 	const sha = "cccccccccccccccccccccccccccccccccccccccc"
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
 	var downloaded []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -556,7 +556,7 @@ func TestLoadNoxReportFallsBackWhenNewestArtifactDisappears(t *testing.T) {
 
 func TestLoadNoxReportDownloadsNewestValidReportBeforeInspectingOlderRuns(t *testing.T) {
 	const sha = "dddddddddddddddddddddddddddddddddddddddd"
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
 	artifactLists := make([]string, 0)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -636,7 +636,7 @@ func TestLoadNoxReportRejectsPrivatePullRequestBeforeReadingActions(t *testing.T
 
 func TestLoadNoxReportRequiresTheRepositorySecurityWorkflow(t *testing.T) {
 	const sha = "cccccccccccccccccccccccccccccccccccccccc"
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
 	var artifactRequests int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -697,7 +697,7 @@ func TestLoadNoxReportRejectsWorkflowMismatchWithAssociatedBase(t *testing.T) {
 
 func TestLoadNoxReportRequiresArtifactDigest(t *testing.T) {
 	const sha = "cccccccccccccccccccccccccccccccccccccccc"
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/acme/app/pulls/7":
@@ -721,7 +721,7 @@ func TestLoadNoxReportRequiresArtifactDigest(t *testing.T) {
 
 func TestLoadNoxReportFindsSecurityWorkflowBeyondFirstPage(t *testing.T) {
 	const sha = "cccccccccccccccccccccccccccccccccccccccc"
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
 	var requestedPageTwo bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -883,14 +883,27 @@ func TestNoxUnavailableReasonExplainsMissingActionsReadAccess(t *testing.T) {
 
 func makeNoxArchive(t *testing.T, sarif string) []byte {
 	t.Helper()
+	return makeNoxArchiveEntries(t, map[string]string{noxSARIFFilename: sarif})
+}
+
+// makeNoxArchiveFor adds the workflow's record of the scanned commit.
+func makeNoxArchiveFor(t *testing.T, scannedCommit, sarif string) []byte {
+	t.Helper()
+	return makeNoxArchiveEntries(t, map[string]string{noxSARIFFilename: sarif, noxScannedCommitFilename: scannedCommit + "\n"})
+}
+
+func makeNoxArchiveEntries(t *testing.T, entries map[string]string) []byte {
+	t.Helper()
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
-	file, err := writer.Create(noxSARIFFilename)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fmt.Fprint(file, sarif); err != nil {
-		t.Fatal(err)
+	for name, contents := range entries {
+		file, err := writer.Create("nox-results/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fmt.Fprint(file, contents); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
@@ -900,7 +913,7 @@ func makeNoxArchive(t *testing.T, sarif string) []byte {
 
 func TestLoadNoxReportDownloadsWithTokenOnlyAfterConfirmingPublicRepository(t *testing.T) {
 	const sha = "cccccccccccccccccccccccccccccccccccccccc"
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
 	for _, tc := range []struct {
 		name          string
@@ -998,7 +1011,7 @@ func TestParseNoxSARIFFollowsSARIFSuppressionStatusRules(t *testing.T) {
 func TestLoadNoxReportRejectsReportWhenBaseWorkflowCannotBeVerified(t *testing.T) {
 	const sha = "cccccccccccccccccccccccccccccccccccccccc"
 	baseSHA := strings.Repeat("b", 40)
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
 	for _, tc := range []struct {
 		name         string
@@ -1060,7 +1073,7 @@ type noxScenarioRun struct {
 
 func newNoxScenario(t *testing.T, sha string, runsPages [][]noxScenarioRun) (*githubClient, *int) {
 	t.Helper()
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
 	byID := map[int64]noxScenarioRun{}
 	blobByRef := map[string]string{sha: noxTrustedWorkflowBlobSHA}
@@ -1160,7 +1173,7 @@ func TestLoadNoxReportReasonMatchesTheReportedArtifact(t *testing.T) {
 
 func TestLoadNoxReportUsesValidArtifactFromFullFinalArtifactPage(t *testing.T) {
 	const sha = "cccccccccccccccccccccccccccccccccccccccc"
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -1215,7 +1228,7 @@ func TestParseNoxSARIFDoesNotTreatAbsentResultsAsACleanScan(t *testing.T) {
 // report. lastPageArtifact, when set, is placed on run 12's final page.
 func truncatedArtifactRunServer(t *testing.T, sha string, lastPageArtifact map[string]any) *httptest.Server {
 	t.Helper()
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
 	run := func(id int, createdAt string) map[string]any {
 		return map[string]any{"id": id, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": createdAt, "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}
@@ -1288,7 +1301,7 @@ func TestParseNoxSARIFSkipsPassingEvaluations(t *testing.T) {
 // noxConfig, when set, answer the comparison and the .nox.yaml lookup.
 func scanControlScenario(t *testing.T, sha string, compare func(http.ResponseWriter), noxConfig string) *httptest.Server {
 	t.Helper()
-	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
 	base := strings.Repeat("b", 40)
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1385,5 +1398,43 @@ func TestLoadNoxReportAcceptsReportWhenNoScanControlFileChanged(t *testing.T) {
 	report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
 	if report.Availability != noxReportAvailable {
 		t.Fatalf("a report from a PR that changed only application code was rejected: %+v", report)
+	}
+}
+
+func TestLoadNoxReportRequiresArtifactToRecordTheScannedRevision(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	const sarif = `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`
+	for _, test := range []struct {
+		name    string
+		archive func(t *testing.T) []byte
+		want    string
+	}{
+		{name: "record missing", archive: func(t *testing.T) []byte { return makeNoxArchive(t, sarif) }, want: "does not record which commit"},
+		{name: "merge preview scanned", archive: func(t *testing.T) []byte { return makeNoxArchiveFor(t, strings.Repeat("d", 40), sarif) }, want: "different commit"},
+		{name: "record unreadable", archive: func(t *testing.T) []byte { return makeNoxArchiveFor(t, "not-a-sha", sarif) }, want: "does not record which commit"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			archive := test.archive(t)
+			digest := sha256.Sum256(archive)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/repos/acme/app/pulls/7":
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+				case "/repos/acme/app/actions/workflows/nox.yml/runs":
+					_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 11, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}}})
+				case "/repos/acme/app/actions/runs/11/artifacts":
+					_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{"id": 44, "name": noxArtifactName, "digest": "sha256:" + hex.EncodeToString(digest[:]), "workflow_run": map[string]any{"id": 11, "head_sha": sha}}}})
+				case "/repos/acme/app/actions/artifacts/44/zip":
+					_, _ = w.Write(archive)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			report := loadNoxReport(context.Background(), noxTestGitHubClient(srv), "acme", "app", 7, sha)
+			if report.Availability != noxReportUnavailable || !strings.Contains(report.Reason, test.want) || report.ArtifactID != 44 {
+				t.Fatalf("report without a matching scanned-commit record was accepted or misattributed: %+v", report)
+			}
+		})
 	}
 }

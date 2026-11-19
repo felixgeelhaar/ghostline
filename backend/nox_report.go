@@ -21,16 +21,19 @@ import (
 )
 
 const (
-	noxArtifactName      = "nox-results"
-	noxSARIFFilename     = "results.sarif"
-	noxReportAvailable   = "available"
-	noxReportUnavailable = "unavailable"
-	maxNoxArtifactBytes  = 10 << 20
-	maxNoxSARIFBytes     = 4 << 20
-	maxNoxFindings       = 100
-	noxPageSize          = 100
-	maxNoxPages          = 10
-	maxNoxGitHubRequests = 32
+	noxArtifactName  = "nox-results"
+	noxSARIFFilename = "results.sarif"
+	// Written by the Security workflow: the commit it checked out and scanned.
+	noxScannedCommitFilename = "scanned-commit.txt"
+	maxNoxScannedCommitBytes = 128
+	noxReportAvailable       = "available"
+	noxReportUnavailable     = "unavailable"
+	maxNoxArtifactBytes      = 10 << 20
+	maxNoxSARIFBytes         = 4 << 20
+	maxNoxFindings           = 100
+	noxPageSize              = 100
+	maxNoxPages              = 10
+	maxNoxGitHubRequests     = 32
 	// GitHub's compare response lists at most 300 files; a full list may be cut.
 	noxCompareFileLimit = 300
 )
@@ -660,6 +663,14 @@ func loadNoxArtifact(ctx context.Context, budget *noxGitHubRequestBudget, candid
 	if err != nil {
 		return noxReport{}, "GitHub’s Nox artifact could not be read as a supported SARIF report.", nil
 	}
+	// Nox reports do not name the commit they scanned; the workflow records it.
+	scannedCommit, err := readNoxArtifactFile(archive, noxScannedCommitFilename, maxNoxScannedCommitBytes)
+	if err != nil || !domain.IsNoxScannedCommitRecord(string(scannedCommit)) {
+		return noxReport{}, "The Nox artifact does not record which commit was scanned, so its report cannot be attributed to this revision; it is not trusted.", nil
+	}
+	if !domain.NoxScannedCommitMatches(string(scannedCommit), sha) {
+		return noxReport{}, "The Nox artifact records that a different commit was scanned, so its report does not describe this revision; it is not trusted.", nil
+	}
 	runURL := safeGitHubWebURL(run.HTMLURL)
 	parsed, err := parseNoxSARIF(sarif, sha, run.ID, runURL, artifact.CreatedAt, artifact.ExpiresAt)
 	if err != nil {
@@ -698,6 +709,11 @@ func pullRequestContainsRevision(ctx context.Context, budget *noxGitHubRequestBu
 }
 
 func readNoxSARIFArtifact(data []byte) ([]byte, error) {
+	return readNoxArtifactFile(data, noxSARIFFilename, maxNoxSARIFBytes)
+}
+
+// readNoxArtifactFile returns the single bounded file with this base name.
+func readNoxArtifactFile(data []byte, name string, maxBytes int) ([]byte, error) {
 	if len(data) == 0 || len(data) > maxNoxArtifactBytes {
 		return nil, errors.New("artifact size is invalid")
 	}
@@ -705,35 +721,35 @@ func readNoxSARIFArtifact(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var report *zip.File
+	var match *zip.File
 	for _, file := range reader.File {
-		if path.Base(file.Name) != noxSARIFFilename {
+		if path.Base(file.Name) != name {
 			continue
 		}
-		if report != nil {
-			return nil, errors.New("artifact contains more than one SARIF report")
+		if match != nil {
+			return nil, fmt.Errorf("artifact contains more than one %s", name)
 		}
-		if file.UncompressedSize64 > maxNoxSARIFBytes {
-			return nil, errors.New("SARIF report is too large")
+		if file.UncompressedSize64 > uint64(maxBytes) {
+			return nil, fmt.Errorf("%s is too large", name)
 		}
-		report = file
+		match = file
 	}
-	if report == nil {
-		return nil, errors.New("SARIF report is missing")
+	if match == nil {
+		return nil, fmt.Errorf("%s is missing", name)
 	}
-	file, err := report.Open()
+	file, err := match.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
-	data, err = io.ReadAll(io.LimitReader(file, maxNoxSARIFBytes+1))
+	contents, err := io.ReadAll(io.LimitReader(file, int64(maxBytes)+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxNoxSARIFBytes {
-		return nil, errors.New("SARIF report is too large")
+	if len(contents) > maxBytes {
+		return nil, fmt.Errorf("%s is too large", name)
 	}
-	return data, nil
+	return contents, nil
 }
 
 func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expiresAt string) (noxReport, error) {

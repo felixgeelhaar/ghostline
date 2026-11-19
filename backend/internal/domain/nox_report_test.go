@@ -276,3 +276,22 @@ func TestValidateNoxSARIFAcceptsOnlyCompleteNoxRuns(t *testing.T) {
 		t.Fatal("a run without a results array was accepted; SARIF 2.1.0 §3.14.23 defaults it to null")
 	}
 }
+
+func TestNoxScannedCommitMatches(t *testing.T) {
+	sha := strings.Repeat("c", 40)
+	for _, test := range []struct {
+		record string
+		want   bool
+	}{
+		{record: sha + "\n", want: true},
+		{record: strings.ToUpper(sha), want: true},
+		{record: strings.Repeat("d", 40)},
+		{record: ""},
+		{record: sha[:7]},
+		{record: sha + "\n" + sha},
+	} {
+		if got := NoxScannedCommitMatches(test.record, sha); got != test.want {
+			t.Fatalf("NoxScannedCommitMatches(%q) = %v, want %v", test.record, got, test.want)
+		}
+	}
+}
