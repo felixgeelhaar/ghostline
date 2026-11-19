@@ -3,9 +3,11 @@ LABEL maintainer="Ghostline maintainers"
 WORKDIR /app
 COPY --chown=65532:65532 go.mod go.sum ./
 RUN go mod download
-# zlib: ALPINE-CVE-2026-4738 is fixed in 1.4-r0, which the pinned base image does not ship yet.
-# The version constraint fails the build if the fixed package cannot be installed.
-RUN apk add --no-cache 'zlib>=1.4-r0'
+# The pinned base image does not ship these fixes yet; the version constraints fail
+# the build if a fixed package cannot be installed.
+# zlib: ALPINE-CVE-2026-4738 is fixed in 1.4-r0.
+# OpenSSL: four Alpine advisories are fixed in 3.5.9-r1 (issue #78).
+RUN apk add --no-cache 'zlib>=1.4-r0' 'libssl3>=3.5.9-r1' 'libcrypto3>=3.5.9-r1'
 COPY --chown=65532:65532 backend ./backend
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /usr/local/bin/ghostline ./backend \
     && chown 65532:65532 /usr/local/bin/ghostline
