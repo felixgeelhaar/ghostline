@@ -51,6 +51,11 @@ function fingerprintOf(finding) {
   return crypto.createHash('sha256').update(stableInput).digest('hex');
 }
 
+// Informational and low findings stay in the Nox report and SARIF but do not
+// get issues: base images carry hundreds of advisories rated this way.
+// An unknown severity is still filed, so nothing is hidden by a missing field.
+const UNREPORTED_SEVERITIES = new Set(['info', 'low']);
+
 function findingsToIssues(report) {
   const findings = Array.isArray(report) ? report : field(report, 'findings', 'Findings');
   if (!Array.isArray(findings)) throw new Error('Nox findings report must contain a findings array');
@@ -58,9 +63,10 @@ function findingsToIssues(report) {
   const grouped = new Map();
 
   for (const finding of findings) {
+    const severity = text(field(finding, 'Severity', 'severity'), 'unknown').toLowerCase();
+    if (UNREPORTED_SEVERITIES.has(severity)) continue;
     const fingerprint = fingerprintOf(finding);
     const ruleID = text(field(finding, 'RuleID', 'rule_id', 'ruleId'), 'NOX');
-    const severity = text(field(finding, 'Severity', 'severity'), 'unknown').toLowerCase();
     const message = text(field(finding, 'Message', 'message'), 'No finding details provided');
     const existing = grouped.get(fingerprint);
     if (existing) {

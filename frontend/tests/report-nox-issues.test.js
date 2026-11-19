@@ -76,6 +76,35 @@ test('derives a stable fingerprint when Nox omits one', () => {
   assert.equal(first[0].fingerprint, second[0].fingerprint);
 });
 
+test('files issues only for findings rated medium or above, or with an unknown severity', () => {
+  const finding = (severity, fingerprint) => ({ RuleID: 'VULN-1', Severity: severity, Message: `${severity} finding`, Fingerprint: fingerprint, Location: { FilePath: 'Dockerfile' } });
+  const result = findingsToIssues({
+    findings: [
+      finding('info', 'a'.repeat(64)), finding('INFO', 'b'.repeat(64)), finding('low', 'c'.repeat(64)),
+      finding('medium', 'd'.repeat(64)), finding('high', 'e'.repeat(64)), finding('critical', 'f'.repeat(64)),
+      { RuleID: 'VULN-1', Message: 'no severity', Fingerprint: '1'.repeat(64), Location: { FilePath: 'Dockerfile' } },
+    ],
+  }, []);
+
+  assert.deepEqual(result.map((item) => item.severity).sort(), ['critical', 'high', 'medium', 'unknown']);
+});
+
+test('creates no issues when a scan has only informational and low findings', async () => {
+  const github = fakeGithub();
+  const counts = await reportNoxIssues({
+    github,
+    context: context(),
+    report: { findings: [
+      { RuleID: 'VULN-001', Severity: 'info', Message: 'Debian rates this unimportant', Fingerprint: 'a'.repeat(64), Location: { FilePath: 'Dockerfile' } },
+      { RuleID: 'IAC-018', Severity: 'low', Message: 'continue-on-error', Fingerprint: 'b'.repeat(64), Location: { FilePath: '.github/workflows/nox.yml' } },
+    ] },
+    baseline: { entries: [] },
+  });
+
+  assert.deepEqual(counts, { created: 0, updated: 0, reopened: 0, existing: 0 });
+  assert.equal(github.issues.length, 0);
+});
+
 test('keeps baseline findings linked to an issue available for synchronization', () => {
   const result = findingsToIssues(
     { findings: [{ RuleID: 'VULN-1', Severity: 'medium', Message: 'accepted', Fingerprint: 'tracked', Location: { FilePath: 'Dockerfile' } }] },
@@ -88,7 +117,7 @@ test('keeps baseline findings linked to an issue available for synchronization',
 
 test('keeps baseline findings without a linked issue reportable', () => {
   const result = findingsToIssues(
-    { findings: [{ RuleID: 'IAC-1', Severity: 'low', Message: 'review me', Fingerprint: 'untracked', Location: { FilePath: '.github/workflows/ci.yml' } }] },
+    { findings: [{ RuleID: 'IAC-1', Severity: 'medium', Message: 'review me', Fingerprint: 'untracked', Location: { FilePath: '.github/workflows/ci.yml' } }] },
     [{ fingerprint: 'untracked', reason: 'Accepted with a temporary exception' }],
   );
 
