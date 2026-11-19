@@ -8,7 +8,6 @@ on:
 permissions:
   contents: read
   security-events: write
-  pull-requests: write
 
 jobs:
   nox:
@@ -56,3 +55,40 @@ jobs:
           name: nox-results
           path: nox-results/
           retention-days: 7
+
+  report-nox-issues:
+    name: nox / Report findings
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.nox.result != 'cancelled'
+    needs: [nox]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Queue every main-branch report: with the default single pending slot, a newer
+    # run would replace a pending one and that scan's findings would never be filed.
+    concurrency:
+      group: nox-issue-sync-${{ github.repository }}
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - name: Check out revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download Nox report
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nox-results
+          path: nox-results
+
+      - name: Create or reopen finding issues
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('node:fs');
+            const { reportNoxIssues } = require('./.github/scripts/report-nox-issues.cjs');
+            const report = JSON.parse(fs.readFileSync('nox-results/findings.json', 'utf8'));
+            const baseline = JSON.parse(fs.readFileSync('.nox/baseline.json', 'utf8'));
+            const counts = await reportNoxIssues({ github, context, report, baseline });
+            core.info(`Nox issue sync: ${JSON.stringify(counts)}`);
