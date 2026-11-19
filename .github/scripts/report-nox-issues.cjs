@@ -140,7 +140,8 @@ function existingFindingBlocks(body) {
   const end = body?.indexOf(REPORT_END) ?? -1;
   if (start < 0 || end < start) return blocks;
   const fullSection = body.slice(start + REPORT_START.length, end);
-  const disclaimerAt = fullSection.indexOf(REPORT_DISCLAIMER);
+  // The disclaimer closes the section; a finding message may quote it earlier.
+  const disclaimerAt = fullSection.lastIndexOf(REPORT_DISCLAIMER);
   const section = disclaimerAt >= 0 ? fullSection.slice(0, disclaimerAt) : fullSection;
   const markers = [...section.matchAll(FINGERPRINT_MARKER)];
   for (let index = 0; index < markers.length; index += 1) {

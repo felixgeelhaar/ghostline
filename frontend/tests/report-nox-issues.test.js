@@ -425,3 +425,24 @@ test('keeps a maintainer note written inside a legacy report when upgrading it',
   const start = issue.body.indexOf('<!-- nox-report:start -->');
   assert.ok(issue.body.indexOf('Maintainer note') < start, 'the note stays outside the managed section');
 });
+
+test('keeps later findings when a finding message quotes the report disclaimer', async () => {
+  const disclaimer = 'These reports record what Nox observed at each linked revision. They are not independent proof of exploitability or claims that findings persist in later revisions.';
+  const first = 'a'.repeat(64);
+  const second = 'b'.repeat(64);
+  const older = '1'.repeat(40);
+  const newer = '2'.repeat(40);
+  const github = fakeGithub([{ number: 12, state: 'open', title: 'Tracked', body: 'Tracking issue', labels: [] }], { olderSha: older, newerSha: newer });
+  const baseline = { entries: [
+    { fingerprint: first, reason: 'Tracked in https://github.com/owner/repo/issues/12' },
+    { fingerprint: second, reason: 'Tracked in https://github.com/owner/repo/issues/12' },
+  ] };
+  const finding = (fingerprint, message) => ({ RuleID: 'VULN-1', Severity: 'high', Message: message, Fingerprint: fingerprint, Location: { FilePath: 'Dockerfile' } });
+
+  await reportNoxIssues({ github, context: context({ sha: older }), report: { findings: [finding(first, disclaimer), finding(second, 'second finding')] }, baseline });
+  await reportNoxIssues({ github, context: context({ sha: newer }), report: { findings: [finding(first, disclaimer)] }, baseline });
+
+  const body = github.issues.find((issue) => issue.number === 12).body;
+  assert.ok(body.includes(`<!-- nox-fingerprint:${second} -->`), 'the second finding block is kept');
+  assert.ok(body.includes('second finding'));
+});
