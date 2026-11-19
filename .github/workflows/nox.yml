@@ -30,9 +30,16 @@ jobs:
       # The scan output directory must be created by this run. A checked-out
       # `nox-results` (a symlink or a directory with planted files) would
       # otherwise redirect the scan, gate, and record writes or ship files the
-      # scan never produced. `rm -rf` on a symlink removes the link, not its target.
-      - name: Clear scan output directory
-        run: rm -rf nox-results
+      # scan never produced. Deleting tracked files would hide them from the
+      # scan, so a revision that tracks the path fails instead; anything left
+      # untracked is removed (`rm -rf` on a symlink removes the link only).
+      - name: Prepare scan output directory
+        run: |
+          if [ -n "$(git ls-files -- nox-results)" ]; then
+            echo "::error::This revision tracks nox-results, which the Security workflow reserves for its own scan output."
+            exit 1
+          fi
+          rm -rf nox-results
 
       # Nox 1.67.0 includes the severity-specific SARIF rule descriptors from
       # Nox-HQ/nox#1068. Keep the action and scanner versions explicit.
