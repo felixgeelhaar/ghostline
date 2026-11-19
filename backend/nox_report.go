@@ -49,6 +49,16 @@ func (budget *noxGitHubRequestBudget) get(ctx context.Context, requestPath strin
 	return budget.client.get(ctx, requestPath, target)
 }
 
+// getWithNext also reports GitHub's rel="next" link, which decides whether
+// more pages exist; a short page alone does not prove the listing ended.
+func (budget *noxGitHubRequestBudget) getWithNext(ctx context.Context, requestPath string, target any) (bool, error) {
+	if budget.remaining <= 0 {
+		return false, errNoxInspectionLimit
+	}
+	budget.remaining--
+	return budget.client.getWithNext(ctx, requestPath, target)
+}
+
 func (budget *noxGitHubRequestBudget) downloadArtifact(ctx context.Context, requestPath string, maxBytes int64) ([]byte, error) {
 	if budget.remaining <= 0 {
 		return nil, errNoxInspectionLimit
@@ -291,7 +301,8 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		var runs workflowRunsResponse
 		workflowName := strings.TrimPrefix(domain.NoxSecurityWorkflowPath, ".github/workflows/")
 		runsPath := fmt.Sprintf("/repos/%s/%s/actions/workflows/%s/runs?head_sha=%s&event=pull_request&per_page=%d&page=%d", url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(workflowName), url.QueryEscape(sha), noxPageSize, page)
-		if err := budget.get(ctx, runsPath, &runs); err != nil {
+		hasNext, err := budget.getWithNext(ctx, runsPath, &runs)
+		if err != nil {
 			result.Reason = noxRequestFailureReason(err)
 			return result
 		}
@@ -304,7 +315,7 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 				matchingRuns = append(matchingRuns, run)
 			}
 		}
-		if len(runs.WorkflowRuns) < noxPageSize {
+		if !hasNext {
 			break
 		}
 		if page == maxNoxPages {
@@ -329,6 +340,7 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 	var latestExpired *noxArtifactCandidate
 	expiredArtifactFound := false
 	candidateFailureRecorded := false
+runs:
 	for i := range matchingRuns {
 		run := &matchingRuns[i]
 		// GitHub's workflow-run PR association includes a base SHA, but does not
@@ -361,7 +373,15 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		for page := 1; page <= maxNoxPages; page++ {
 			var response workflowArtifactsResponse
 			artifactsPath := fmt.Sprintf("/repos/%s/%s/actions/runs/%d/artifacts?name=%s&per_page=%d&page=%d", url.PathEscape(owner), url.PathEscape(repo), run.ID, url.QueryEscape(noxArtifactName), noxPageSize, page)
-			if err := budget.get(ctx, artifactsPath, &response); err != nil {
+			hasNext, err := budget.getWithNext(ctx, artifactsPath, &response)
+			if err != nil {
+				if canTryOlderNoxArtifact(err) {
+					// A temporary listing failure must not hide an older run's report.
+					if result.Reason == "" {
+						result.Reason = noxRequestFailureReason(err)
+					}
+					continue runs
+				}
 				result.Reason = noxRequestFailureReason(err)
 				return result
 			}
@@ -384,7 +404,7 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 				}
 				artifactsForRun = append(artifactsForRun, *candidate)
 			}
-			if len(response.Artifacts) < noxPageSize {
+			if !hasNext {
 				break
 			}
 			if page == maxNoxPages {
@@ -406,18 +426,18 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 			candidate := noxArtifactCandidate{artifact: artifact, run: *run}
 			parsed, reason, err := loadNoxArtifact(ctx, budget, candidate, owner, repo, sha)
 			if err != nil {
+				// The reason must describe the artifact whose provenance is shown.
+				failureReason := noxRequestFailureReason(err)
+				if errors.Is(err, errNotFound) {
+					failureReason = "GitHub’s listed Nox artifact disappeared before it could be downloaded."
+				}
 				if !candidateFailureRecorded {
 					setNoxArtifactProvenance(&result, candidate)
+					result.Reason = failureReason
 					candidateFailureRecorded = true
 				}
 				if errors.Is(err, errNotFound) {
-					if result.Reason == "" {
-						result.Reason = "GitHub’s listed Nox artifact disappeared before it could be downloaded."
-					}
 					continue
-				}
-				if result.Reason == "" {
-					result.Reason = noxRequestFailureReason(err)
 				}
 				if canTryOlderNoxArtifact(err) {
 					continue

@@ -719,6 +719,7 @@ func TestLoadNoxReportFindsSecurityWorkflowBeyondFirstPage(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case r.URL.Path == "/repos/acme/app/actions/workflows/nox.yml/runs" && r.URL.Query().Get("page") == "1":
 			runs := make([]map[string]any, noxPageSize)
+			w.Header().Set("Link", `<https://api.github.com/next>; rel="next"`) // a full page with more to follow
 			for index := range runs {
 				runs[index] = map[string]any{"id": index + 100, "path": "other.yml", "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}
 			}
@@ -751,6 +752,7 @@ func TestLoadNoxReportDoesNotCallCappedArtifactHistoryMissing(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{"id": 11, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha, "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}, "html_url": "https://github.com/acme/app/actions/runs/test"}}})
 		case r.URL.Path == "/repos/acme/app/actions/runs/11/artifacts":
 			artifacts := make([]map[string]any, noxPageSize)
+			w.Header().Set("Link", `<https://api.github.com/next>; rel="next"`) // a full page with more to follow
 			for index := range artifacts {
 				artifacts[index] = map[string]any{"id": index + 100, "name": noxArtifactName, "workflow_run": map[string]any{"id": 11, "head_sha": "ffffffffffffffffffffffffffffffffffffffff"}}
 			}
@@ -776,6 +778,7 @@ func TestLoadNoxReportDoesNotCallTruncatedWorkflowHistoryMissing(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
 		case "/repos/acme/app/actions/workflows/nox.yml/runs":
 			runs := make([]map[string]any, noxPageSize)
+			w.Header().Set("Link", `<https://api.github.com/next>; rel="next"`) // a full page with more to follow
 			for index := range runs {
 				path := "other.yml"
 				if r.URL.Query().Get("page") == "1" && index == 0 {
@@ -1015,5 +1018,114 @@ func TestLoadNoxReportRejectsReportWhenBaseWorkflowCannotBeVerified(t *testing.T
 				t.Fatalf("unverified workflow accepted: availability=%s reason=%q downloads=%d", report.Availability, report.Reason, downloads)
 			}
 		})
+	}
+}
+
+// noxScenario serves one PR revision with configurable workflow runs; each run
+// has its own base SHA, workflow blob at that base, artifact listing and archive.
+type noxScenarioRun struct {
+	id             int64
+	created        string
+	baseSHA        string
+	baseBlob       string
+	listStatus     int
+	downloadStatus int
+}
+
+func newNoxScenario(t *testing.T, sha string, runsPages [][]noxScenarioRun) (*githubClient, *int) {
+	t.Helper()
+	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	digest := sha256.Sum256(archive)
+	byID := map[int64]noxScenarioRun{}
+	blobByRef := map[string]string{sha: noxTrustedWorkflowBlobSHA}
+	for _, page := range runsPages {
+		for _, run := range page {
+			byID[run.id] = run
+			blobByRef[run.baseSHA] = run.baseBlob
+		}
+	}
+	downloads := 0
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/acme/app/pulls/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+		case r.URL.Path == "/repos/acme/app/contents/"+domain.NoxSecurityWorkflowPath:
+			_, _ = w.Write([]byte(`{"sha":"` + blobByRef[r.URL.Query().Get("ref")] + `"}`))
+		case r.URL.Path == "/repos/acme/app/actions/workflows/nox.yml/runs":
+			page := 1
+			_, _ = fmt.Sscanf(r.URL.Query().Get("page"), "%d", &page)
+			if page < len(runsPages) {
+				w.Header().Set("Link", fmt.Sprintf(`<%s%s?page=%d>; rel="next"`, srv.URL, r.URL.Path, page+1))
+			}
+			runs := []any{}
+			if page <= len(runsPages) {
+				for _, run := range runsPages[page-1] {
+					runs = append(runs, map[string]any{"id": run.id, "path": domain.NoxSecurityWorkflowPath, "name": "Security", "event": "pull_request", "head_sha": sha, "conclusion": "success", "html_url": fmt.Sprintf("https://github.com/acme/app/actions/runs/%d", run.id), "created_at": run.created, "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": run.baseSHA}}}})
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": runs})
+		case strings.HasPrefix(r.URL.Path, "/repos/acme/app/actions/runs/") && strings.HasSuffix(r.URL.Path, "/artifacts"):
+			var id int64
+			_, _ = fmt.Sscanf(strings.TrimPrefix(r.URL.Path, "/repos/acme/app/actions/runs/"), "%d", &id)
+			run := byID[id]
+			if run.listStatus != 0 {
+				w.WriteHeader(run.listStatus)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{
+				"id": id * 10, "name": noxArtifactName, "size_in_bytes": len(archive), "digest": "sha256:" + hex.EncodeToString(digest[:]),
+				"url": fmt.Sprintf("https://api.github.com/repos/acme/app/actions/artifacts/%d", id*10), "created_at": run.created, "expires_at": "2099-11-22T13:58:16Z",
+				"workflow_run": map[string]any{"id": id, "head_sha": sha},
+			}}})
+		case strings.HasPrefix(r.URL.Path, "/repos/acme/app/actions/artifacts/") && strings.HasSuffix(r.URL.Path, "/zip"):
+			var artifactID int64
+			_, _ = fmt.Sscanf(strings.TrimPrefix(r.URL.Path, "/repos/acme/app/actions/artifacts/"), "%d", &artifactID)
+			if status := byID[artifactID/10].downloadStatus; status != 0 {
+				w.WriteHeader(status)
+				return
+			}
+			downloads++
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return &githubClient{baseURL: srv.URL, http: srv.Client()}, &downloads
+}
+
+func TestLoadNoxReportFollowsNextLinkPastShortPage(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	base := strings.Repeat("b", 40)
+	gh, _ := newNoxScenario(t, sha, [][]noxScenarioRun{{}, {{id: 11, created: "2026-11-15T13:58:00Z", baseSHA: base, baseBlob: noxTrustedWorkflowBlobSHA}}})
+	report := loadNoxReport(context.Background(), gh, "acme", "app", 7, sha)
+	if report.Availability != noxReportAvailable || report.RunID != 11 {
+		t.Fatalf("report on the page after a short page was missed: %+v", report)
+	}
+}
+
+func TestLoadNoxReportFallsBackToOlderRunWhenArtifactListingFails(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	base := strings.Repeat("b", 40)
+	gh, _ := newNoxScenario(t, sha, [][]noxScenarioRun{{
+		{id: 12, created: "2026-11-15T14:00:00Z", baseSHA: base, baseBlob: noxTrustedWorkflowBlobSHA, listStatus: http.StatusBadGateway},
+		{id: 11, created: "2026-11-15T13:58:00Z", baseSHA: base, baseBlob: noxTrustedWorkflowBlobSHA},
+	}})
+	report := loadNoxReport(context.Background(), gh, "acme", "app", 7, sha)
+	if report.Availability != noxReportAvailable || report.RunID != 11 {
+		t.Fatalf("older valid report was not inspected after a temporary listing failure: %+v", report)
+	}
+}
+
+func TestLoadNoxReportReasonMatchesTheReportedArtifact(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	gh, _ := newNoxScenario(t, sha, [][]noxScenarioRun{{
+		{id: 12, created: "2026-11-15T14:00:00Z", baseSHA: strings.Repeat("d", 40), baseBlob: strings.Repeat("e", 40)},
+		{id: 11, created: "2026-11-15T13:58:00Z", baseSHA: strings.Repeat("b", 40), baseBlob: noxTrustedWorkflowBlobSHA, downloadStatus: http.StatusBadGateway},
+	}})
+	report := loadNoxReport(context.Background(), gh, "acme", "app", 7, sha)
+	if report.Availability == noxReportAvailable || report.RunID != 11 || strings.Contains(report.Reason, "differs from the base") {
+		t.Fatalf("reason does not describe the reported run's download failure: run=%d reason=%q", report.RunID, report.Reason)
 	}
 }
