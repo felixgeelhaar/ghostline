@@ -19,7 +19,13 @@ jobs:
       security-events: write
       pull-requests: write
     steps:
+      # Scan the pull request's head commit, not GitHub's merge preview: the
+      # report and artifact are attributed to the head SHA, so the scanned
+      # tree must be exactly that revision.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       # Nox 1.67.0 includes the severity-specific SARIF rule descriptors from
       # Nox-HQ/nox#1068. Keep the action and scanner versions explicit.
@@ -39,6 +45,9 @@ jobs:
         uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4
         with:
           sarif_file: ${{ steps.scan.outputs.sarif-file }}
+          # Attribute code-scanning results to the commit that was scanned.
+          sha: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/head', github.event.pull_request.number) || github.ref }}
 
       # The Marketplace action puts its verified Nox binary on PATH, so use
       # Nox's baseline-aware gate directly rather than scripting a second gate.
