@@ -57,6 +57,18 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: nox ci-gate --input nox-results/findings.json --baseline .nox/baseline.json --github
 
+      # Nox reports do not name the commit they scanned. Record the checked-out
+      # commit next to them so consumers can confirm a report describes the
+      # revision it is attributed to. Written by the workflow after the scan;
+      # removing the path first means a symlink or directory from the scanned tree cannot
+      # redirect the write. Only trustworthy while this workflow file matches
+      # the PR base, which Ghostline checks before reading the record.
+      - name: Record scanned commit
+        if: always() && hashFiles('nox-results/**') != ''
+        run: |
+          rm -rf nox-results/scanned-commit.txt
+          git rev-parse HEAD > nox-results/scanned-commit.txt
+
       - name: Upload Nox artifacts
         if: always() && hashFiles('nox-results/**') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
