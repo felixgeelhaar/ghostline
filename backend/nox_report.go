@@ -57,6 +57,34 @@ func (budget *noxGitHubRequestBudget) downloadArtifact(ctx context.Context, requ
 	return budget.client.downloadGitHubArtifact(ctx, requestPath, maxBytes)
 }
 
+// ensurePublic confirms visibility right before the one request that sends
+// the server token: GitHub requires authentication to download an artifact.
+func (budget *noxGitHubRequestBudget) ensurePublic(ctx context.Context, owner, repo string) error {
+	if budget.client.token == "" {
+		return nil
+	}
+	if budget.remaining <= 0 {
+		return errNoxInspectionLimit
+	}
+	budget.remaining--
+	return ensurePublicRepository(ctx, budget.client, owner, repo)
+}
+
+func noxVisibilityFailureReason(err error) string {
+	switch {
+	case errors.Is(err, errPrivateRepository), errors.Is(err, errNotFound):
+		return "Security reports are only available for public pull requests."
+	case errors.Is(err, errRepositoryVisibilityUnknown):
+		return "GitHub did not confirm that this repository is public, so the Nox artifact was not downloaded."
+	case errors.Is(err, errServerTokenRejected):
+		return "The server’s GitHub token was rejected, so the Nox artifact was not downloaded. Replace the configured token."
+	case errors.Is(err, errServerTokenRateLimit):
+		return "The server’s GitHub token has reached its rate limit, so the Nox artifact was not downloaded. Try again later."
+	default:
+		return noxRequestFailureReason(err)
+	}
+}
+
 func noxRequestFailureReason(err error) string {
 	if errors.Is(err, errNoxInspectionLimit) {
 		return noxInspectionIncompleteReason
@@ -476,6 +504,9 @@ func loadNoxArtifact(ctx context.Context, budget *noxGitHubRequestBudget, candid
 	artifact, run := candidate.artifact, candidate.run
 	if artifact.Size < 0 || artifact.Size > maxNoxArtifactBytes {
 		return noxReport{}, "GitHub’s Nox artifact is too large for Ghostline to inspect safely.", nil
+	}
+	if err := budget.ensurePublic(ctx, owner, repo); err != nil {
+		return noxReport{}, noxVisibilityFailureReason(err), nil
 	}
 	archivePath := fmt.Sprintf("/repos/%s/%s/actions/artifacts/%d/zip", url.PathEscape(owner), url.PathEscape(repo), artifact.ID)
 	archive, err := budget.downloadArtifact(ctx, archivePath, maxNoxArtifactBytes)

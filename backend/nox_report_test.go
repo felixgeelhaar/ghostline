@@ -883,3 +883,68 @@ func makeNoxArchive(t *testing.T, sarif string) []byte {
 	}
 	return buffer.Bytes()
 }
+
+func TestLoadNoxReportDownloadsWithTokenOnlyAfterConfirmingPublicRepository(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	archive := makeNoxArchive(t, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
+	digest := sha256.Sum256(archive)
+	for _, tc := range []struct {
+		name          string
+		visibility    string
+		wantAvailable bool
+		wantDownloads int
+	}{
+		{"public repository", `{"private":false}`, true, 1},
+		{"private repository", `{"private":true}`, false, 0},
+		{"visibility unknown", `{}`, false, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var downloads int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				authorized := r.Header.Get("Authorization") != ""
+				switch r.URL.Path {
+				case "/repos/acme/app":
+					if !authorized {
+						t.Error("visibility check did not use the server token")
+					}
+					_, _ = w.Write([]byte(tc.visibility))
+					return
+				case "/repos/acme/app/actions/artifacts/44/zip":
+					if !authorized {
+						t.Error("artifact download did not use the server token")
+					}
+					downloads++
+					_, _ = w.Write(archive)
+					return
+				}
+				if authorized {
+					t.Errorf("server token sent on a data request: %s", r.URL.Path)
+				}
+				switch r.URL.Path {
+				case "/repos/acme/app/pulls/7":
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("b", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+				case "/repos/acme/app/actions/workflows/nox.yml/runs":
+					_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{
+						map[string]any{"id": 11, "path": domain.NoxSecurityWorkflowPath, "name": "Security", "event": "pull_request", "head_sha": sha, "conclusion": "success", "html_url": "https://github.com/acme/app/actions/runs/11", "created_at": "2026-11-15T13:58:00Z", "pull_requests": []any{map[string]any{"number": 7, "base": map[string]string{"sha": strings.Repeat("b", 40)}}}},
+					}})
+				case "/repos/acme/app/actions/runs/11/artifacts":
+					_ = json.NewEncoder(w).Encode(map[string]any{"artifacts": []any{map[string]any{
+						"id": 44, "name": noxArtifactName, "size_in_bytes": len(archive), "digest": "sha256:" + hex.EncodeToString(digest[:]),
+						"url":        "https://api.github.com/repos/acme/app/actions/artifacts/44",
+						"created_at": "2026-11-15T13:58:17Z", "expires_at": "2099-11-22T13:58:16Z",
+						"workflow_run": map[string]any{"id": 11, "head_sha": sha},
+					}}})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			gh := noxTestGitHubClient(srv)
+			gh.token = "server-token"
+			report := loadNoxReport(context.Background(), gh, "acme", "app", 7, sha)
+			if (report.Availability == noxReportAvailable) != tc.wantAvailable || downloads != tc.wantDownloads {
+				t.Fatalf("availability=%s reason=%q downloads=%d, want available=%v downloads=%d", report.Availability, report.Reason, downloads, tc.wantAvailable, tc.wantDownloads)
+			}
+		})
+	}
+}
