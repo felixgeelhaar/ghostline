@@ -27,6 +27,24 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      # The scan output directory must be created by this run. A checked-out
+      # `nox-results` (a symlink or a directory with planted files) would
+      # otherwise redirect the scan, gate, and record writes or ship files the
+      # scan never produced. Deleting tracked files would hide them from the
+      # scan, so a revision that tracks the path fails instead; anything left
+      # untracked is removed (`rm -rf` on a symlink removes the link only).
+      # Every later step that reads, records, or uploads `nox-results` requires
+      # this step to have succeeded, so files a revision tracks there are never
+      # stamped or published as scan output.
+      - name: Prepare scan output directory
+        id: prepare
+        run: |
+          if [ -n "$(git ls-files -- nox-results)" ]; then
+            echo "::error::This revision tracks nox-results, which the Security workflow reserves for its own scan output."
+            exit 1
+          fi
+          rm -rf nox-results
+
       # Nox 1.67.0 includes the severity-specific SARIF rule descriptors from
       # Nox-HQ/nox#1068. Keep the action and scanner versions explicit.
       - name: Run Nox security scan
@@ -41,7 +59,7 @@ jobs:
           fail-on-degraded: 'true'
 
       - name: Upload SARIF to code scanning
-        if: always() && steps.scan.outputs.sarif-file != ''
+        if: always() && steps.prepare.outcome == 'success' && steps.scan.outputs.sarif-file != ''
         uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4
         with:
           sarif_file: ${{ steps.scan.outputs.sarif-file }}
@@ -52,25 +70,25 @@ jobs:
       # The Marketplace action puts its verified Nox binary on PATH, so use
       # Nox's baseline-aware gate directly rather than scripting a second gate.
       - name: Gate on new Nox findings
-        if: always()
+        if: always() && steps.prepare.outcome == 'success'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: nox ci-gate --input nox-results/findings.json --baseline .nox/baseline.json --github
 
       # Nox reports do not name the commit they scanned. Record the checked-out
       # commit next to them so consumers can confirm a report describes the
-      # revision it is attributed to. Written by the workflow after the scan;
-      # removing the path first means a symlink or directory from the scanned tree cannot
-      # redirect the write. Only trustworthy while this workflow file matches
+      # revision it is attributed to. Written by the workflow after the scan
+      # into the output directory this run created; removing the path first
+      # keeps a file Nox may have left there from being reused. Only trustworthy while this workflow file matches
       # the PR base, which Ghostline checks before reading the record.
       - name: Record scanned commit
-        if: always() && hashFiles('nox-results/**') != ''
+        if: always() && steps.prepare.outcome == 'success' && hashFiles('nox-results/**') != ''
         run: |
           rm -rf nox-results/scanned-commit.txt
           git rev-parse HEAD > nox-results/scanned-commit.txt
 
       - name: Upload Nox artifacts
-        if: always() && hashFiles('nox-results/**') != ''
+        if: always() && steps.prepare.outcome == 'success' && hashFiles('nox-results/**') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nox-results
