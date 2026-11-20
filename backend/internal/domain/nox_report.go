@@ -6,6 +6,8 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/goccy/go-yaml"
 )
 
 const NoxSecurityWorkflowPath = ".github/workflows/nox.yml"
@@ -77,10 +79,58 @@ func isNoxScanControlPath(value string) bool {
 		strings.HasPrefix(value, ".nox/") || path.Base(value) == ".gitignore"
 }
 
-// NoxConfigMovesBaseline reports whether .nox.yaml points Nox at a baseline
-// outside .nox/, which NoxScanControlChange cannot verify.
+// NoxConfigMovesBaseline reports whether .nox.yaml sets a baseline_path, which
+// can point Nox at a baseline outside .nox/ that NoxScanControlChange cannot
+// verify. A configuration that cannot be parsed is treated as moving it.
 func NoxConfigMovesBaseline(config string) bool {
-	return strings.Contains(config, "baseline_path")
+	var document any
+	if err := yaml.Unmarshal([]byte(config), &document); err != nil {
+		return true
+	}
+	return setsNoxBaselinePath(document)
+}
+
+func setsNoxBaselinePath(node any) bool {
+	switch value := node.(type) {
+	case map[string]any:
+		for key, child := range value {
+			if key == "baseline_path" && child != nil && child != "" {
+				return true
+			}
+			if setsNoxBaselinePath(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range value {
+			if setsNoxBaselinePath(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// NoxArtifactFailure classifies why reading one run's Nox artifact failed.
+type NoxArtifactFailure struct {
+	RateLimited            bool
+	InspectionLimitReached bool
+	// HTTPStatus is GitHub's response status, or 0 when the failure was not an
+	// HTTP error (for example, artifact content that was rejected).
+	HTTPStatus int
+}
+
+// NoxArtifactFailureAllowsOlderRun reports whether the lookup may fall back to
+// an older run after this failure. Exhausted budgets stop the search, and of
+// HTTP errors only transient server errors let an older report stand in.
+func NoxArtifactFailureAllowsOlderRun(failure NoxArtifactFailure) bool {
+	if failure.RateLimited || failure.InspectionLimitReached {
+		return false
+	}
+	if failure.HTTPStatus != 0 {
+		return failure.HTTPStatus >= 500 && failure.HTTPStatus <= 599
+	}
+	return true
 }
 
 // ValidateNoxSARIFLog accepts only SARIF 2.1.0 logs with at least one run.
@@ -251,6 +301,7 @@ type NoxSARIFFinding struct {
 	RuleName                 string
 	RuleTitle                string
 	RuleSeverity             string
+	RuleDefaultLevel         string
 	ResultLevel              string
 	Kind                     string
 	Message                  string
@@ -281,7 +332,7 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 	finding := NoxFinding{
 		RuleID:   BoundedNoxText(value.RuleID, 200),
 		Title:    BoundedNoxText(value.RuleTitle, 1000),
-		Severity: NoxSeverity(value.ResultLevel),
+		Severity: NoxSeverity(noxResultLevel(value)),
 		Message:  BoundedNoxText(value.Message, 2000),
 		Path:     path,
 		Line:     line,
@@ -348,6 +399,18 @@ func ParseNoxFinding(value NoxSARIFFinding) (NoxFinding, bool) {
 
 // noxSuppressionDecision decides from every record when the source supplied
 // all statuses, and otherwise from the retained records unless they were cut.
+// noxResultLevel applies SARIF 2.1.0 §3.27.10: an omitted result level comes
+// from the rule's default configuration, and otherwise is "warning".
+func noxResultLevel(value NoxSARIFFinding) string {
+	if value.ResultLevel != "" {
+		return value.ResultLevel
+	}
+	if value.RuleDefaultLevel != "" {
+		return value.RuleDefaultLevel
+	}
+	return "warning"
+}
+
 func noxSuppressionDecision(value NoxSARIFFinding) bool {
 	if value.SuppressionStatuses != nil {
 		return NoxSuppressionStatusesInEffect(value.SuppressionStatuses)

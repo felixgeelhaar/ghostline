@@ -213,11 +213,67 @@ func TestNoxScanControlChangeNamesFilesThatSteerTheScan(t *testing.T) {
 }
 
 func TestNoxConfigCanMoveBaseline(t *testing.T) {
-	if !NoxConfigMovesBaseline("policy:\n  baseline_path: security/accepted.json\n") {
-		t.Fatal("a .nox.yaml that relocates the baseline was not detected")
+	tests := []struct {
+		name   string
+		config string
+		want   bool
+	}{
+		{name: "block setting", config: "policy:\n  baseline_path: security/accepted.json\n", want: true},
+		{name: "flow setting", config: "policy: {baseline_path: security/accepted.json}\n", want: true},
+		{name: "quoted key", config: "policy:\n  \"baseline_path\": security/accepted.json\n", want: true},
+		{name: "unparseable config fails closed", config: "policy: [\n", want: true},
+		{name: "no setting", config: "scan:\n  exclude: []\n", want: false},
+		{name: "comment only", config: "# baseline_path is left at its default\nscan:\n  exclude: []\n", want: false},
+		{name: "value mentions the name", config: "scan:\n  exclude: [docs/baseline_path.md]\n", want: false},
+		{name: "empty setting", config: "policy:\n  baseline_path: \"\"\n", want: false},
 	}
-	if NoxConfigMovesBaseline("scan:\n  exclude: []\n") {
-		t.Fatal("a .nox.yaml without baseline_path was treated as relocating the baseline")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NoxConfigMovesBaseline(tt.config); got != tt.want {
+				t.Fatalf("NoxConfigMovesBaseline(%q) = %v, want %v", tt.config, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseNoxFindingAppliesSARIFDefaultLevel(t *testing.T) {
+	tests := []struct {
+		name  string
+		value NoxSARIFFinding
+		want  string
+	}{
+		{name: "no level anywhere defaults to warning", value: NoxSARIFFinding{RuleID: "SEC-1"}, want: "medium"},
+		{name: "rule default configuration", value: NoxSARIFFinding{RuleID: "SEC-1", RuleDefaultLevel: "error"}, want: "high"},
+		{name: "result level wins over rule default", value: NoxSARIFFinding{RuleID: "SEC-1", ResultLevel: "note", RuleDefaultLevel: "error"}, want: "low"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			finding, ok := ParseNoxFinding(tt.value)
+			if !ok || finding.Severity != tt.want {
+				t.Fatalf("ParseNoxFinding() severity = %q (included %v), want %q", finding.Severity, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestNoxArtifactFailureAllowsOlderRun(t *testing.T) {
+	tests := []struct {
+		name    string
+		failure NoxArtifactFailure
+		want    bool
+	}{
+		{name: "rate limited", failure: NoxArtifactFailure{RateLimited: true}, want: false},
+		{name: "inspection limit", failure: NoxArtifactFailure{InspectionLimitReached: true}, want: false},
+		{name: "server error", failure: NoxArtifactFailure{HTTPStatus: 502}, want: true},
+		{name: "client error", failure: NoxArtifactFailure{HTTPStatus: 404}, want: false},
+		{name: "artifact content rejected", failure: NoxArtifactFailure{}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NoxArtifactFailureAllowsOlderRun(tt.failure); got != tt.want {
+				t.Fatalf("NoxArtifactFailureAllowsOlderRun(%+v) = %v, want %v", tt.failure, got, tt.want)
+			}
+		})
 	}
 }
 

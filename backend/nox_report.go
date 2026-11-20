@@ -232,6 +232,9 @@ type sarifRule struct {
 	ShortDescription struct {
 		Text string `json:"text"`
 	} `json:"shortDescription"`
+	DefaultConfiguration struct {
+		Level string `json:"level"`
+	} `json:"defaultConfiguration"`
 	Properties struct {
 		Severity string `json:"severity"`
 	} `json:"properties"`
@@ -538,14 +541,19 @@ func findWorkflowArtifact(artifacts []workflowArtifact, id int64) workflowArtifa
 }
 
 func canTryOlderNoxArtifact(err error) bool {
-	if errors.Is(err, errRateLimit) || errors.Is(err, errNoxInspectionLimit) {
-		return false
+	return domain.NoxArtifactFailureAllowsOlderRun(noxArtifactFailure(err))
+}
+
+func noxArtifactFailure(err error) domain.NoxArtifactFailure {
+	failure := domain.NoxArtifactFailure{
+		RateLimited:            errors.Is(err, errRateLimit),
+		InspectionLimitReached: errors.Is(err, errNoxInspectionLimit),
 	}
 	var responseError statusError
 	if errors.As(err, &responseError) {
-		return responseError.code >= http.StatusInternalServerError && responseError.code <= 599
+		failure.HTTPStatus = responseError.code
 	}
-	return true
+	return failure
 }
 
 func noxWorkflowBlobSHA(ctx context.Context, budget *noxGitHubRequestBudget, owner, repo, ref string) (string, error) {
@@ -798,7 +806,7 @@ func parseNoxSARIF(data []byte, sha string, runID int64, runURL, createdAt, expi
 				}
 			}
 			truncated := len(result.Suppressions) > domain.MaxNoxSuppressionsPerFinding
-			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, ResultLevel: result.Level, Kind: result.Kind, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressions: suppressions, SuppressionStatuses: statuses, SuppressionsTruncated: truncated}
+			value := domain.NoxSARIFFinding{RuleID: result.RuleID, RuleDefinitionID: rule.ID, RuleName: rule.Name, RuleTitle: rule.ShortDescription.Text, RuleSeverity: rule.Properties.Severity, RuleDefaultLevel: rule.DefaultConfiguration.Level, ResultLevel: result.Level, Kind: result.Kind, Message: result.Message.Text, Markdown: result.Message.Markdown, Fingerprints: result.PartialFingerprints, Suppressions: suppressions, SuppressionStatuses: statuses, SuppressionsTruncated: truncated}
 			if len(result.Locations) > 0 {
 				location := result.Locations[0].PhysicalLocation
 				value.Path = location.ArtifactLocation.URI

@@ -136,4 +136,20 @@ describe('Nox report evidence schema', () => {
     expect(noxReportHeadline(suppressed)).toBe('No active findings · 1 suppressed result')
     expect(suppressed.findings[0].suppressionJustification).toBe('Accepted baseline')
   })
+
+  it('measures suppression text in characters like the backend, so non-BMP text within the limit is accepted', () => {
+    const justification = '\u{1F512}'.repeat(1000)
+    const kind = '\u{1F512}'.repeat(100)
+    const report = NoxReportSchema.parse({
+      ...valid,
+      findings: [{
+        ...valid.findings[0], suppressed: true, suppressionKind: kind, suppressionJustification: justification,
+        suppressions: [{ status: 'accepted', kind, justification }],
+      }],
+    })
+    expect(report.availability === 'available' && report.findings[0].suppressionJustification).toBe(justification)
+    expect(() => NoxReportSchema.parse({
+      ...valid, findings: [{ ...valid.findings[0], suppressionJustification: '\u{1F512}'.repeat(1001) }],
+    })).toThrow()
+  })
 })
