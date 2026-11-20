@@ -33,7 +33,11 @@ jobs:
       # scan never produced. Deleting tracked files would hide them from the
       # scan, so a revision that tracks the path fails instead; anything left
       # untracked is removed (`rm -rf` on a symlink removes the link only).
+      # Every later step that reads, records, or uploads `nox-results` requires
+      # this step to have succeeded, so files a revision tracks there are never
+      # stamped or published as scan output.
       - name: Prepare scan output directory
+        id: prepare
         run: |
           if [ -n "$(git ls-files -- nox-results)" ]; then
             echo "::error::This revision tracks nox-results, which the Security workflow reserves for its own scan output."
@@ -55,7 +59,7 @@ jobs:
           fail-on-degraded: 'true'
 
       - name: Upload SARIF to code scanning
-        if: always() && steps.scan.outputs.sarif-file != ''
+        if: always() && steps.prepare.outcome == 'success' && steps.scan.outputs.sarif-file != ''
         uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4
         with:
           sarif_file: ${{ steps.scan.outputs.sarif-file }}
@@ -66,7 +70,7 @@ jobs:
       # The Marketplace action puts its verified Nox binary on PATH, so use
       # Nox's baseline-aware gate directly rather than scripting a second gate.
       - name: Gate on new Nox findings
-        if: always()
+        if: always() && steps.prepare.outcome == 'success'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: nox ci-gate --input nox-results/findings.json --baseline .nox/baseline.json --github
@@ -78,13 +82,13 @@ jobs:
       # keeps a file Nox may have left there from being reused. Only trustworthy while this workflow file matches
       # the PR base, which Ghostline checks before reading the record.
       - name: Record scanned commit
-        if: always() && hashFiles('nox-results/**') != ''
+        if: always() && steps.prepare.outcome == 'success' && hashFiles('nox-results/**') != ''
         run: |
           rm -rf nox-results/scanned-commit.txt
           git rev-parse HEAD > nox-results/scanned-commit.txt
 
       - name: Upload Nox artifacts
-        if: always() && hashFiles('nox-results/**') != ''
+        if: always() && steps.prepare.outcome == 'success' && hashFiles('nox-results/**') != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: nox-results
