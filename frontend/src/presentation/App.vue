@@ -2,6 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { importPullRequest } from '../application/importPullRequest'
 import { fetchRevisionChecks } from '../application/fetchRevisionChecks'
+import { fetchNoxReport } from '../application/fetchNoxReport'
+import { createNoxReportLoader } from '../application/noxReportLoader'
 import { fetchCheckAnnotations } from '../application/fetchCheckAnnotations'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
 import { fetchQodoReviewSession } from '../application/fetchQodoReviewSession'
@@ -10,6 +12,8 @@ import { checkOutcome, checkSummaryPreview, headCommitLabel, orderChecks, summar
 import type { CheckAnnotationPage } from '../domain/checkAnnotations'
 import { findRecurringFindings, qodoHeadCoverage, reviewCountSummary, reviewsForRevision } from '../domain/reviews'
 import type { QodoStructuredReview } from '../domain/qodoReviewSession'
+import type { NoxReport } from '../domain/noxReport'
+import { noxReportCanShowZeroFindingNote, noxReportHeadline, noxReportNeedsAttention } from '../domain/noxReport'
 import { buildFindingTrace } from '../domain/trace'
 import { isSamePullRequest, validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import { GhostlineApiError } from '../application/apiError'
@@ -27,6 +31,9 @@ const selectedRevision = ref('')
 const focusedChecks = ref<PullRequest['checks']>()
 const checksLoading = ref(false)
 const checksError = ref('')
+const focusedNoxReport = ref<NoxReport>()
+const noxLoading = ref(false)
+const noxError = ref('')
 const selectedTraceId = ref('')
 const copyResult = ref<CopyResult>()
 const annotationPages = ref<Record<string, CheckAnnotationPage>>({})
@@ -96,6 +103,20 @@ function handleUnauthorized(error: unknown) {
     void handleSessionRejected()
   }
 }
+const noxReportLoader = createNoxReportLoader({
+  fetchReport: fetchNoxReport,
+  isCurrent: (pullRequestURL, revisionSHA) => {
+    const currentPR = pr.value
+    return currentPR?.url === pullRequestURL
+      && (selectedRevision.value || currentPR.checks.revisionSha) === revisionSHA
+  },
+  publish: (update) => {
+    noxLoading.value = update.loading
+    if ('error' in update) noxError.value = update.error ?? ''
+    if ('report' in update) focusedNoxReport.value = update.report
+  },
+  onError: handleUnauthorized,
+})
 
 async function logout() {
   try {
@@ -113,6 +134,7 @@ function clearWorkspace() {
   importRequest++
   revisionRequest++
   qodoRequest++
+  noxReportLoader.invalidate()
   copyRequest++
   resetAnnotations()
   url.value = ''
@@ -123,6 +145,9 @@ function clearWorkspace() {
   focusedChecks.value = undefined
   checksLoading.value = false
   checksError.value = ''
+  focusedNoxReport.value = undefined
+  noxLoading.value = false
+  noxError.value = ''
   selectedTraceId.value = ''
   traceTrigger = undefined
   copyResult.value = undefined
@@ -142,6 +167,12 @@ async function loadPR() {
   }
   const keepCurrentChange = isSamePullRequest(pr.value, requestedURL)
   loading.value = true
+  noxReportLoader.invalidate()
+  if (keepCurrentChange) {
+    focusedNoxReport.value = undefined
+    noxError.value = ''
+    noxLoading.value = true
+  }
   if (!keepCurrentChange) {
     pr.value = undefined
     selectedRevision.value = ''
@@ -150,13 +181,18 @@ async function loadPR() {
     focusedChecks.value = undefined
     checksError.value = ''
     checksLoading.value = false
+    focusedNoxReport.value = undefined
+    noxError.value = ''
+    noxLoading.value = false
     copyResult.value = undefined
     qodoStructuredReview.value = undefined
     qodoReviewError.value = ''
   }
   copyRequest++
   resetAnnotations()
-  if (!keepCurrentChange) revisionRequest++
+  if (!keepCurrentChange) {
+    revisionRequest++
+  }
   qodoApiKey.value = ''
   if (!keepCurrentChange) {
     qodoRequest++
@@ -166,12 +202,23 @@ async function loadPR() {
     const importedPR = await importPullRequest(requestedURL)
     if (request === importRequest) {
       const focusedRevisionStillExists = importedPR.commits.some((commit) => commit.sha === selectedRevision.value)
+      const nextNoxRevision = selectedRevision.value || importedPR.checks.revisionSha
+      if (focusedNoxReport.value && focusedNoxReport.value.revisionSha !== nextNoxRevision) {
+        noxReportLoader.invalidate()
+        focusedNoxReport.value = undefined
+        noxError.value = ''
+        noxLoading.value = false
+      }
       if (selectedRevision.value && !focusedRevisionStillExists) {
         revisionRequest++
         selectedRevision.value = ''
         focusedChecks.value = undefined
         checksError.value = ''
         checksLoading.value = false
+        noxReportLoader.invalidate()
+        focusedNoxReport.value = undefined
+        noxError.value = ''
+        noxLoading.value = false
       } else if (selectedRevision.value && selectedRevision.value === importedPR.checks.revisionSha) {
         revisionRequest++
         focusedChecks.value = importedPR.checks
@@ -180,6 +227,12 @@ async function loadPR() {
       }
       resetAnnotations()
       pr.value = importedPR
+      if (selectedRevision.value) void loadNoxReport(importedPR, selectedRevision.value)
+      else if (importedPR.checks.revisionSha) void loadNoxReport(importedPR, importedPR.checks.revisionSha)
+      else {
+        noxLoading.value = false
+        noxError.value = 'GitHub did not provide a pull request revision, so Ghostline cannot load its security report.'
+      }
       showingPreviousSnapshot.value = false
     }
   } catch (e) {
@@ -187,6 +240,14 @@ async function loadPR() {
     if (request === importRequest) {
       error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
       showingPreviousSnapshot.value = keepCurrentChange && pr.value !== undefined
+      if (keepCurrentChange) {
+        // A report requested while the refresh was pending describes an
+        // unconfirmed snapshot; it must not replace this warning.
+        noxReportLoader.invalidate()
+        focusedNoxReport.value = undefined
+        noxLoading.value = false
+        noxError.value = 'Could not confirm the latest pull request revision; re-import before relying on its security report.'
+      }
     }
   } finally {
     if (request === importRequest) loading.value = false
@@ -290,10 +351,14 @@ async function focusRevision(sha: string) {
   const importedPR = pr.value
   if (!importedPR) return
   selectedRevision.value = sha
+  focusedNoxReport.value = undefined
+  noxError.value = ''
+  noxLoading.value = false
   focusedChecks.value = undefined
   checksError.value = ''
   checksLoading.value = false
   const request = ++revisionRequest
+  void noxReportLoader.loadWhenSettled(importedPR.url, sha)
   if (sha === importedPR.checks.revisionSha) {
     focusedChecks.value = importedPR.checks
     return
@@ -311,6 +376,9 @@ async function focusRevision(sha: string) {
     if (request === revisionRequest) checksLoading.value = false
   }
 }
+function loadNoxReport(importedPR: PullRequest, sha: string) {
+  void noxReportLoader.load(importedPR.url, sha)
+}
 let copyRequest = 0
 async function copySha(sha: string) {
   const request = ++copyRequest
@@ -320,10 +388,19 @@ async function copySha(sha: string) {
 }
 function clearFocus() {
   revisionRequest++
+  noxReportLoader.invalidate()
   selectedRevision.value = ''
   focusedChecks.value = undefined
   checksLoading.value = false
   checksError.value = ''
+  focusedNoxReport.value = undefined
+  noxLoading.value = false
+  noxError.value = ''
+  if (pr.value?.checks.revisionSha) {
+    void loadNoxReport(pr.value, pr.value.checks.revisionSha)
+  } else {
+    noxError.value = 'GitHub did not provide a pull request revision, so Ghostline cannot load its security report.'
+  }
 }
 async function toggleTrace(id: string, event: MouseEvent) {
   if (selectedTraceId.value === id) {
@@ -345,6 +422,7 @@ async function clearTrace() {
   traceTrigger = undefined
 }
 function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
+function optionalDate(value?: string) { return value ? date(value) : 'not reported' }
 </script>
 
 <template>
@@ -391,6 +469,34 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
           <template v-else><p class="checks-summary" :class="checksSummary.tone" role="status"><span aria-hidden="true">{{ glyph[checksSummary.tone] }}</span>{{ checksSummary.label }}</p><ul class="check-list"><li v-for="(check, i) in orderedChecks" :key="`${check.kind}:${check.name}:${i}`"><span class="check-state" :class="checkOutcome(check).tone"><span aria-hidden="true">{{ glyph[checkOutcome(check).tone] }}</span>{{ checkOutcome(check).label }}</span><div class="check-name"><a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">{{ check.name }} <span aria-hidden="true">↗</span><span class="sr-only">(opens on GitHub)</span></a><span v-else>{{ check.name }}</span><small>{{ [check.source, check.url ? '' : 'no GitHub link reported'].filter(Boolean).join(' · ') }}</small><small v-if="check.outputTitle || check.outputSummary || check.outputSummaryTruncated" class="check-output"><strong v-if="check.outputTitle">{{ check.outputTitle }}</strong><span v-if="check.outputSummary">{{ checkSummaryPreview(check.outputSummary).text }}</span><span v-if="check.outputSummaryTruncated || checkSummaryPreview(check.outputSummary || '').truncated" class="check-output-note">Preview shortened · open the linked check for full output.</span></small><button v-if="check.kind === 'check_run' && check.id > 0" type="button" class="annotation-toggle" :aria-expanded="annotationOpen === `${activeChecks?.revisionSha}:${check.id}`" @click="toggleAnnotations(check)">INSPECT GITHUB ANNOTATIONS</button><section v-if="check.kind === 'check_run' && annotationOpen === `${activeChecks?.revisionSha}:${check.id}`" class="annotation-panel" :aria-label="`GitHub annotations for ${check.name} on revision ${activeChecks?.revisionShortSha}`"><p class="annotation-boundary">GitHub check annotations · revision {{ activeChecks?.revisionShortSha }} · <a v-if="check.url" :href="check.url" target="_blank" rel="noreferrer">check run source ↗</a></p><p v-if="annotationLoadingFor(activeChecks?.revisionSha ?? '', check.id)" role="status">Loading annotations from GitHub…</p><p v-else-if="annotationErrorFor(activeChecks?.revisionSha ?? '', check.id)" class="checks-note warn" role="status">{{ annotationErrorFor(activeChecks?.revisionSha ?? '', check.id) }}</p><p v-else-if="annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.items.length === 0" role="status">GitHub reported no line annotations for this check run and revision.</p><ul v-else class="annotation-list"><li v-for="(annotation, j) in annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.items" :key="`${annotation.path}:${annotation.startLine}:${j}`"><strong>{{ annotation.level.toUpperCase() }}<template v-if="annotation.title"> · {{ annotation.title }}</template></strong><p>{{ annotation.message }}</p><details v-if="annotation.details" class="annotation-details"><summary>RAW DETAILS</summary><pre>{{ annotation.details }}</pre></details><small>{{ annotation.path }}:{{ annotation.startLine }}<template v-if="annotation.endLine !== annotation.startLine">–{{ annotation.endLine }}</template></small><a v-if="annotation.sourceUrl" :href="annotation.sourceUrl" target="_blank" rel="noreferrer">VIEW SOURCE LINES ↗</a></li></ul><div v-if="annotationsFor(activeChecks?.revisionSha ?? '', check.id)?.hasMore" class="annotation-pagination"><button type="button" :disabled="annotationLoadingFor(activeChecks?.revisionSha ?? '', check.id)" @click="showAnnotationPage(check, currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) + 1)">LOAD NEXT PAGE</button></div><div v-if="currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) > 1" class="annotation-pagination"><button type="button" @click="showAnnotationPage(check, currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) - 1)">PREVIOUS PAGE</button><span>PAGE {{ currentAnnotationPage(activeChecks?.revisionSha ?? '', check.id) }}</span></div></section></div></li></ul></template>
         </template>
         <p class="footnote">GitHub reported these checks for revision {{ activeChecks?.revisionShortSha || selectedRevision.slice(0, 7) }} at fetch time. Results apply only to that revision. Re-import to refresh PR head checks.</p>
+      </section>
+
+      <section class="nox-report" aria-labelledby="nox-report-title">
+        <h3 id="nox-report-title" class="section-title"><span>SECURITY SCAN · {{ selectedRevision ? 'FOCUSED REVISION' : 'PR HEAD' }}</span><span v-if="focusedNoxReport?.revisionSha"><a :href="`https://github.com/${pr.owner}/${pr.repo}/commit/${focusedNoxReport.revisionSha}`" target="_blank" rel="noreferrer" :aria-label="`Scanned revision ${focusedNoxReport.revisionSha.slice(0, 7)} on GitHub`">{{ focusedNoxReport.revisionSha.slice(0, 7) }} ↗</a></span></h3>
+        <p v-if="noxLoading" class="checks-note" role="status">Loading the published security report for revision {{ (selectedRevision || pr.checks.revisionSha).slice(0, 7) }}…</p>
+        <p v-else-if="noxError" class="checks-note warn" role="status"><strong>Security report unavailable.</strong> {{ noxError }}</p>
+        <template v-else-if="focusedNoxReport?.availability === 'unavailable'">
+          <p class="checks-note warn" role="status"><strong>Security report unavailable for revision {{ focusedNoxReport.revisionSha.slice(0, 7) || 'unknown' }}.</strong> {{ focusedNoxReport.reason }}</p>
+          <p v-if="focusedNoxReport.runUrl" class="checks-note"><a :href="focusedNoxReport.runUrl" target="_blank" rel="noreferrer">VIEW SOURCE WORKFLOW RUN ↗</a></p>
+        </template>
+        <template v-else-if="focusedNoxReport?.availability === 'available'">
+          <p class="nox-summary" :class="{ warn: noxReportNeedsAttention(focusedNoxReport) }" role="status">
+            <strong>{{ noxReportHeadline(focusedNoxReport) }}</strong>
+            <span>Workflow {{ focusedNoxReport.runConclusion || focusedNoxReport.runStatus?.replaceAll('_', ' ') || 'status unavailable' }} · {{ focusedNoxReport.runName || 'Nox scan' }} · report from {{ optionalDate(focusedNoxReport.createdAt) }} · retained until {{ optionalDate(focusedNoxReport.expiresAt) }}</span>
+          </p>
+          <p v-if="noxReportCanShowZeroFindingNote(focusedNoxReport)" class="checks-note">This is the published Nox report for this exact revision. It is not an independent guarantee that the code is secure.</p>
+          <ol v-else class="nox-findings"><li v-for="(finding, index) in focusedNoxReport.findings" :key="`${finding.fingerprint || finding.ruleId}:${index}`" :class="{ suppressed: finding.suppressed }">
+            <div class="nox-finding-heading"><strong>{{ finding.title }}</strong><span v-if="finding.suppressed" class="suppression-label">SUPPRESSED BY SOURCE</span><span v-else :class="`severity-${finding.severity}`">{{ finding.severity }}</span></div>
+            <p>{{ finding.message }}</p>
+            <p v-if="finding.path" class="nox-location">{{ finding.path }}<span v-if="finding.line">:{{ finding.line }}</span></p>
+            <p v-if="finding.suppressed" class="nox-suppression">The source marks this result as suppressed; that does not mean it was fixed or verified.</p>
+            <p v-if="finding.suppressionKind || finding.suppressionJustification" class="nox-suppression">Source detail<span v-if="finding.suppressionKind"> · {{ finding.suppressionKind }}</span><span v-if="finding.suppressionJustification"> · {{ finding.suppressionJustification }}</span></p>
+            <ul v-if="finding.suppressions.length" class="nox-suppression-details"><li v-for="(suppression, suppressionIndex) in finding.suppressions" :key="suppressionIndex">Suppression status: {{ suppression.status || 'unspecified' }}<span v-if="suppression.kind"> · {{ suppression.kind }}</span><span v-if="suppression.justification"> · {{ suppression.justification }}</span></li></ul>
+            <p v-if="finding.suppressionsTruncated" class="checks-note warn">Some suppression records were omitted at the report parsing limit.</p>
+          </li></ol>
+          <p v-if="focusedNoxReport.truncated" class="checks-note warn" role="status">Showing {{ focusedNoxReport.findings.length }} of {{ focusedNoxReport.totalCount }} report results ({{ focusedNoxReport.activeCount }} active, {{ focusedNoxReport.suppressedCount }} suppressed). Open the source workflow for the full report.</p>
+          <p class="nox-source"><a v-if="focusedNoxReport.runUrl" :href="focusedNoxReport.runUrl" target="_blank" rel="noreferrer">OPEN SOURCE WORKFLOW RUN ↗</a><span v-else>Source workflow link not reported</span><span> · Report and findings apply to revision {{ focusedNoxReport.revisionSha.slice(0, 7) }}.</span></p>
+        </template>
       </section>
 
       <section class="activity-index" aria-labelledby="activity-index-title">
@@ -465,6 +571,31 @@ function date(value: string) { return new Intl.DateTimeFormat(undefined, { dateS
 </template>
 
 <style scoped>
+.nox-summary {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid rgba(0, 229, 255, .28);
+  color: #d2eaf2;
+  background: rgba(0, 229, 255, .035);
+}
+
+.nox-summary.warn { border-color: rgba(252, 238, 10, .35); }
+.nox-summary span, .nox-location, .nox-source { color: #8a91a7; font-size: .82rem; }
+.nox-findings { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 10px; }
+.nox-findings li { padding: 12px 14px; border: 1px solid rgba(255, 43, 214, .2); background: rgba(9, 11, 22, .55); }
+.nox-findings li.suppressed { border-color: rgba(252, 238, 10, .28); }
+.nox-finding-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.nox-finding-heading > span { font: 600 .68rem/1.2 ui-monospace, monospace; text-transform: uppercase; color: #fcee0a; }
+.nox-finding-heading .severity-critical, .nox-finding-heading .severity-high { color: #ff708d; }
+.nox-findings p { margin: 8px 0 0; line-height: 1.5; }
+.nox-findings .nox-location { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+.nox-findings .nox-suppression { color: #c5c6d5; font-size: .88rem; }
+.nox-finding-heading .suppression-label { color: #fcee0a; }
+.nox-source { margin-top: 12px; }
+.nox-report a { color: #00e5ff; text-decoration-color: rgba(0, 229, 255, .55); text-underline-offset: .2em; }
+.nox-report a:focus-visible { outline: 2px solid #00e5ff; outline-offset: 3px; }
+
 .check-name .check-output {
   max-width: 760px;
   margin-top: 8px;

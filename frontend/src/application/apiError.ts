@@ -9,6 +9,16 @@ export class GhostlineApiError extends Error {
   }
 }
 
+export async function readResponsePayload(response: Response): Promise<unknown> {
+  try {
+    return await response.json()
+  } catch {
+    // Proxies and gateways may return an empty body or an HTML error page.
+    // Callers still need to handle the HTTP status and Retry-After header.
+    return null
+  }
+}
+
 export function apiErrorMessage(response: Response, payload: unknown, fallback: string): string {
   if (response.status === 429) {
     const seconds = Number(response.headers.get('Retry-After'))
