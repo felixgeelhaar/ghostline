@@ -30,7 +30,6 @@ const (
 	noxReportUnavailable     = "unavailable"
 	maxNoxArtifactBytes      = 10 << 20
 	maxNoxSARIFBytes         = 4 << 20
-	maxNoxFindings           = 100
 	noxPageSize              = 100
 	maxNoxPages              = 10
 	maxNoxGitHubRequests     = 32
@@ -306,6 +305,7 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 	}
 
 	matchingRuns := make([]workflowRun, 0)
+	unlinkedRunFound := false
 	workflowHistoryTruncated := false
 	for page := 1; page <= maxNoxPages; page++ {
 		var runs workflowRunsResponse
@@ -323,6 +323,8 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 			}
 			if domain.IsNoxWorkflowRunForPullRequest(run.Path, run.Event, run.HeadSHA, sha, pullRequestNumbers, number) {
 				matchingRuns = append(matchingRuns, run)
+			} else if domain.IsUnlinkedNoxWorkflowRun(run.Path, run.Event, run.HeadSHA, sha, pullRequestNumbers) {
+				unlinkedRunFound = true
 			}
 		}
 		if !hasNext {
@@ -336,6 +338,8 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 	if len(matchingRuns) == 0 {
 		if workflowHistoryTruncated {
 			result.Reason = "GitHub has more workflow history than Ghostline can inspect for this revision. Narrow the revision or try again after older runs expire."
+		} else if unlinkedRunFound {
+			result.Reason = "GitHub ran the Security workflow for this revision but did not link the run to a pull request, as it does for runs from forks, so its report cannot be attributed to this pull request and is not trusted."
 		} else {
 			result.Reason = "GitHub has no pull-request workflow run for this revision."
 		}

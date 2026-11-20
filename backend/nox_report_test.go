@@ -390,6 +390,35 @@ func TestLoadNoxReportDoesNotAttributeSharedCommitRunToAnotherPullRequest(t *tes
 	}
 }
 
+func TestLoadNoxReportExplainsRunsGitHubDoesNotLinkToThePullRequest(t *testing.T) {
+	const sha = "cccccccccccccccccccccccccccccccccccccccc"
+	var artifactRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/app/pulls/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]string{"sha": sha}, "base": map[string]any{"sha": strings.Repeat("c", 40), "repo": map[string]any{"name": "app", "owner": map[string]string{"login": "acme"}}}})
+		case "/repos/acme/app/actions/workflows/nox.yml/runs":
+			// GitHub leaves pull_requests empty for runs from forks.
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []any{map[string]any{
+				"id": 29, "path": domain.NoxSecurityWorkflowPath, "event": "pull_request", "head_sha": sha,
+				"created_at": "2026-11-15T14:00:00Z", "html_url": "https://github.com/acme/app/actions/runs/29",
+				"pull_requests": []any{},
+			}}})
+		case "/repos/acme/app/actions/runs/29/artifacts":
+			artifactRequests++
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	report := loadNoxReport(context.Background(), noxTestGitHubClient(server), "acme", "app", 7, sha)
+	want := "GitHub ran the Security workflow for this revision but did not link the run to a pull request, as it does for runs from forks, so its report cannot be attributed to this pull request and is not trusted."
+	if report.Availability != noxReportUnavailable || report.Reason != want || artifactRequests != 0 {
+		t.Fatalf("an unlinked run was reported as missing or trusted: %+v, artifact requests=%d", report, artifactRequests)
+	}
+}
+
 func TestLoadNoxReportFallsBackToOlderRetainedArtifactWhenNewestExpired(t *testing.T) {
 	const sha = "cccccccccccccccccccccccccccccccccccccccc"
 	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
