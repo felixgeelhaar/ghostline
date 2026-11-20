@@ -202,6 +202,10 @@ func TestNoxScanControlChangeNamesFilesThatSteerTheScan(t *testing.T) {
 		{name: "project config", changed: []string{".nox.yaml"}, want: ".nox.yaml"},
 		{name: "root gitignore", changed: []string{".gitignore"}, want: ".gitignore"},
 		{name: "nested gitignore", changed: []string{"backend/internal/.gitignore"}, want: "backend/internal/.gitignore"},
+		{name: "scan output symlink or file", changed: []string{"nox-results"}, want: "nox-results"},
+		{name: "planted scan output", changed: []string{"nox-results/results.sarif"}, want: "nox-results/results.sarif"},
+		{name: "nested planted scan output", changed: []string{"nox-results/sub/findings.json"}, want: "nox-results/sub/findings.json"},
+		{name: "similar names are not scan output", changed: []string{"nox-results.md", "docs/nox-results/notes.md"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, changed := NoxScanControlChange(test.changed)

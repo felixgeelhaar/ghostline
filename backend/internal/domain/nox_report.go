@@ -62,9 +62,10 @@ func IsTrustedNoxWorkflowRevision(baseBlobSHA, revisionBlobSHA string) bool {
 
 // NoxScanControlChange reports the first changed path that can change what a
 // Nox scan reports without changing the workflow: the workflow itself, project
-// configuration (.nox.yaml), Nox state such as the baseline (.nox/), and any
-// .gitignore, whose patterns Nox skips by default. A pull request that changes
-// one of these cannot vouch for its own report.
+// configuration (.nox.yaml), Nox state such as the baseline (.nox/), any
+// .gitignore, whose patterns Nox skips by default, and the nox-results output
+// path, where planted files or a symlink could end up in the uploaded artifact.
+// A pull request that changes one of these cannot vouch for its own report.
 func NoxScanControlChange(changedPaths []string) (string, bool) {
 	for _, changed := range changedPaths {
 		if isNoxScanControlPath(changed) {
@@ -76,8 +77,12 @@ func NoxScanControlChange(changedPaths []string) (string, bool) {
 
 func isNoxScanControlPath(value string) bool {
 	return value == NoxSecurityWorkflowPath || value == ".nox.yaml" || value == ".nox.yml" ||
-		strings.HasPrefix(value, ".nox/") || path.Base(value) == ".gitignore"
+		strings.HasPrefix(value, ".nox/") || path.Base(value) == ".gitignore" ||
+		value == noxScanOutputPath || strings.HasPrefix(value, noxScanOutputPath+"/")
 }
+
+// noxScanOutputPath is the directory the Security workflow writes and uploads.
+const noxScanOutputPath = "nox-results"
 
 // NoxConfigMovesBaseline reports whether .nox.yaml sets a baseline_path, which
 // can point Nox at a baseline outside .nox/ that NoxScanControlChange cannot
