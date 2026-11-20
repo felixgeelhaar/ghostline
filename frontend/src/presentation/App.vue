@@ -241,6 +241,10 @@ async function loadPR() {
       error.value = e instanceof Error ? e.message : 'Could not load the pull request.'
       showingPreviousSnapshot.value = keepCurrentChange && pr.value !== undefined
       if (keepCurrentChange) {
+        // A report requested while the refresh was pending describes an
+        // unconfirmed snapshot; it must not replace this warning.
+        noxReportLoader.invalidate()
+        focusedNoxReport.value = undefined
         noxLoading.value = false
         noxError.value = 'Could not confirm the latest pull request revision; re-import before relying on its security report.'
       }

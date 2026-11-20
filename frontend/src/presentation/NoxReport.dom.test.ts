@@ -219,4 +219,32 @@ describe('revision-linked Nox report', () => {
     await vi.waitFor(() => expect(fetchNoxReport).toHaveBeenCalledWith(pr.url, headSha))
     expect(fetchNoxReport).not.toHaveBeenCalledWith(pr.url, earlierSha)
   })
+
+  it('keeps the unconfirmed-revision warning when a focus request settles after a failed refresh', async () => {
+    let rejectRefresh!: (reason: unknown) => void
+    const failingRefresh = new Promise<PullRequest>((_resolve, reject) => { rejectRefresh = reject })
+    const earlierReport = deferred<NoxReport>()
+    vi.mocked(importPullRequest).mockResolvedValueOnce(pr).mockReturnValueOnce(failingRefresh)
+    vi.mocked(fetchNoxReport).mockImplementation((_url, sha) => sha === earlierSha ? earlierReport.promise : Promise.resolve(report(headSha)))
+    vi.mocked(fetchRevisionChecks).mockResolvedValue({
+      availability: 'unavailable', reason: 'Checks unavailable for this commit.', revisionSha: earlierSha,
+      revisionShortSha: earlierSha.slice(0, 7), revisionUrl: `https://github.com/acme/app/commit/${earlierSha}`, items: [],
+    })
+    await importPR()
+    await vi.waitFor(() => expect(host!.querySelector('.nox-report')?.textContent).toContain('No security findings reported'))
+
+    host!.querySelector<HTMLButtonElement>('.input-row button')!.click()
+    await settle()
+    host!.querySelector<HTMLButtonElement>(`[aria-label="Focus history on revision ${earlierSha.slice(0, 7)}"]`)!.click()
+    await vi.waitFor(() => expect(fetchNoxReport).toHaveBeenCalledWith(pr.url, earlierSha))
+    rejectRefresh(new Error('GitHub is unavailable.'))
+    await vi.waitFor(() => expect(host!.querySelector('.nox-report')?.textContent).toContain('Could not confirm the latest pull request revision'))
+
+    earlierReport.resolve(report(earlierSha, 1))
+    await settle()
+    await settle()
+
+    expect(host!.querySelector('.nox-report')?.textContent).toContain('Could not confirm the latest pull request revision')
+    expect(host!.querySelector('.nox-report')?.textContent).not.toContain('Untrusted input reaches a command.')
+  })
 })
