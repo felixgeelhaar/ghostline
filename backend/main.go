@@ -55,9 +55,11 @@ type githubPR struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
 	Base struct {
+		SHA  string `json:"sha"`
 		Repo struct {
 			Name     string `json:"name"`
 			FullName string `json:"full_name"`
+			Private  bool   `json:"private"`
 			Owner    struct {
 				Login string `json:"login"`
 			} `json:"owner"`
@@ -223,6 +225,28 @@ func (a api) loadRevisionChecks(c *gin.Context) {
 	c.JSON(http.StatusOK, fetchRevisionChecks(c.Request.Context(), a.gh, owner, repo, body.SHA))
 }
 
+func (a api) loadNoxReport(c *gin.Context) {
+	var body struct {
+		URL string `json:"url"`
+		SHA string `json:"sha"`
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16*1024)
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Provide a GitHub pull request URL and a full commit SHA."})
+		return
+	}
+	owner, repo, number, err := parsePRURL(body.URL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !fullSHA.MatchString(body.SHA) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "The revision must be a full 40-character commit SHA."})
+		return
+	}
+	c.JSON(http.StatusOK, loadNoxReport(c.Request.Context(), a.gh, owner, repo, number, body.SHA))
+}
+
 func (a api) loadQodoReview(c *gin.Context) {
 	apiKey := c.GetHeader("X-Qodo-API-Key")
 	if apiKey == "" {
@@ -338,6 +362,7 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 	client := api{gh: gh, qodo: qodo, logger: logger}
 	limited.POST("/import", client.importPR)
 	limited.POST("/checks", client.loadRevisionChecks)
+	limited.POST("/nox-report", client.loadNoxReport)
 	limited.POST("/qodo-review", client.loadQodoReview)
 	limited.POST("/check-annotations", client.loadCheckAnnotations)
 	return r
