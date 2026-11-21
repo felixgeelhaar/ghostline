@@ -179,3 +179,40 @@ func hasReasonContaining(reasons []ReadinessReason, text string) bool {
 	}
 	return false
 }
+
+// A reason the engineer must decide links the run they need to inspect, not the passing rerun.
+func TestEvaluateReadinessLinksTheEarlierRunTheEngineerDecides(t *testing.T) {
+	tests := []struct {
+		name    string
+		earlier []CheckRunEvidence
+		want    string
+	}{
+		{name: "cancelled", earlier: []CheckRunEvidence{{ID: 5, Conclusion: "cancelled", URL: "https://github.com/acme/app/runs/5"}}, want: "https://github.com/acme/app/runs/5"},
+		{name: "timed out after a cancel", earlier: []CheckRunEvidence{
+			{ID: 4, Conclusion: "cancelled", URL: "https://github.com/acme/app/runs/4"},
+			{ID: 5, Conclusion: "timed_out", URL: "https://github.com/acme/app/runs/5"},
+		}, want: "https://github.com/acme/app/runs/4"},
+		{name: "two runs that never started", earlier: []CheckRunEvidence{
+			{ID: 4, Conclusion: "startup_failure", URL: "https://github.com/acme/app/runs/4"},
+			{ID: 5, Conclusion: "startup_failure", URL: "https://github.com/acme/app/runs/5"},
+		}, want: "https://github.com/acme/app/runs/5"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evidence := readyEvidence()
+			for _, run := range tt.earlier {
+				run.Name, run.AppID, run.Status = "Go checks", actionsID, "completed"
+				evidence.CheckRuns = append(evidence.CheckRuns, run)
+			}
+			for _, reason := range EvaluateReadiness(evidence).Reasons {
+				if reason.Subject == "check:Go checks" {
+					if reason.Outcome != ReadinessIncomplete || reason.SourceURL != tt.want {
+						t.Fatalf("reason = %+v, want incomplete linking %s", reason, tt.want)
+					}
+					return
+				}
+			}
+			t.Fatal("no reason for Go checks")
+		})
+	}
+}

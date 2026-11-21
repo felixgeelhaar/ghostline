@@ -252,15 +252,15 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 	// of the runner or the network, may be rerun, and only once. GitHub records that cause
 	// only for a job that never started; any other no-result run needs the engineer.
 	var noResult []CheckRunEvidence
-	unknownCause := ""
+	var unknownCause *CheckRunEvidence
 	for _, earlier := range runs[:len(runs)-1] {
 		switch {
 		case earlier.Status != "completed" || passingConclusion(earlier.Conclusion):
 		case noResultConclusion(earlier.Conclusion):
 			noResult = append(noResult, earlier)
 		case unknownCauseConclusion(earlier.Conclusion):
-			if unknownCause == "" {
-				unknownCause = earlier.Conclusion
+			if unknownCause == nil {
+				unknownCause = &earlier
 			}
 		default:
 			add(subject, ReadinessFail, earlier.URL, "%s: an earlier run on this head concluded %s; a passing rerun does not clear it.", required.Context, earlier.Conclusion)
@@ -268,10 +268,11 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 		}
 	}
 	switch {
-	case unknownCause != "":
-		add(subject, ReadinessIncomplete, latest.URL, "%s: an earlier run on this head ended %s; GitHub does not show whether the runner or the code caused it, so the engineer decides.", required.Context, unknownCause)
+	// A reason the engineer decides links the run they need to inspect.
+	case unknownCause != nil:
+		add(subject, ReadinessIncomplete, unknownCause.URL, "%s: an earlier run on this head ended %s; GitHub does not show whether the runner or the code caused it, so the engineer decides.", required.Context, unknownCause.Conclusion)
 	case len(noResult) > 1:
-		add(subject, ReadinessIncomplete, latest.URL, "%s: %d earlier runs on this head ended with no result; only one rerun is allowed, so the engineer decides.", required.Context, len(noResult))
+		add(subject, ReadinessIncomplete, noResult[len(noResult)-1].URL, "%s: %d earlier runs on this head ended with no result; only one rerun is allowed, so the engineer decides.", required.Context, len(noResult))
 	case len(noResult) == 1:
 		add(subject, ReadinessPass, latest.URL, "%s: %s on a rerun; an earlier run ended %s with no result.", required.Context, latest.Conclusion, noResult[0].Conclusion)
 	default:
