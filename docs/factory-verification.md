@@ -14,6 +14,7 @@ flowchart TB
     G2{{"② LOCAL CHECKS + QODO"}}:::gate
     P(["Open or update PR"]):::step
     G3{{"③ PR CHECKS + QODO ON HEAD"}}:::gate
+    L(["Qodo workflow · label if no Medium+ findings"]):::step
     G4{{"④ ENGINEER APPROVES"}}:::gate
     M[("main")]:::done
 
@@ -22,7 +23,8 @@ flowchart TB
     B --> G2
     G2 -- pass --> P
     P --> G3
-    G3 -- pass --> G4
+    G3 -- pass --> L
+    L -- "label, or guarded path" --> G4
     G4 -- merge --> M
 
     G1 -- no --> R(["Revise or close ticket"]):::muted
@@ -40,8 +42,8 @@ flowchart TB
     classDef muted fill:#090b16,stroke:#3a3f5a,stroke-width:1.5px,color:#8a91a7,stroke-dasharray:4 3
 
     linkStyle default stroke:#8a91a7,stroke-width:1.5px,color:#e9edf7
-    linkStyle 0,1,2,3,4,5,6 stroke:#00e5ff,stroke-width:2px,color:#00e5ff
-    linkStyle 8,9 stroke:#ff2bd6,stroke-width:1.8px,color:#ff2bd6
+    linkStyle 0,1,2,3,4,5,6,7 stroke:#00e5ff,stroke-width:2px,color:#00e5ff
+    linkStyle 9,10 stroke:#ff2bd6,stroke-width:1.8px,color:#ff2bd6
 ```
 
 ## The four gates
@@ -52,6 +54,12 @@ flowchart TB
 | **② Local checks + Qodo** | Go, frontend, and Nox checks pass; Qodo's review of the uncommitted change leaves no confirmed High or Medium open, and every Low is reported | Check output and the Qodo review result | Fix with a test that fails first, then rerun; a disagreement needs evidence and the engineer's decision |
 | **③ PR checks + Qodo on head** | The PR is ready for review, not a draft; Warden, hosted checks, and a completed Qodo review cover the exact current head; the branch is up to date with `main` | Every check and review names the SHA it covered; Warden runs again after a branch update | Same fix loop; a reported finding is never rerun to green, and a false positive needs an engineer-approved baseline entry; a job with no result gets one rerun |
 | **④ Engineer approves** | The engineer decides disputed findings and the merge | The PR record against gates ①–③ | Hold the PR and record the next action |
+
+**Label step (Day 14):** after gate ③, a Qodo workflow adds the "Qodo approved"
+label when Qodo's review of the PR finds nothing rated Medium or higher. The
+label is a signal for gate ④, not an approval: it never approves or merges, and
+Lows stay visible in the review. A PR that touches a guarded path such as
+`.github/workflows/**` gets no label and goes to the engineer unlabelled.
 
 **Stop rule:** if the same confirmed finding returns after one focused repair, a required check cannot be made to pass, or the evidence cannot settle a disagreement, the agent stops, reports the finding, repair attempt and revisions, and the engineer decides.
 
@@ -195,3 +203,39 @@ The run also exposed four gaps, which this page now covers:
    without a baseline entry. The rule above no longer allows it: a reported
    finding must be fixed or baselined with the engineer's written reason.
    Issue #66 still needs that decision.
+
+## Day 14: the gate as a Qodo workflow
+
+Configured in the Qodo portal on 2026-11-21.
+
+| Part | Setting |
+|---|---|
+| Scope | Repository `felixgeelhaar/ghostline` only |
+| Trigger | Qodo finishes reviewing a PR |
+| Condition | No findings rated Medium or higher |
+| Action | Add the "Qodo approved" label. Auto-approve is not used |
+| Protected path | Approval guard on `.github/workflows/**` in `felixgeelhaar/ghostline` |
+| Existing settings | No workspace-wide guards existed. The built-in "Auto-approve low-risk PRs" and "Label clean PRs" workflows stay inactive |
+
+![Qodo workflow for ghostline](feature-evidence/qodo-workflow-day14.jpg)
+
+### Test PRs
+
+| PR | Head | Touches the guarded path | Hosted Qodo review | Predicted | Observed |
+|---|---|---|---|---|---|
+| [#85](https://github.com/felixgeelhaar/ghostline/pull/85) explain unlinked Nox runs | `d006f64` | No | No High, Medium or Low findings | Label | Labelled "Qodo approved" by `qodo-code-review[bot]` at 08:55:24Z |
+| [#86](https://github.com/felixgeelhaar/ghostline/pull/86) bound CI job runtime | `75c5f73` | Yes, only `.github/workflows/ci.yml` | No findings | No label | No "Qodo approved" label |
+
+Both predictions held. #86 shows that the guard blocks the label as well as
+auto-approval, although the portal describes guards only as "Qodo won't
+auto-approve PRs that match a guard". Each review names its reviewed commit,
+and both match the PR heads above. Required checks and `warden/gate` passed on
+both heads.
+
+PR Triage lists #85 and #86 as "Needs a reviewer", with merge risk Medium for
+#85 and Low for #86. The label didn't change the next action: both still wait
+for a person.
+
+![PR Triage after the test PRs](feature-evidence/qodo-pr-triage-day14.jpg)
+
+Neither PR is merged by the agent; gate ④ is unchanged.
