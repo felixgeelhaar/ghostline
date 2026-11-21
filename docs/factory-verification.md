@@ -230,7 +230,7 @@ Configured in the Qodo portal on 2026-11-21.
 | [#86](https://github.com/felixgeelhaar/ghostline/pull/86) bound CI job runtime | `75c5f73` | Yes, only `.github/workflows/ci.yml` | No findings | No label | No "Qodo approved" label |
 
 Both predictions held. This is one test of each case, not proof that the
-guard always withholds the label. #86 shows that the guard blocks the label as well as
+guard always withholds the label. On #86 the guard appears to block the label as well as
 auto-approval, although the portal describes guards only as "Qodo won't
 auto-approve PRs that match a guard". Each review names its reviewed commit,
 and both match the PR heads above. Required checks and `warden/gate` passed on
