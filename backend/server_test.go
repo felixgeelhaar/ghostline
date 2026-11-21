@@ -274,23 +274,29 @@ func TestServeErrorIsReturned(t *testing.T) {
 }
 
 // The hosted container must give the process longer than its shutdown grace period
-// before Docker sends SIGKILL; Docker's default stop timeout is only 10s.
+// before Docker sends SIGKILL; Docker's default stop timeout is only 10s. Compose sets
+// both values, so .env.hosted cannot raise the grace period past the stop timeout.
 func TestHostedComposeStopTimeoutCoversShutdownGrace(t *testing.T) {
 	compose, err := os.ReadFile("../compose.hosted.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	match := regexp.MustCompile(`(?m)^\s+stop_grace_period:\s*(\S+)\s*$`).FindSubmatch(compose)
-	if match == nil {
-		t.Fatal("compose.hosted.yml sets no stop_grace_period")
+	setting := func(pattern string) time.Duration {
+		t.Helper()
+		match := regexp.MustCompile(pattern).FindSubmatch(compose)
+		if match == nil {
+			t.Fatalf("compose.hosted.yml does not match %s", pattern)
+		}
+		d, err := time.ParseDuration(string(match[1]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
 	}
-	stop, err := time.ParseDuration(string(match[1]))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg, _ := loadServerConfig(func(string) string { return "" })
-	if stop < cfg.ShutdownGrace+5*time.Second {
-		t.Fatalf("stop_grace_period %s leaves less than 5s beyond the %s shutdown grace", stop, cfg.ShutdownGrace)
+	stop := setting(`(?m)^\s+stop_grace_period:\s*(\S+)\s*$`)
+	grace := setting(`(?m)^\s+GHOSTLINE_SHUTDOWN_GRACE:\s*(\S+)\s*$`)
+	if stop < grace+5*time.Second {
+		t.Fatalf("stop_grace_period %s leaves less than 5s beyond GHOSTLINE_SHUTDOWN_GRACE %s", stop, grace)
 	}
 }
 
@@ -335,5 +341,42 @@ func TestQodoDeadlineAnswersGatewayTimeout(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusGatewayTimeout || !strings.Contains(recorder.Body.String(), "Qodo took too long") {
 		t.Fatalf("got %d %s, want 504 naming the Qodo timeout", recorder.Code, recorder.Body.String())
+	}
+}
+
+// The real Qodo client, not a substitute source, must keep the deadline as the cause.
+func TestQodoClientDeadlineAnswersGatewayTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		respond func(w http.ResponseWriter, release <-chan struct{})
+	}{
+		{name: "no response", respond: func(w http.ResponseWriter, release <-chan struct{}) { <-release }},
+		{name: "response body stalls", respond: func(w http.ResponseWriter, release <-chan struct{}) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = io.WriteString(w, "event: message\ndata: {\"jsonrpc\"")
+			w.(http.Flusher).Flush()
+			<-release
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			release := make(chan struct{})
+			qodo := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { tt.respond(w, release) }))
+			defer qodo.Close()
+			defer close(release) // runs first, so Close does not wait on stalled handlers
+			var logs strings.Builder
+			logger := slog.New(slog.NewTextHandler(&logs, nil))
+			client := &qodoReviewClient{endpoint: qodo.URL, http: qodo.Client(), logger: logger}
+			router := newRouterWithQodoLogger(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, client, newRateLimiter(defaultRateLimitRequests, defaultRateLimitWindow, time.Now), clientIdentity{}, logger)
+			request := requestWithDeadline(t, "/api/qodo-review", `{"url":"https://github.com/acme/payments/pull/42"}`)
+			request.Header.Set("Origin", "https://ghostline.example")
+			request.Header.Set("X-Qodo-API-Key", "qodo-secret")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusGatewayTimeout {
+				t.Fatalf("got %d %s, want 504; logs: %s", recorder.Code, recorder.Body.String(), logs.String())
+			}
+		})
 	}
 }

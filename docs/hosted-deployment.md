@@ -37,7 +37,7 @@ The app fails at startup unless production mode, required sign-in, the built fro
 
 ## Timeouts and shutdown
 
-The server sets explicit connection limits. Each can be changed with a Go duration such as `30s` in `.env.hosted`; the app refuses to start with a value that is not a positive duration.
+The server sets explicit connection limits. Each can be changed with a Go duration such as `30s`, the first four in `.env.hosted`; the app refuses to start with a value that is not a positive duration.
 
 | Setting | Default | Limits |
 |---|---|---|
@@ -45,11 +45,11 @@ The server sets explicit connection limits. Each can be changed with a Go durati
 | `GHOSTLINE_READ_TIMEOUT` | `15s` | Time to send the whole request. API bodies are at most a few kilobytes. Must be at least 5s shorter than the write timeout, which starts once the headers are read. |
 | `GHOSTLINE_WRITE_TIMEOUT` | `90s` | Time to answer. It suits the slowest handler, the Nox report, which reads several GitHub API pages and downloads an artifact of up to 10 MiB. At least `10s`. |
 | `GHOSTLINE_IDLE_TIMEOUT` | `60s` | How long a keep-alive connection may stay idle. |
-| `GHOSTLINE_SHUTDOWN_GRACE` | `25s` | How long in-flight requests may run after SIGTERM or SIGINT. |
+| `GHOSTLINE_SHUTDOWN_GRACE` | `25s` | How long in-flight requests may run after SIGTERM or SIGINT. The hosted deployment sets it in `compose.hosted.yml`, next to the container stop timeout. |
 
 Request headers are limited to 64 KiB. Each request's work, including its GitHub and Qodo calls, stops 5 seconds before the write timeout so the handler can still answer. A request that fails because a call was cut off returns `504` with a message, not a dropped connection. A pull-request import keeps its partial results: a part whose GitHub call was cut off is shown as unavailable, as it is for any other GitHub failure.
 
-On SIGTERM or SIGINT the server stops accepting connections, lets in-flight requests finish within the grace period, then exits 0. A second signal, or the end of the grace period, closes the remaining connections and exits 1. `compose.hosted.yml` sets `stop_grace_period: 30s`, 5 seconds beyond the grace period; Docker's default of 10 seconds would kill the process mid-shutdown. When you run the image another way, give it the same stop timeout, for example `docker run --stop-timeout 30`. If you raise `GHOSTLINE_SHUTDOWN_GRACE`, raise the stop timeout with it.
+On SIGTERM or SIGINT the server stops accepting connections, lets in-flight requests finish within the grace period, then exits 0. A second signal, or the end of the grace period, closes the remaining connections and exits 1. Docker sends SIGKILL when its stop timeout ends, so the stop timeout must be longer than the grace period. Docker's default of 10 seconds would kill the process mid-shutdown. `compose.hosted.yml` therefore sets both values side by side, `GHOSTLINE_SHUTDOWN_GRACE: 25s` and `stop_grace_period: 30s`, and a test keeps the stop timeout at least 5 seconds longer. Change them together in that file; `.env.hosted` cannot override the grace period, because Compose's `environment` takes precedence over `env_file`. When you run the image another way, give it a matching stop timeout, for example `docker run --stop-timeout 30`.
 
 ## Operating limits
 
