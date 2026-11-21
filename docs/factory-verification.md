@@ -57,12 +57,12 @@ flowchart TB
 
 **Label step (Day 14):** after gate ③, a Qodo workflow adds the "Qodo approved"
 label when Qodo's review of the PR finds nothing rated Medium or higher. The
-label is a signal for gate ④, not an approval: it never approves or merges, and
-Lows stay visible in the review. The label has not been applied reliably
-(see Day 14 below), so a missing label proves nothing. A label also does not show which
+label is meant as a signal for gate ④, not an approval: it never approves or
+merges, and Lows stay visible in the review. It has not been applied reliably
+(see Day 14 below), so for now gate ④ ignores the label, present or missing. A label also does not show which
 head it covers: Qodo applies it when a review finishes, and nothing observed so
-far removes it after a later push. Gate ④ therefore still compares the reviewed
-SHA in Qodo's latest review with the PR head, label or not.
+far removes it after a later push. Gate ④ therefore compares the reviewed
+SHA in Qodo's latest review with the PR head.
 
 **Stop rule:** if the same confirmed finding returns after one focused repair, a required check cannot be made to pass, or the evidence cannot settle a disagreement, the agent stops, reports the finding, repair attempt and revisions, and the engineer decides.
 
