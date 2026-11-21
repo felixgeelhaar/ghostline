@@ -44,6 +44,10 @@ func TestEvaluateReadiness(t *testing.T) {
 		{name: "draft PR", change: func(e *ReadinessEvidence) { e.Draft = true }, want: ReadinessIncomplete, wantMessage: "draft"},
 		{name: "targets another branch", change: func(e *ReadinessEvidence) { e.BaseRef = "release" }, want: ReadinessIncomplete, wantMessage: "targets release, not main"},
 		{name: "behind the default branch", change: func(e *ReadinessEvidence) { e.BehindBy = 3 }, want: ReadinessIncomplete, wantMessage: "behind main by 3"},
+		{name: "behind count unknown", change: func(e *ReadinessEvidence) { e.BehindBy = BehindUnknown }, want: ReadinessIncomplete, wantMessage: "could not compare the head with main"},
+		{name: "check evidence unreadable", change: func(e *ReadinessEvidence) {
+			e.CheckEvidenceUnavailableReason = "GitHub returned checks for a different commit than the pull request's head."
+		}, want: ReadinessIncomplete, wantMessage: "different commit"},
 		{name: "no Qodo review", change: func(e *ReadinessEvidence) { e.Review = nil }, want: ReadinessIncomplete, wantMessage: "No Qodo code review"},
 		{name: "reviews could not be loaded", change: func(e *ReadinessEvidence) {
 			e.Review = nil

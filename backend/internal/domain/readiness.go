@@ -17,6 +17,9 @@ const (
 
 var readinessFullSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
+// BehindUnknown marks a head whose distance from the default branch could not be read.
+const BehindUnknown = -1
+
 // QodoReviewEvidence is the latest Qodo code review on the pull request. CommitSHA is
 // the reviewed commit named by the review's marker for this repository, or empty.
 type QodoReviewEvidence struct {
@@ -70,9 +73,12 @@ type ReadinessEvidence struct {
 	ReviewUnavailableReason string
 	SummaryNamesHead        bool
 	RequiredChecksKnown     bool
-	RequiredChecks          []RequiredCheck
-	CheckRuns               []CheckRunEvidence
-	Statuses                []CommitStatusEvidence
+	// CheckEvidenceUnavailableReason is set when the head's check runs or statuses
+	// could not be read, or GitHub returned them for another commit.
+	CheckEvidenceUnavailableReason string
+	RequiredChecks                 []RequiredCheck
+	CheckRuns                      []CheckRunEvidence
+	Statuses                       []CommitStatusEvidence
 }
 
 // ReadinessReason explains one requirement. Subject identifies it: "pull-request",
@@ -146,6 +152,10 @@ func evaluateBranch(e ReadinessEvidence, add addReason) {
 		add("branch", ReadinessIncomplete, "", "The pull request targets %s, not %s, the repository's default branch.", e.BaseRef, e.DefaultBranch)
 		return
 	}
+	if e.BehindBy < 0 {
+		add("branch", ReadinessIncomplete, "", "Ghostline could not compare the head with %s.", e.DefaultBranch)
+		return
+	}
 	if e.BehindBy > 0 {
 		add("branch", ReadinessIncomplete, e.CompareURL, "The branch is behind %s by %d commits. Updating it creates a new head that needs fresh evidence.", e.DefaultBranch, e.BehindBy)
 		return
@@ -191,6 +201,10 @@ func evaluateQodoReview(e ReadinessEvidence, add addReason) *ReadinessFindings {
 func evaluateRequiredChecks(e ReadinessEvidence, add addReason) {
 	if !e.RequiredChecksKnown {
 		add("required-checks", ReadinessIncomplete, "", "Ghostline could not read which checks %s requires.", e.DefaultBranch)
+		return
+	}
+	if e.CheckEvidenceUnavailableReason != "" {
+		add("required-checks", ReadinessIncomplete, "", "%s", e.CheckEvidenceUnavailableReason)
 		return
 	}
 	if len(e.RequiredChecks) == 0 {

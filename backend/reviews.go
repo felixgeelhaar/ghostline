@@ -40,6 +40,20 @@ type qodoReview struct {
 	CommitURL            string        `json:"commitUrl,omitempty"`
 	CreatedAt            time.Time     `json:"createdAt"`
 	URL                  string        `json:"url"`
+
+	// updatedAt is when GitHub last changed the comment; Qodo edits its review in place.
+	updatedAt time.Time
+	// severityCounts are read from the review's "View <severity> (N)" group headings.
+	severityCounts qodoSeverityCounts
+}
+
+// qodoSeverityCounts holds a code review's open-finding counts by severity. Readable is
+// false when any group or tally could not be attributed to High, Medium or Low.
+type qodoSeverityCounts struct {
+	High     int
+	Medium   int
+	Low      int
+	Readable bool
 }
 
 type qodoFinding struct {
@@ -61,6 +75,7 @@ type githubIssueComment struct {
 	ID        int64      `json:"id"`
 	User      githubUser `json:"user"`
 	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 	HTMLURL   string     `json:"html_url"`
 	Body      string     `json:"body"`
 }
@@ -71,6 +86,8 @@ var (
 	qodoFindingHeadingText  = regexp.MustCompile(`^\s*\d+\.`)
 	qodoNonzeroFindingGroup = regexp.MustCompile(`(?i)^view\s+.+\(\s*[1-9]\d*\s*\)$`)
 	qodoFindingGroupCount   = regexp.MustCompile(`(?i)^view\s+.+\(\s*(\d+)\s*\)$`)
+	qodoSeverityGroup       = regexp.MustCompile(`(?i)^view\s+(.+?)\s*\(\s*(\d+)\s*\)$`)
+	qodoFindingTally        = regexp.MustCompile(`(?i)(bugs|rule violations|requirement gaps)\s*\(\s*(\d+)\s*\)`)
 )
 
 // parseQodoReviews extracts Qodo reviews from issue comments. A review's commit
@@ -101,6 +118,10 @@ func parseQodoReviews(comments []githubIssueComment, repo domain.RepositoryIdent
 		review := qodoReview{
 			ID: comment.ID, Provider: "Qodo", SourceType: "github_issue_comment", SourceAuthor: comment.User.Login,
 			CreatedAt: comment.CreatedAt, URL: comment.HTMLURL, Findings: []qodoFinding{},
+			updatedAt: comment.UpdatedAt,
+		}
+		if review.updatedAt.IsZero() {
+			review.updatedAt = comment.CreatedAt
 		}
 		switch headingText {
 		case "PR Summary by Qodo":
@@ -108,6 +129,7 @@ func parseQodoReviews(comments []githubIssueComment, repo domain.RepositoryIdent
 			review.Summary = qodoSummaryText(heading)
 		case "Code Review by Qodo":
 			review.Findings, review.UnparsedFindingCount = qodoFindings(doc, comment.ID, comment.HTMLURL)
+			review.severityCounts = qodoReviewSeverityCounts(doc)
 			if len(review.Findings) == 0 && qodoReportsNoOpenFindings(nodeText(doc)) && !qodoHasNonzeroFindingGroup(doc) {
 				review.Kind = "no_open_findings"
 			} else {
@@ -126,6 +148,50 @@ func parseQodoReviews(comments []githubIssueComment, repo domain.RepositoryIdent
 		reviews = append(reviews, review)
 	}
 	return reviews, unrecognized
+}
+
+// qodoReviewSeverityCounts reads open-finding counts from "View <severity> (N)" group
+// headings. It fails closed: a group naming another severity, a nonzero tally such as
+// "Rule violations (1)" that carries no severity, or a review with neither groups nor a
+// "no findings" statement makes the counts unreadable.
+func qodoReviewSeverityCounts(root *html.Node) qodoSeverityCounts {
+	counts := qodoSeverityCounts{Readable: true}
+	groups := 0
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if node.Type == html.ElementNode && node.Data == "summary" {
+			if match := qodoSeverityGroup.FindStringSubmatch(nodeText(node)); match != nil {
+				groups++
+				count, err := strconv.Atoi(match[2])
+				switch {
+				case err != nil:
+					counts.Readable = false
+				case strings.EqualFold(match[1], "high"):
+					counts.High += count
+				case strings.EqualFold(match[1], "medium"):
+					counts.Medium += count
+				case strings.EqualFold(match[1], "low"):
+					counts.Low += count
+				default:
+					counts.Readable = false
+				}
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(root)
+	text := nodeText(root)
+	for _, tally := range qodoFindingTally.FindAllStringSubmatch(text, -1) {
+		if count, err := strconv.Atoi(tally[2]); err != nil || count > 0 {
+			counts.Readable = false
+		}
+	}
+	if groups == 0 && !qodoReportsNoOpenFindings(text) {
+		counts.Readable = false
+	}
+	return counts
 }
 
 func qodoHasNonzeroFindingGroup(root *html.Node) bool {

@@ -365,6 +365,7 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 	limited.POST("/nox-report", client.loadNoxReport)
 	limited.POST("/qodo-review", client.loadQodoReview)
 	limited.POST("/check-annotations", client.loadCheckAnnotations)
+	limited.POST("/readiness", client.loadReadiness)
 	return r
 }
 
