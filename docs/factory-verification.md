@@ -30,6 +30,7 @@ flowchart TB
     G3 -- fail --> B
     B -. no progress .-> S(["Stop · engineer decides"]):::stop
     G4 -- hold --> H(["Hold PR"]):::hold
+    G3 -. "Qodo workflow, advisory" .-> L(["Qodo approved label · not yet relied on"]):::muted
 
     classDef start fill:#111525,stroke:#00e5ff,stroke-width:1.5px,color:#e9edf7,font-weight:bold
     classDef step fill:#0d1020,stroke:#30344d,stroke-width:1.5px,color:#e9edf7
@@ -52,6 +53,15 @@ flowchart TB
 | **② Local checks + Qodo** | Go, frontend, and Nox checks pass; Qodo's review of the uncommitted change leaves no confirmed High or Medium open, and every Low is reported | Check output and the Qodo review result | Fix with a test that fails first, then rerun; a disagreement needs evidence and the engineer's decision |
 | **③ PR checks + Qodo on head** | The PR is ready for review, not a draft; Warden, hosted checks, and a completed Qodo review cover the exact current head; the branch is up to date with `main` | Every check and review names the SHA it covered; Warden runs again after a branch update | Same fix loop; a reported finding is never rerun to green, and a false positive needs an engineer-approved baseline entry; a job with no result gets one rerun |
 | **④ Engineer approves** | The engineer decides disputed findings and the merge | The PR record against gates ①–③ | Hold the PR and record the next action |
+
+**Label step (Day 14):** alongside gate ③, a Qodo workflow adds the "Qodo approved"
+label when Qodo's review of the PR finds nothing rated Medium or higher. The
+label is meant as a signal for gate ④, not an approval: it never approves or
+merges, and Lows stay visible in the review. It has not been applied reliably
+(see Day 14 below), so for now gate ④ ignores the label, present or missing. A label also does not show which
+head it covers: Qodo applies it when a review finishes, and nothing observed so
+far removes it after a later push. Gate ③'s comparison of the reviewed SHA
+with the PR head stays the evidence that a review covers the current head.
 
 **Stop rule:** if the same confirmed finding returns after one focused repair, a required check cannot be made to pass, or the evidence cannot settle a disagreement, the agent stops, reports the finding, repair attempt and revisions, and the engineer decides.
 
@@ -195,3 +205,58 @@ The run also exposed four gaps, which this page now covers:
    without a baseline entry. The rule above no longer allows it: a reported
    finding must be fixed or baselined with the engineer's written reason.
    Issue #66 still needs that decision.
+
+## Day 14: the gate as a Qodo workflow
+
+Configured in the Qodo portal on 2026-11-21.
+
+| Part | Setting |
+|---|---|
+| Scope | Repository `felixgeelhaar/ghostline` only |
+| Trigger | Qodo finishes reviewing a PR |
+| Condition | No findings rated Medium or higher |
+| Action | Add the "Qodo approved" label. Auto-approve is not used |
+| Protected path | Approval guard on `.github/workflows/**` in `felixgeelhaar/ghostline` |
+| Existing settings | No workspace-wide guards existed. The built-in "Auto-approve low-risk PRs" and "Label clean PRs" workflows stay inactive |
+
+![Qodo workflow for ghostline](feature-evidence/qodo-workflow-day14.jpg)
+
+### Test PRs
+
+| PR | Head | Touches the guarded path | Hosted Qodo review | Predicted | Observed |
+|---|---|---|---|---|---|
+| [#85](https://github.com/felixgeelhaar/ghostline/pull/85) explain unlinked Nox runs | `d006f64` | No | No High, Medium or Low findings | Label | Labelled "Qodo approved" by `qodo-code-review[bot]` at 08:55:24Z |
+| [#86](https://github.com/felixgeelhaar/ghostline/pull/86) bound CI job runtime | `75c5f73` | Yes, only `.github/workflows/ci.yml` | No findings | No label | No "Qodo approved" label |
+| [#87](https://github.com/felixgeelhaar/ghostline/pull/87) this record (head when tested) | `4668a02` | No | No findings | Label | No "Qodo approved" label |
+
+#85 matched its prediction. #87 did not: it does not touch the guarded path and
+its review found nothing, yet it got no label. So #86's missing label cannot be
+attributed to the guard. #86 and #87 both received Qodo's short "no issues
+found" comment, while #85 received the per-severity review. The label may
+follow only that review, but this has not been confirmed. The portal shows no
+workflow run history to check. Each review names its reviewed commit, and all
+match the heads above. Required checks and `warden/gate` passed on all three
+heads.
+
+Result: the workflow is configured, but its behaviour is **not yet
+established**. One PR shows the label working. Neither the guard nor the
+condition has been shown to decide a missing label. Until it is, gate ④ ignores
+the label and relies on gate ③'s SHA-matched review. The diagram shows the
+label as a dotted, advisory branch for that reason.
+
+PR Triage listed #85 and #86 as "Needs a reviewer", with merge risk Medium for
+#85 and Low for #86. The label didn't change the next action: both still wait
+for a person.
+
+![PR Triage after the test PRs](feature-evidence/qodo-pr-triage-day14.jpg)
+
+### Known gap
+
+The guard covers only `.github/workflows/**`. Other files that control a gate,
+such as `.nox.yaml`, `.nox/`, `.warden.yaml` and `AGENTS.md`, are not guarded,
+so a PR that only changes them can still be labelled. Such a PR still needs the
+engineer at gate ④, and baseline changes still need a written reason
+(AGENTS.md rule 5). Adding these paths to the guard is an open decision for the
+engineer.
+
+Neither PR is merged by the agent; gate ④ is unchanged.
