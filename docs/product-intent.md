@@ -352,6 +352,8 @@ Engineers find and resolve blocked work faster or make better-informed verificat
 
 ## 16. Open decisions
 
+> Day 1 record. Decisions 2–4 are settled and 5 partly; see the [status note](#status-note-2026-11-21).
+
 1. Confirm the Ghostline name's GitHub, package, domain, and trademark availability.
 2. Create or identify the repository.
 3. Verify Qodo review access and the exact mechanisms for retrieving review findings.
@@ -362,6 +364,8 @@ Engineers find and resolve blocked work faster or make better-informed verificat
 8. Determine the minimum real-world event data needed for a credible review-loop demo.
 
 ## 17. Immediate next action
+
+> Day 1 record, done. For current next steps see the [status note](#status-note-2026-11-21) and issues #91–#94.
 
 Start Day 1.
 
