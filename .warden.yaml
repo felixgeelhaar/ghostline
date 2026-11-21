@@ -7,12 +7,13 @@ commands:
   day-lock-test: "bash .agents/skills/ghostline-ready-issue/scripts/test-day-lock.sh"
   runner-test: "bash .agents/skills/ghostline-ready-issue/scripts/test-run-pickup.sh"
   dev-servers-test: "bash .agents/skills/ghostline-ready-issue/scripts/test-dev-servers.sh"
+  head-evidence-test: "bash .agents/skills/ghostline-pr-head-evidence/scripts/test-head-evidence.sh"
   go-test: "go test ./... -count=1"
   go-vet: "go vet ./..."
   nox-scan: 'rm -rf .nox/results && { scan_status=0; nox --format all --output .nox/results scan . --tracked-only || scan_status=$?; if [ "$scan_status" -gt 1 ]; then exit "$scan_status"; fi; test -s .nox/results/findings.json && nox ci-gate --input .nox/results/findings.json --baseline .nox/baseline.json; }'
   frontend-verify: "cd frontend && npm ci && npm test && npm run build"
 steps:
-  pre_commit: [day-lock-test, runner-test, dev-servers-test, go-test, nox-scan]
+  pre_commit: [day-lock-test, runner-test, dev-servers-test, head-evidence-test, go-test, nox-scan]
   pre_push: [go-test, go-vet, frontend-verify, nox-scan]
 parallel: true
 trusted_keys:
