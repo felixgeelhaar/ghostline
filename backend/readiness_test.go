@@ -14,15 +14,16 @@ const readinessHead = "cccccccccccccccccccccccccccccccccccccccc"
 // readinessGitHub serves one public pull request for the readiness endpoint. Each
 // field overrides one GitHub response; the zero value is a PR that is ready to merge.
 type readinessGitHub struct {
-	headAfterEvaluation string
-	baseRef             string
-	behindBy            int
-	protection          string
-	checkRuns           string
-	statuses            string
-	qodoComments        string
-	commentsCode        int
-	prReads             atomic.Int32
+	headAfterEvaluation  string
+	stateAfterEvaluation string
+	baseRef              string
+	behindBy             int
+	protection           string
+	checkRuns            string
+	statuses             string
+	qodoComments         string
+	commentsCode         int
+	prReads              atomic.Int32
 }
 
 func cleanQodoReview(sha string) string {
@@ -67,7 +68,11 @@ func (f *readinessGitHub) serve(t *testing.T) *httptest.Server {
 		if f.prReads.Add(1) > 1 && f.headAfterEvaluation != "" {
 			head = f.headAfterEvaluation
 		}
-		_, _ = w.Write([]byte(`{"number":7,"title":"Ready?","state":"open","draft":false,"html_url":"https://github.com/acme/app/pull/7","head":{"sha":"` + head + `"},"base":{"ref":"` + or(f.baseRef, "main") + `","repo":{"name":"app","owner":{"login":"acme"}}}}`))
+		state := "open"
+		if f.prReads.Load() > 1 && f.stateAfterEvaluation != "" {
+			state = f.stateAfterEvaluation
+		}
+		_, _ = w.Write([]byte(`{"number":7,"title":"Ready?","state":"` + state + `","draft":false,"html_url":"https://github.com/acme/app/pull/7","head":{"sha":"` + head + `"},"base":{"ref":"` + or(f.baseRef, "main") + `","repo":{"name":"app","owner":{"login":"acme"}}}}`))
 	})
 	mux.HandleFunc("/repos/acme/app/compare/main..."+readinessHead, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": f.behindBy, "html_url": "https://github.com/acme/app/compare/main..." + readinessHead})
@@ -263,5 +268,12 @@ func TestReadinessRejectsAnInvalidURL(t *testing.T) {
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("code = %d, want 400", recorder.Code)
+	}
+}
+
+func TestReadinessRefusesAVerdictWhenThePullRequestClosesDuringEvaluation(t *testing.T) {
+	code, body := postReadiness(t, &readinessGitHub{stateAfterEvaluation: "closed"})
+	if code != http.StatusConflict || body.Verdict != "" {
+		t.Fatalf("got %d verdict %q, want 409 with no verdict", code, body.Verdict)
 	}
 }

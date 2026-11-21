@@ -14,11 +14,11 @@ vi.mock('../application/fetchReadiness', () => ({ fetchReadiness: vi.fn() }))
 
 const sha = 'a'.repeat(40)
 const movedSha = 'd'.repeat(40)
-const makePR = (number: number): PullRequest => ({
+const makePR = (number: number, head = sha): PullRequest => ({
   repository: 'acme/app', owner: 'acme', repo: 'app', number, title: `Change ${number}`, state: 'open', merged: false,
   url: `https://github.com/acme/app/pull/${number}`, createdAt: '2026-11-10T09:00:00Z', updatedAt: '2026-11-10T10:00:00Z',
   commits: [{ sha, shortSha: sha.slice(0, 7), message: 'Change', author: 'Felix', committedAt: '2026-11-10T10:00:00Z', url: `https://github.com/acme/app/commit/${sha}` }],
-  checks: { availability: 'available', revisionSha: sha, revisionShortSha: sha.slice(0, 7), revisionUrl: `https://github.com/acme/app/commit/${sha}`, items: [] },
+  checks: { availability: 'available', revisionSha: head, revisionShortSha: head.slice(0, 7), revisionUrl: `https://github.com/acme/app/commit/${head}`, items: [] },
   qodoReviews: { availability: 'available', unrecognizedCommentCount: 0, items: [] },
   referencedIssues: { availability: 'available', items: [] },
 })
@@ -49,13 +49,13 @@ async function mount() {
   app.mount(host)
   await vi.waitFor(() => expect(host?.querySelector('#pr-url')).not.toBeNull())
 }
-async function importPR(number: number) {
+async function importPR(number: number, title = `Change ${number}`) {
   const input = host!.querySelector<HTMLInputElement>('#pr-url')!
   input.value = `https://github.com/acme/app/pull/${number}`
   input.dispatchEvent(new Event('input', { bubbles: true }))
   await nextTick()
   host!.querySelector<HTMLButtonElement>('.import-panel button')!.click()
-  await vi.waitFor(() => expect(host!.querySelector('.change-card h2')?.textContent).toBe(`Change ${number}`))
+  await vi.waitFor(() => expect(host!.querySelector('.change-card h2')?.textContent).toBe(title))
 }
 const checkButton = () => host!.querySelector<HTMLButtonElement>('.readiness button')!
 const panelText = () => host!.querySelector('.readiness')?.textContent ?? ''
@@ -138,6 +138,44 @@ describe('merge readiness panel', () => {
     checkButton().click()
     await vi.waitFor(() => expect(panelText()).toContain('ddddddd'))
     expect(host!.querySelector('.readiness-head-moved')?.textContent).toContain('aaaaaaa')
+  })
+
+  it('clears a verdict for the old head when a re-import of the same PR finds a new head', async () => {
+    vi.mocked(importPullRequest).mockResolvedValueOnce(makePR(7)).mockResolvedValueOnce({ ...makePR(7, movedSha), title: 'Moved' })
+    vi.mocked(fetchReadiness).mockResolvedValue(verdict(7))
+    await mount()
+    await importPR(7)
+    checkButton().click()
+    await vi.waitFor(() => expect(panelText()).toContain('FAIL'))
+    await importPR(7, 'Moved')
+    await settle()
+    expect(host!.querySelector('.readiness-verdict')).toBeNull()
+  })
+
+  it('drops an in-flight verdict when a re-import of the same PR finds a new head', async () => {
+    const pending = deferred<Readiness>()
+    vi.mocked(importPullRequest).mockResolvedValueOnce(makePR(7)).mockResolvedValueOnce({ ...makePR(7, movedSha), title: 'Moved' })
+    vi.mocked(fetchReadiness).mockReturnValueOnce(pending.promise)
+    await mount()
+    await importPR(7)
+    checkButton().click()
+    await settle()
+    await importPR(7, 'Moved')
+    pending.resolve(verdict(7))
+    await settle()
+    expect(host!.querySelector('.readiness-verdict')).toBeNull()
+  })
+
+  it('keeps a verdict when a re-import of the same PR finds the same head', async () => {
+    vi.mocked(importPullRequest).mockResolvedValueOnce(makePR(7)).mockResolvedValueOnce({ ...makePR(7), title: 'Same head' })
+    vi.mocked(fetchReadiness).mockResolvedValue(verdict(7))
+    await mount()
+    await importPR(7)
+    checkButton().click()
+    await vi.waitFor(() => expect(panelText()).toContain('FAIL'))
+    await importPR(7, 'Same head')
+    await settle()
+    expect(panelText()).toContain('FAIL')
   })
 
   it('shows the server error instead of a verdict', async () => {

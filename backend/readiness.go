@@ -136,7 +136,7 @@ func (a api) loadReadiness(c *gin.Context) {
 		respondGitHubError(c, err)
 		return
 	}
-	if verified.Head.SHA != pr.Head.SHA || !verifiedIdentity.Equal(identity) {
+	if !sameReadinessSnapshot(pr, verified) || !verifiedIdentity.Equal(identity) {
 		c.JSON(http.StatusConflict, gin.H{"error": "This pull request changed while its readiness was being checked. Check it again."})
 		return
 	}
@@ -154,6 +154,12 @@ func (a api) loadReadiness(c *gin.Context) {
 		response.Findings = &readinessFindings{High: result.Findings.High, Medium: result.Findings.Medium, Low: result.Findings.Low}
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+// sameReadinessSnapshot reports whether every pull-request fact the verdict uses is
+// unchanged: the head, whether it is open or a draft, and the branch it targets.
+func sameReadinessSnapshot(before, after githubReadinessPR) bool {
+	return before.Head.SHA == after.Head.SHA && before.State == after.State && before.Draft == after.Draft && before.Base.Ref == after.Base.Ref
 }
 
 func fetchReadinessPR(ctx context.Context, gh *githubClient, owner, repo string, number int) (githubReadinessPR, domain.RepositoryIdentity, error) {
@@ -212,7 +218,7 @@ func gatherReadinessEvidence(ctx context.Context, gh *githubClient, repo domain.
 		evidence.ReviewUnavailableReason = reviews.Reason
 		return evidence
 	}
-	evidence.Review, evidence.SummaryNamesHead = latestQodoReviewEvidence(reviews.Items, head)
+	evidence.Review, evidence.SummaryNamesHead = domain.SelectQodoReviewEvidence(qodoReviewCandidates(reviews.Items), head)
 	return evidence
 }
 
@@ -276,26 +282,12 @@ func fetchAllCheckRunsForHead(ctx context.Context, gh *githubClient, repoPath, h
 
 var errTooManyCheckRuns = errors.New("the head has more check runs than Ghostline reads")
 
-// latestQodoReviewEvidence picks the most recently updated Qodo code review. Qodo edits
-// one comment in place, so creation order alone does not identify the current review.
-func latestQodoReviewEvidence(reviews []qodoReview, head string) (*domain.QodoReviewEvidence, bool) {
-	var latest *qodoReview
-	summaryNamesHead := false
-	for i := range reviews {
-		review := &reviews[i]
-		if review.Kind == "summary" {
-			if review.CommitSHA == head {
-				summaryNamesHead = true
-			}
-			continue
-		}
-		if latest == nil || review.updatedAt.After(latest.updatedAt) {
-			latest = review
-		}
+// qodoReviewCandidates hands the parsed Qodo comments to the domain readiness rules.
+func qodoReviewCandidates(reviews []qodoReview) []domain.QodoReviewCandidate {
+	candidates := make([]domain.QodoReviewCandidate, 0, len(reviews))
+	for _, review := range reviews {
+		counts := review.severityCounts
+		candidates = append(candidates, domain.QodoReviewCandidate{Summary: review.Kind == "summary", CommitSHA: review.CommitSHA, URL: review.URL, UpdatedAt: review.updatedAt, High: counts.High, Medium: counts.Medium, Low: counts.Low, CountsReadable: counts.Readable})
 	}
-	if latest == nil {
-		return nil, summaryNamesHead
-	}
-	counts := latest.severityCounts
-	return &domain.QodoReviewEvidence{CommitSHA: latest.CommitSHA, URL: latest.URL, High: counts.High, Medium: counts.Medium, Low: counts.Low, CountsReadable: counts.Readable}, summaryNamesHead
+	return candidates
 }

@@ -263,6 +263,11 @@ async function loadPR() {
         checksLoading.value = false
       }
       resetAnnotations()
+      // A verdict describes one head. When the refreshed import ends at a different head,
+      // drop any verdict or in-flight check that does not describe it.
+      if (pr.value && pr.value.checks.revisionSha !== importedPR.checks.revisionSha && readiness.value?.headSha !== importedPR.checks.revisionSha) {
+        resetReadiness()
+      }
       pr.value = importedPR
       if (selectedRevision.value) void loadNoxReport(importedPR, selectedRevision.value)
       else if (importedPR.checks.revisionSha) void loadNoxReport(importedPR, importedPR.checks.revisionSha)
