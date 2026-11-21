@@ -389,3 +389,16 @@ func TestParseNoxFindingKeepsSuppressionDetailOffActiveFindings(t *testing.T) {
 		})
 	}
 }
+
+func TestIsUnlinkedNoxWorkflowRun(t *testing.T) {
+	sha := strings.Repeat("c", 40)
+	if !IsUnlinkedNoxWorkflowRun(NoxSecurityWorkflowPath, "pull_request", sha, sha, nil) {
+		t.Fatal("a Security run for this revision without a linked pull request was not recognised")
+	}
+	if IsUnlinkedNoxWorkflowRun(NoxSecurityWorkflowPath, "pull_request", sha, sha, []int{8}) {
+		t.Fatal("a run linked to another pull request was treated as unlinked")
+	}
+	if IsUnlinkedNoxWorkflowRun(".github/workflows/other.yml", "pull_request", sha, sha, nil) {
+		t.Fatal("another workflow's run was treated as an unlinked Security run")
+	}
+}

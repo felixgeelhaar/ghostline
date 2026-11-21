@@ -43,6 +43,13 @@ func IsNoxWorkflowRunForPullRequest(workflowPath, event, runSHA, requestedSHA st
 	return false
 }
 
+// IsUnlinkedNoxWorkflowRun reports whether a Security run for the requested
+// revision carries no pull-request link. GitHub leaves that link out for runs
+// from forks, so such a run cannot be attributed to the imported pull request.
+func IsUnlinkedNoxWorkflowRun(workflowPath, event, runSHA, requestedSHA string, pullRequestNumbers []int) bool {
+	return len(pullRequestNumbers) == 0 && IsNoxWorkflowRun(workflowPath, event, runSHA, requestedSHA)
+}
+
 // IsNoxScannerName checks whether a SARIF run identifies Nox as its scanner.
 func IsNoxScannerName(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
