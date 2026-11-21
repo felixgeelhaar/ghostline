@@ -2,7 +2,7 @@
 
 **See the work. Trace the decisions. Take control.**
 
-[![CI](https://github.com/felixgeelhaar/ghostline/actions/workflows/ci.yml/badge.svg)](https://github.com/felixgeelhaar/ghostline/actions/workflows/ci.yml) [![Security](https://github.com/felixgeelhaar/ghostline/actions/workflows/nox.yml/badge.svg)](https://github.com/felixgeelhaar/ghostline/actions/workflows/nox.yml)
+[![CI](https://github.com/felixgeelhaar/ghostline/actions/workflows/ci.yml/badge.svg)](https://github.com/felixgeelhaar/ghostline/actions/workflows/ci.yml) [![Security](https://github.com/felixgeelhaar/ghostline/actions/workflows/nox.yml/badge.svg)](https://github.com/felixgeelhaar/ghostline/actions/workflows/nox.yml) [![nox security grade](.github/nox-badge.svg)](.github/workflows/nox.yml)
 
 Ghostline is a change-centric engineering control room. It imports a public GitHub pull request and shows its commit timeline, with commit timestamps clearly distinguished from push or pull-request event chronology. It displays GitHub checks with source-linked line annotations for a selected check run, source-linked Qodo review feedback, and the published Nox SARIF report for the exact pull-request revision. Nox reports are matched through GitHub Actions workflow runs and their `nox-results` artifacts. Ghostline accepts a report only when the workflow file at the scanned revision matches the pull request base, preventing a PR-edited workflow from supplying a fabricated clean report; it shows findings, report availability, expiry, and the source run. It says explicitly when a report is missing or expired and never treats an earlier revision's checks or scan as evidence for the current head.
 
