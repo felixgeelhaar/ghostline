@@ -7,7 +7,7 @@ checker="$script_dir/head-evidence.sh"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-head_sha="1111111111111111111111111111111111111111"
+head_sha="abcdef1111111111111111111111111111111111"
 old_sha="2222222222222222222222222222222222222222"
 repo="acme/app"
 failures=0
@@ -136,6 +136,37 @@ expect unknown-group 2 INCOMPLETE "could not read finding counts"
 
 make_case short-nonzero 0 "$(review_body "$head_sha" '<code>Bugs (0)</code><code>Rule violations (1)</code><h3>Great, no issues found!</h3>')" success success
 expect short-nonzero 2 INCOMPLETE "could not read finding counts"
+
+# Second local Qodo review round.
+make_case other-base 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture other-base "repos/$repo/pulls/7" "{\"state\":\"open\",\"draft\":false,\"head\":{\"sha\":\"$head_sha\"},\"base\":{\"ref\":\"release\"}}"
+fixture other-base "repos/$repo/compare/main...$head_sha" '{"behind_by":0}'
+expect other-base 2 INCOMPLETE "targets release, not main"
+
+make_case protection-omits-nox 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture protection-omits-nox "repos/$repo/branches/main/protection/required_status_checks" '{"contexts":["Go checks"],"checks":[{"context":"Go checks","app_id":15368}]}'
+fixture protection-omits-nox "repos/$repo/commits/$head_sha/check-runs?per_page=100" "$(checks_json success | jq '.check_runs |= map(select(.name != "Security (nox)"))')"
+expect protection-omits-nox 2 INCOMPLETE "Security (nox): missing on head"
+
+make_case upper-marker 0 "$(printf '<h3>Code Review by Qodo</h3>%s<!-- https://github.com/%s/commit/%s -->' "$clean_groups" "$repo" "$(tr a-f A-F <<<"$head_sha")")" success success
+expect upper-marker 0 PASS
+
+make_case newer-status 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture newer-status "repos/$repo/commits/$head_sha/status" '{"statuses":[{"context":"warden/gate","state":"success","updated_at":"2026-11-21T10:00:00Z"},{"context":"warden/gate","state":"pending","updated_at":"2026-11-21T09:00:00Z"}]}'
+expect newer-status 0 PASS
+
+dotted="acme/widget.v2"
+mkdir -p "$tmp_dir/dotted"
+for f in "$tmp_dir/pass"/*.json; do
+  name="$(basename "$f")"; cp "$f" "$tmp_dir/dotted/${name//acme_app/acme_widget_v2}"
+done
+jq --arg r "$dotted" --arg h "$head_sha" 'map(.body |= gsub("acme/app"; $r))' "$tmp_dir/pass/repos_acme_app_issues_7_comments_per_page_100.json" > "$tmp_dir/dotted/repos_acme_widget_v2_issues_7_comments_per_page_100.json"
+out="$(PATH="$tmp_dir/bin:$PATH" FIXTURES="$tmp_dir/dotted" bash "$checker" 7 "$dotted" 2>&1)" && status=0 || status=$?
+if [[ "$status" == 0 ]] && grep -qF "qodo review: covers head" <<<"$out"; then
+  echo "ok   dotted-repo"
+else
+  echo "FAIL dotted-repo: want PASS with the review covering the head; got exit $status:"; sed 's/^/  | /' <<<"$out"; failures=$((failures + 1))
+fi
 
 fixture malformed-pr "repos/$repo/pulls/7" '{"state":"open","draft":false,"head":{},"base":{"ref":"main"}}'
 out="$(PATH="$tmp_dir/bin:$PATH" FIXTURES="$tmp_dir/malformed-pr" bash "$checker" 7 "$repo" 2>&1)" && status=0 || status=$?

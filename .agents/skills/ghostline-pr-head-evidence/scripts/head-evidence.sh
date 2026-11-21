@@ -53,26 +53,32 @@ echo "head: $head"
 [[ "$state" == "open" ]] || incomplete+=("PR is $state, not open")
 [[ "$draft" != "true" ]] || incomplete+=("PR is a draft; Qodo does not review drafts")
 
-behind="$(api "repos/$repo/compare/$base...$head" | jq -r '.behind_by')"
+# Gate ③ is about reaching main: the PR must target main and be up to date with it.
+gate_branch="main"
+if [[ "$base" != "$gate_branch" ]]; then
+  incomplete+=("PR targets $base, not $gate_branch; gate ③ covers merges into $gate_branch")
+fi
+behind="$(api "repos/$repo/compare/$gate_branch...$head" | jq -r '.behind_by')"
 if [[ "$behind" == "0" ]]; then
-  echo "branch: up to date with $base"
+  echo "branch: up to date with $gate_branch"
 else
-  echo "branch: behind $base by $behind"
-  incomplete+=("branch is behind $base by $behind; updating it creates a new head that needs fresh evidence")
+  echo "branch: behind $gate_branch by $behind"
+  incomplete+=("branch is behind $gate_branch by $behind; updating it creates a new head that needs fresh evidence")
 fi
 
 # Qodo edits one "Code Review by Qodo" comment in place; its commit marker names the reviewed head.
 comments="$(api --paginate "repos/$repo/issues/$pr/comments?per_page=100" | jq -s 'add // []')"
 review="$(jq --argjson bots "$qodo_bots" '[.[] | select((.user.login as $l | $bots | index($l)) and (.body | contains("Code Review by Qodo")))] | sort_by(.updated_at) | last // empty' <<<"$comments")"
 # Only a marker comment for this repository counts, as in backend/reviews.go.
-marker_re="<!--[[:space:]]*https://github\\.com/${repo//./\\\\.}/commit/([0-9a-f]{40})[[:space:]]*-->"
-summary_names_head="$(jq --argjson bots "$qodo_bots" --arg re "$marker_re" --arg head "$head" '[.[] | select((.user.login as $l | $bots | index($l)) and (.body | contains("PR Summary by Qodo"))) | .body | scan($re; "i") | .[0]] | index($head) != null' <<<"$comments")"
+repo_re="$(printf '%s' "$repo" | sed 's/\./\\./g')"
+marker_re='<!--[[:space:]]*https://github\.com/'"$repo_re"'/commit/([0-9a-fA-F]{40})[[:space:]]*-->'
+summary_names_head="$(jq --argjson bots "$qodo_bots" --arg re "$marker_re" --arg head "$head" '[.[] | select((.user.login as $l | $bots | index($l)) and (.body | contains("PR Summary by Qodo"))) | .body | scan($re; "i") | .[0] | ascii_downcase] | index($head) != null' <<<"$comments")"
 
 if [[ -z "$review" ]]; then
   echo "qodo review: none"
   incomplete+=("no Qodo code review comment")
 else
-  reviewed="$(jq -r --arg re "$marker_re" '[.body | scan($re; "i") | .[0]] | unique | join(",")' <<<"$review")"
+  reviewed="$(jq -r --arg re "$marker_re" '[.body | scan($re; "i") | .[0] | ascii_downcase] | unique | join(",")' <<<"$review")"
   if [[ "$reviewed" == "$head" ]]; then
     echo "qodo review: covers head (comment updated $(jq -r '.updated_at' <<<"$review"))"
     body="$(jq -r '.body' <<<"$review" | sed 's/<[^>]*>/ /g')"
@@ -104,7 +110,11 @@ else
 fi
 
 # Each requirement is a context plus, when branch protection names one, the app that must produce it.
-required="$(api "repos/$repo/branches/$base/protection/required_status_checks" | jq -c 'if (.checks | length) > 0 then .checks[] else (.contexts[] | {context: ., app_id: null}) end')"
+# Gate ③ names these checks; branch protection may add more but can't remove them.
+gate_checks='["Go checks","Frontend checks","Security (nox)","warden/gate"]'
+required="$(api "repos/$repo/branches/$gate_branch/protection/required_status_checks" | jq -c --argjson gate "$gate_checks" '
+  (if (.checks | length) > 0 then .checks else [.contexts[] | {context: ., app_id: null}] end) as $protected
+  | ($protected + [$gate[] | select(. as $c | $protected | map(.context) | index($c) | not) | {context: ., app_id: null}])[]')"
 runs="$(api --paginate "repos/$repo/commits/$head/check-runs?per_page=100" | jq -s '[.[].check_runs[]]')"
 statuses="$(api "repos/$repo/commits/$head/status" | jq '.statuses')"
 while IFS= read -r requirement; do
@@ -115,7 +125,7 @@ while IFS= read -r requirement; do
   result="$(jq -r 'last | if . == null then "" elif .status != "completed" then .status else .conclusion end' <<<"$matching")"
   # AGENTS.md gate rules: a failed run is a real result even if a rerun on the same head passed.
   earlier_failure="$(jq -r '.[:-1] | map(select(.status == "completed" and ((.conclusion // "") | IN("success","skipped","neutral") | not))) | first | .conclusion // ""' <<<"$matching")"
-  [[ -n "$result" ]] || result="$(jq -r --arg c "$ctx" '[.[] | select(.context == $c)] | last | .state // ""' <<<"$statuses")"
+  [[ -n "$result" ]] || result="$(jq -r --arg c "$ctx" '[.[] | select(.context == $c)] | sort_by(.updated_at // "") | last | .state // ""' <<<"$statuses")"
   case "$result" in
     success|skipped|neutral)
       echo "check $ctx: $result"

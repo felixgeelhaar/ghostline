@@ -36,7 +36,7 @@ Stop and ask the user if no PR number is given, or if more than one PR could be 
    - Any other status, or output with no `verdict:` line, is also an error: the script didn't finish. Never read a verdict into partial output.
 
    On an error, stop and report the exact output. Don't retry with different credentials, and don't edit the script during the check.
-3. Confirm independently that the `head:` line matches `gh pr view PR_NUMBER --json headRefOid -q .headRefOid`. If they differ, a push happened during the check: run step 1 again once. If they still differ, stop and report.
+3. Confirm independently that the `head:` line matches `gh pr view PR_NUMBER -R OWNER/REPO --json headRefOid -q .headRefOid`, using the same repository as step 1. If they differ, a push happened during the check: run step 1 again once. If they still differ, stop and report.
 4. Report to the user:
    - the PR and head SHA;
    - the verdict, with every reason line;
