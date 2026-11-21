@@ -111,6 +111,17 @@ with the PR head stays the evidence that a review covers the current head.
   status, because Warden publishes that status from a local run. Run the
   Warden pre-push gate on the new head, then wait for fresh hosted checks and a
   Qodo review of that head before asking for the merge.
+- Qodo may not review a head that only merges `main` into the branch. On
+  PR #86, Qodo refreshed its summary for the merge-only heads `7bff57b` and
+  `4f57e3e` but posted no code review, and a `/agentic_review` request was
+  acknowledged without producing one within 40 minutes. When that happens and
+  the PR's own diff is unchanged since the last reviewed head, the agent stops
+  and reports the reviewed SHA, the merge-only heads, and the request it made.
+  The engineer decides whether the earlier review is enough, and the PR records
+  that decision, as #86 does. The agent never treats the earlier review as
+  covering the new head on its own.
+- To avoid repeated merge-only heads, merge ready PRs one at a time and update
+  each remaining branch only when it is next in line.
 - Rerun checks after changes and request a new review. A review of an older head,
   an incomplete review, or a failed required check does not pass the gate.
 - Stop for an engineer if the same confirmed High or Medium finding remains
