@@ -68,7 +68,7 @@ fi
 
 # Qodo edits one "Code Review by Qodo" comment in place; its commit marker names the reviewed head.
 comments="$(api --paginate "repos/$repo/issues/$pr/comments?per_page=100" | jq -s 'add // []')"
-review="$(jq --argjson bots "$qodo_bots" '[.[] | select((.user.login as $l | $bots | index($l)) and (.body | contains("Code Review by Qodo")))] | sort_by(.updated_at) | last // empty' <<<"$comments")"
+review="$(jq --argjson bots "$qodo_bots" '[.[] | select((.user.login as $l | $bots | index($l)) and (.body | test("^\\s*<h3>\\s*Code Review by Qodo\\s*</h3>"; "i")))] | sort_by(.updated_at) | last // empty' <<<"$comments")"
 # Only a marker comment for this repository counts, as in backend/reviews.go.
 repo_re="$(printf '%s' "$repo" | sed 's/\./\\./g')"
 marker_re='<!--[[:space:]]*https://github\.com/'"$repo_re"'/commit/([0-9a-fA-F]{40})[[:space:]]*-->'
@@ -121,7 +121,7 @@ while IFS= read -r requirement; do
   [[ -n "$requirement" ]] || continue
   ctx="$(jq -r '.context' <<<"$requirement")"
   app_id="$(jq -r '.app_id // ""' <<<"$requirement")"
-  matching="$(jq --arg c "$ctx" --arg app "$app_id" '[.[] | select(.name == $c and ($app == "" or ((.app.id // "") | tostring) == $app))] | sort_by(.started_at)' <<<"$runs")"
+  matching="$(jq --arg c "$ctx" --arg app "$app_id" '[.[] | select(.name == $c and ($app == "" or ((.app.id // "") | tostring) == $app))] | sort_by(.id // 0, .started_at // "")' <<<"$runs")"
   result="$(jq -r 'last | if . == null then "" elif .status != "completed" then .status else .conclusion end' <<<"$matching")"
   # AGENTS.md gate rules: a failed run is a real result even if a rerun on the same head passed.
   earlier_failure="$(jq -r '.[:-1] | map(select(.status == "completed" and ((.conclusion // "") | IN("success","skipped","neutral") | not))) | first | .conclusion // ""' <<<"$matching")"

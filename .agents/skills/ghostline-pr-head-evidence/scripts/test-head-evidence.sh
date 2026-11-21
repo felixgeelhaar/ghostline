@@ -164,6 +164,15 @@ expect status-impersonates-app 2 INCOMPLETE "Go checks: missing on head"
 make_case spaced-count 0 "$(review_body "$head_sha" '<details><summary>View medium ( 1 )</summary></details><p>Nice, no open findings for this group</p><p>Nice, no open findings for this group</p>')" success success
 expect spaced-count 1 FAIL "medium=1"
 
+# Fourth local Qodo review round.
+make_case summary-mentions-review 0 "$(review_body "$old_sha" "$clean_groups")" success success
+fixture summary-mentions-review "repos/$repo/issues/7/comments?per_page=100" "$(comments_json "$(review_body "$old_sha" "$clean_groups")" | jq --arg s "<h3>PR Summary by Qodo</h3><p>See the Code Review by Qodo below. Nice, no open findings for this group</p><!-- https://github.com/$repo/commit/$head_sha -->" '.[0].body = $s')"
+expect summary-mentions-review 2 INCOMPLETE "not the head"
+
+make_case queued-rerun 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture queued-rerun "repos/$repo/commits/$head_sha/check-runs?per_page=100" "$(checks_json success | jq '.check_runs |= (to_entries | map(.value + {id: (100 + .key)})) | .check_runs += [{"id":900,"name":"Go checks","status":"queued","conclusion":null,"started_at":null,"app":{"id":15368}}]')"
+expect queued-rerun 2 INCOMPLETE "Go checks: queued"
+
 dotted="acme/widget.v2"
 mkdir -p "$tmp_dir/dotted"
 for f in "$tmp_dir/pass"/*.json; do
