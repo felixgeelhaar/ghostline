@@ -16,6 +16,8 @@ services:
     ports:
       - "${GHOSTLINE_BIND_ADDRESS:-127.0.0.1}:${GHOSTLINE_PORT:-8080}:8080"
     restart: unless-stopped
+    # Longer than GHOSTLINE_SHUTDOWN_GRACE (25s) so in-flight requests finish before SIGKILL.
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "/ghostline", "healthcheck"]
       interval: 10s

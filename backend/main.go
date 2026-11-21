@@ -1,15 +1,19 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/felixgeelhaar/ghostline/backend/internal/domain"
@@ -285,6 +289,11 @@ func (a api) loadQodoReview(c *gin.Context) {
 		}
 		cause := strings.ReplaceAll(err.Error(), apiKey, "[redacted]")
 		logger.Error("Qodo structured review request failed", "pull_request", strings.TrimSpace(body.URL), "cause", cause)
+		// The request deadline (see newHTTPServer) ended before Qodo answered.
+		if errors.Is(err, context.DeadlineExceeded) {
+			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "Qodo took too long to answer, so the request was stopped. Try again shortly."})
+			return
+		}
 		var serviceErr qodoServiceError
 		if errors.As(err, &serviceErr) {
 			switch serviceErr.StatusCode() {
@@ -308,6 +317,9 @@ func (a api) loadQodoReview(c *gin.Context) {
 func respondGitHubError(c *gin.Context, err error) {
 	var statusErr statusError
 	switch {
+	// The request deadline (see newHTTPServer) ended before GitHub answered.
+	case errors.Is(err, context.DeadlineExceeded):
+		c.JSON(http.StatusGatewayTimeout, gin.H{"error": "GitHub took too long to answer, so the request was stopped. Try again shortly."})
 	case errors.Is(err, errDefaultBranchUnknown):
 		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub did not report the repository's default branch, so readiness cannot be checked."})
 	case errors.Is(err, errRepositoryVisibilityUnknown):
@@ -385,6 +397,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	serverCfg, err := loadServerConfig(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	auth, err := loadAuthConfig(os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -408,7 +425,17 @@ func main() {
 	if host == "" {
 		host = "127.0.0.1"
 	}
-	if err := r.Run(joinHostPort(host, port)); err != nil {
-		panic(err)
+	address := joinHostPort(host, port)
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, syscall.SIGTERM, os.Interrupt)
+	slog.Info("serving HTTP", "address", listener.Addr().String())
+	if err := serveUntilSignal(newHTTPServer(address, r, serverCfg), listener, signals, serverCfg.ShutdownGrace, slog.Default()); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 }
