@@ -82,12 +82,12 @@ else
   if [[ "$reviewed" == "$head" ]]; then
     echo "qodo review: covers head (comment updated $(jq -r '.updated_at' <<<"$review"))"
     body="$(jq -r '.body' <<<"$review" | sed 's/<[^>]*>/ /g')"
-    count() { { grep -oiE "View $1 \(([0-9]+)\)" <<<"$body" || true; } | { grep -oE '[0-9]+' || true; } | awk '{s+=$1} END {print s+0}'; }
+    count() { { grep -oiE "View $1 \([[:space:]]*[0-9]+[[:space:]]*\)" <<<"$body" || true; } | { grep -oE '[0-9]+' || true; } | awk '{s+=$1} END {print s+0}'; }
     high="$(count high)"; medium="$(count medium)"; low="$(count low)"
     # Fail closed: any finding group or tally the counter can't attribute to high/medium/low.
     all_groups="$(count '[a-z]+')"
     unknown_groups=$((all_groups - high - medium - low))
-    nonzero_tallies="$({ grep -oiE '(Bugs|Rule violations|Requirement gaps) \(([0-9]+)\)' <<<"$body" || true; } | { grep -oE '[0-9]+' || true; } | awk '{s+=$1} END {print s+0}')"
+    nonzero_tallies="$({ grep -oiE '(Bugs|Rule violations|Requirement gaps)[[:space:]]*\([[:space:]]*[0-9]+[[:space:]]*\)' <<<"$body" || true; } | { grep -oE '[0-9]+' || true; } | awk '{s+=$1} END {print s+0}')"
     if (( unknown_groups > 0 || nonzero_tallies > 0 )) || { (( high + medium + low == 0 )) && ! grep -qiE 'no open findings for this group|no issues found' <<<"$body"; }; then
       echo "findings: unknown"
       incomplete+=("could not read finding counts from the Qodo review; read it manually")
@@ -125,7 +125,8 @@ while IFS= read -r requirement; do
   result="$(jq -r 'last | if . == null then "" elif .status != "completed" then .status else .conclusion end' <<<"$matching")"
   # AGENTS.md gate rules: a failed run is a real result even if a rerun on the same head passed.
   earlier_failure="$(jq -r '.[:-1] | map(select(.status == "completed" and ((.conclusion // "") | IN("success","skipped","neutral") | not))) | first | .conclusion // ""' <<<"$matching")"
-  [[ -n "$result" ]] || result="$(jq -r --arg c "$ctx" '[.[] | select(.context == $c)] | sort_by(.updated_at // "") | last | .state // ""' <<<"$statuses")"
+  # A commit status carries no app, so it can only satisfy a requirement that names none.
+  [[ -n "$result" || -n "$app_id" ]] || result="$(jq -r --arg c "$ctx" '[.[] | select(.context == $c)] | sort_by(.updated_at // "") | last | .state // ""' <<<"$statuses")"
   case "$result" in
     success|skipped|neutral)
       echo "check $ctx: $result"

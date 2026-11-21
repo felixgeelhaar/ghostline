@@ -155,6 +155,15 @@ make_case newer-status 0 "$(review_body "$head_sha" "$clean_groups")" success su
 fixture newer-status "repos/$repo/commits/$head_sha/status" '{"statuses":[{"context":"warden/gate","state":"success","updated_at":"2026-11-21T10:00:00Z"},{"context":"warden/gate","state":"pending","updated_at":"2026-11-21T09:00:00Z"}]}'
 expect newer-status 0 PASS
 
+# Third local Qodo review round.
+make_case status-impersonates-app 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture status-impersonates-app "repos/$repo/commits/$head_sha/check-runs?per_page=100" "$(checks_json success | jq '.check_runs |= map(select(.name != "Go checks"))')"
+fixture status-impersonates-app "repos/$repo/commits/$head_sha/status" '{"statuses":[{"context":"warden/gate","state":"success"},{"context":"Go checks","state":"success"}]}'
+expect status-impersonates-app 2 INCOMPLETE "Go checks: missing on head"
+
+make_case spaced-count 0 "$(review_body "$head_sha" '<details><summary>View medium ( 1 )</summary></details><p>Nice, no open findings for this group</p><p>Nice, no open findings for this group</p>')" success success
+expect spaced-count 1 FAIL "medium=1"
+
 dotted="acme/widget.v2"
 mkdir -p "$tmp_dir/dotted"
 for f in "$tmp_dir/pass"/*.json; do
