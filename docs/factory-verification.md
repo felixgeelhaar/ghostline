@@ -14,7 +14,6 @@ flowchart TB
     G2{{"② LOCAL CHECKS + QODO"}}:::gate
     P(["Open or update PR"]):::step
     G3{{"③ PR CHECKS + QODO ON HEAD"}}:::gate
-    L(["Qodo workflow · label if no Medium+ findings"]):::step
     G4{{"④ ENGINEER APPROVES"}}:::gate
     M[("main")]:::done
 
@@ -23,8 +22,7 @@ flowchart TB
     B --> G2
     G2 -- pass --> P
     P --> G3
-    G3 -- pass --> L
-    L -- "label, or guarded path" --> G4
+    G3 -- pass --> G4
     G4 -- merge --> M
 
     G1 -- no --> R(["Revise or close ticket"]):::muted
@@ -32,6 +30,7 @@ flowchart TB
     G3 -- fail --> B
     B -. no progress .-> S(["Stop · engineer decides"]):::stop
     G4 -- hold --> H(["Hold PR"]):::hold
+    G3 -. "Qodo workflow, advisory" .-> L(["Qodo approved label · not yet relied on"]):::muted
 
     classDef start fill:#111525,stroke:#00e5ff,stroke-width:1.5px,color:#e9edf7,font-weight:bold
     classDef step fill:#0d1020,stroke:#30344d,stroke-width:1.5px,color:#e9edf7
@@ -42,8 +41,8 @@ flowchart TB
     classDef muted fill:#090b16,stroke:#3a3f5a,stroke-width:1.5px,color:#8a91a7,stroke-dasharray:4 3
 
     linkStyle default stroke:#8a91a7,stroke-width:1.5px,color:#e9edf7
-    linkStyle 0,1,2,3,4,5,6,7 stroke:#00e5ff,stroke-width:2px,color:#00e5ff
-    linkStyle 9,10 stroke:#ff2bd6,stroke-width:1.8px,color:#ff2bd6
+    linkStyle 0,1,2,3,4,5,6 stroke:#00e5ff,stroke-width:2px,color:#00e5ff
+    linkStyle 8,9 stroke:#ff2bd6,stroke-width:1.8px,color:#ff2bd6
 ```
 
 ## The four gates
@@ -55,14 +54,14 @@ flowchart TB
 | **③ PR checks + Qodo on head** | The PR is ready for review, not a draft; Warden, hosted checks, and a completed Qodo review cover the exact current head; the branch is up to date with `main` | Every check and review names the SHA it covered; Warden runs again after a branch update | Same fix loop; a reported finding is never rerun to green, and a false positive needs an engineer-approved baseline entry; a job with no result gets one rerun |
 | **④ Engineer approves** | The engineer decides disputed findings and the merge | The PR record against gates ①–③ | Hold the PR and record the next action |
 
-**Label step (Day 14):** after gate ③, a Qodo workflow adds the "Qodo approved"
+**Label step (Day 14):** alongside gate ③, a Qodo workflow adds the "Qodo approved"
 label when Qodo's review of the PR finds nothing rated Medium or higher. The
 label is meant as a signal for gate ④, not an approval: it never approves or
 merges, and Lows stay visible in the review. It has not been applied reliably
 (see Day 14 below), so for now gate ④ ignores the label, present or missing. A label also does not show which
 head it covers: Qodo applies it when a review finishes, and nothing observed so
-far removes it after a later push. Gate ④ therefore compares the reviewed
-SHA in Qodo's latest review with the PR head.
+far removes it after a later push. Gate ③'s comparison of the reviewed SHA
+with the PR head stays the evidence that a review covers the current head.
 
 **Stop rule:** if the same confirmed finding returns after one focused repair, a required check cannot be made to pass, or the evidence cannot settle a disagreement, the agent stops, reports the finding, repair attempt and revisions, and the engineer decides.
 
@@ -242,7 +241,8 @@ heads.
 Result: the workflow is configured, but its behaviour is **not yet
 established**. One PR shows the label working. Neither the guard nor the
 condition has been shown to decide a missing label. Until it is, gate ④ ignores
-the label and relies on gate ③'s SHA-matched review.
+the label and relies on gate ③'s SHA-matched review. The diagram shows the
+label as a dotted, advisory branch for that reason.
 
 PR Triage listed #85 and #86 as "Needs a reviewer", with merge risk Medium for
 #85 and Low for #86. The label didn't change the next action: both still wait
