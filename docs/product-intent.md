@@ -12,7 +12,14 @@
 
 ## Status note (2026-11-21)
 
-This note was added when the document was first committed. The intent below is unchanged from the 2026-11-03 version, except that tables flattened when the text was pasted were rebuilt.
+This note was added when the document was first committed. The intent below is unchanged from the 2026-11-03 version, except that tables flattened when the text was pasted were rebuilt. Read it as the Day 1 record: where it describes the next step or an open question, this note is the current state.
+
+- **Superseded sections:** §6 and §17 (Day 1 scope and next action) are done. Of the §16 open decisions:
+  - 2 is settled: this repository exists.
+  - 3 is settled: Qodo findings are read from published PR comments, and through Qodo's MCP when configured.
+  - 4 is settled: Day 1 imported Ghostline's own PR.
+  - 5 is partly settled: [hosted-deployment.md](hosted-deployment.md) describes a single-container deployment.
+  - 1, 6, 7 and 8 remain open.
 
 - **Delivered:**
   - Stage A: PR import, commit timeline, revision focus.
@@ -20,7 +27,7 @@ This note was added when the document was first committed. The intent below is u
   - Parts of Stage C: recurring findings and **Deep Trace** (`frontend/src/presentation/DeepTrace.vue`).
   - Revision-bound GitHub checks and annotations, and a trust-checked **Nox** report (see the README and [threat model](threat-model.md)).
   - The working palette below is the UI's palette.
-- **Netrunner:** not yet a separate package. Tool translation currently lives in edge files under `backend/`: `github.go`, `reviews.go` and `qodo_mcp.go` (Qodo), and `nox_report.go`. The domain rules sit in `backend/internal/domain`. Extracting these adapters into a Netrunner package is the obvious step once a fourth source arrives.
+- **Netrunner:** GitHub and Qodo translation both exist now (the §10 plan said to add Qodo later), but not yet as a separate package. Tool translation currently lives in edge files under `backend/`: `github.go`, `reviews.go` and `qodo_mcp.go` (Qodo), and `nox_report.go`. The domain rules sit in `backend/internal/domain`. Extracting these adapters into a Netrunner package is the obvious step once a fourth source arrives.
 - **Not started:** Netspace, Override, Forensics as a named view, SQLite persistence, and the review-and-repair supervision loop.
 - **Direction since Day 14:** the hackathon showed that the most useful single answer is whether a PR is ready to merge, based only on evidence about its exact current head. It also showed that stale review coverage, renamed required checks and labels that flicker are common. That serves hypothesis 3 below ("Revision-linked evidence improves decisions") and the promise "trust only the evidence that actually applies." The issues are [#91](https://github.com/felixgeelhaar/ghostline/issues/91) (readiness verdict), [#92](https://github.com/felixgeelhaar/ghostline/issues/92) (README), [#93](https://github.com/felixgeelhaar/ghostline/issues/93) (read-only API for agents) and [#94](https://github.com/felixgeelhaar/ghostline/issues/94) (open-PR list). The readiness verdict is Netrunner's first cross-tool output: GitHub checks, Qodo reviews and Nox reports, joined only on the commit they cover.
 
