@@ -157,7 +157,7 @@ func evaluateBranch(e ReadinessEvidence, add addReason) {
 		return
 	}
 	if e.BehindBy > 0 {
-		add("branch", ReadinessIncomplete, e.CompareURL, "The branch is behind %s by %d commits. Updating it creates a new head that needs fresh evidence.", e.DefaultBranch, e.BehindBy)
+		add("branch", ReadinessIncomplete, e.CompareURL, "The branch is behind %s by %d %s. Updating it creates a new head that needs fresh evidence.", e.DefaultBranch, e.BehindBy, plural(e.BehindBy, "commit", "commits"))
 		return
 	}
 	add("branch", ReadinessPass, e.CompareURL, "The branch is up to date with %s.", e.DefaultBranch)
@@ -187,11 +187,11 @@ func evaluateQodoReview(e ReadinessEvidence, add addReason) *ReadinessFindings {
 	}
 	findings := &ReadinessFindings{High: review.High, Medium: review.Medium, Low: review.Low}
 	if blocking := review.High + review.Medium; blocking > 0 {
-		add("qodo", ReadinessFail, review.URL, "Qodo reports %d High or Medium findings on the head.", blocking)
+		add("qodo", ReadinessFail, review.URL, "Qodo reports %d High or Medium %s on the head.", blocking, plural(blocking, "finding", "findings"))
 		return findings
 	}
 	if review.Low > 0 {
-		add("qodo", ReadinessPass, review.URL, "Qodo's review covers the head with no High or Medium findings; %d Low findings to report to the engineer.", review.Low)
+		add("qodo", ReadinessPass, review.URL, "Qodo's review covers the head with no High or Medium findings; %d Low %s to report to the engineer.", review.Low, plural(review.Low, "finding", "findings"))
 		return findings
 	}
 	add("qodo", ReadinessPass, review.URL, "Qodo's review covers the head with no open findings.")
@@ -281,4 +281,11 @@ func statusOutcome(state string) ReadinessOutcome {
 
 func passingConclusion(conclusion string) bool {
 	return conclusion == "success" || conclusion == "skipped" || conclusion == "neutral"
+}
+
+func plural(count int, one, many string) string {
+	if count == 1 {
+		return one
+	}
+	return many
 }

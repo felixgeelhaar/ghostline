@@ -44,6 +44,7 @@ func TestEvaluateReadiness(t *testing.T) {
 		{name: "draft PR", change: func(e *ReadinessEvidence) { e.Draft = true }, want: ReadinessIncomplete, wantMessage: "draft"},
 		{name: "targets another branch", change: func(e *ReadinessEvidence) { e.BaseRef = "release" }, want: ReadinessIncomplete, wantMessage: "targets release, not main"},
 		{name: "behind the default branch", change: func(e *ReadinessEvidence) { e.BehindBy = 3 }, want: ReadinessIncomplete, wantMessage: "behind main by 3"},
+		{name: "behind by one commit", change: func(e *ReadinessEvidence) { e.BehindBy = 1 }, want: ReadinessIncomplete, wantMessage: "behind main by 1 commit."},
 		{name: "behind count unknown", change: func(e *ReadinessEvidence) { e.BehindBy = BehindUnknown }, want: ReadinessIncomplete, wantMessage: "could not compare the head with main"},
 		{name: "check evidence unreadable", change: func(e *ReadinessEvidence) {
 			e.CheckEvidenceUnavailableReason = "GitHub returned checks for a different commit than the pull request's head."
