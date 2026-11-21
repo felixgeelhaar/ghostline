@@ -29,9 +29,9 @@ Stop and ask the user if no PR number is given, or if more than one PR could be 
 
    Keep the complete output; it is the evidence. Don't summarise it from memory.
 2. Read the exit status and the `verdict:` line:
-   - `0` PASS: the Qodo review names the head and has no High or Medium findings, every required check passed (or was skipped) on the head, and the branch is up to date. A check that passed on one rerun after a run that ended with no result (`cancelled`, `startup_failure` or `stale`) still passes; the script says so on its `check` line.
+   - `0` PASS: the Qodo review names the head and has no High or Medium findings, every required check passed (or was skipped) on the head, and the branch is up to date. A check that passed on one rerun after a run that never started (`startup_failure`) still passes; the script says so on its `check` line.
    - `1` FAIL: the head has a High or Medium Qodo finding, or a required check failed. A run that reported a result, such as `failure`, still fails the check even when a rerun on the same head passed (`docs/factory-verification.md`).
-   - `2` INCOMPLETE: something is missing. For example, no review names the head, a required check is missing or still running, the branch is behind `main`, the PR is a draft or closed, the finding counts can't be read, a check needed more than one rerun after runs with no result, or an earlier run of a check timed out (a hang in the code or the runner can cause that, so the engineer decides).
+   - `2` INCOMPLETE: something is missing. For example, no review names the head, a required check is missing or still running, the branch is behind `main`, the PR is a draft or closed, the finding counts can't be read, a check needed more than one rerun after runs that never started, or an earlier run of a check ended `cancelled`, `timed_out` or `stale`. GitHub doesn't show whether the runner or a hang in the code caused those, so the engineer decides.
    - `3` error: bad input, a missing tool, a failed `gh api` call, or an unreadable response. The `error:` line names the cause.
    - Any other status, or output with no `verdict:` line, is also an error: the script didn't finish. Never read a verdict into partial output.
 

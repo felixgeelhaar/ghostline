@@ -73,15 +73,15 @@ func TestEvaluateReadiness(t *testing.T) {
 		{name: "earlier action_required run still counts as a result", change: func(e *ReadinessEvidence) {
 			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "action_required"}}, e.CheckRuns...)
 		}, want: ReadinessFail, wantMessage: "an earlier run on this head concluded action_required"},
-		{name: "one rerun after a cancelled run", change: func(e *ReadinessEvidence) {
+		{name: "a cancelled run may have been a hang in the code", change: func(e *ReadinessEvidence) {
 			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "cancelled"}}, e.CheckRuns...)
-		}, want: ReadinessPass, wantMessage: "Go checks: success on a rerun; an earlier run ended cancelled with no result."},
-		{name: "a rerun after a stale run", change: func(e *ReadinessEvidence) {
+		}, want: ReadinessIncomplete, wantMessage: "Go checks: an earlier run on this head ended cancelled; GitHub does not show whether the runner or the code caused it, so the engineer decides."},
+		{name: "a stale run's cause is unknown", change: func(e *ReadinessEvidence) {
 			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "stale"}}, e.CheckRuns...)
-		}, want: ReadinessPass, wantMessage: "an earlier run ended stale with no result"},
+		}, want: ReadinessIncomplete, wantMessage: "Go checks: an earlier run on this head ended stale; GitHub does not show whether the runner or the code caused it, so the engineer decides."},
 		{name: "a timed out run may be a hang in the code", change: func(e *ReadinessEvidence) {
 			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "timed_out"}}, e.CheckRuns...)
-		}, want: ReadinessIncomplete, wantMessage: "Go checks: an earlier run on this head timed out, which a hang in the code or the runner can cause; the engineer decides."},
+		}, want: ReadinessIncomplete, wantMessage: "Go checks: an earlier run on this head ended timed_out; GitHub does not show whether the runner or the code caused it, so the engineer decides."},
 		{name: "a reported failure outranks a timeout", change: func(e *ReadinessEvidence) {
 			e.CheckRuns = append([]CheckRunEvidence{
 				{ID: 4, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "timed_out"},
@@ -90,7 +90,7 @@ func TestEvaluateReadiness(t *testing.T) {
 		}, want: ReadinessFail, wantMessage: "an earlier run on this head concluded failure"},
 		{name: "one rerun after a startup failure", change: func(e *ReadinessEvidence) {
 			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "startup_failure"}}, e.CheckRuns...)
-		}, want: ReadinessPass, wantMessage: "an earlier run ended startup_failure with no result"},
+		}, want: ReadinessPass, wantMessage: "Go checks: success on a rerun; an earlier run ended startup_failure with no result."},
 		{name: "a reported failure is not cleared by a later no-result run and pass", change: func(e *ReadinessEvidence) {
 			e.CheckRuns = append([]CheckRunEvidence{
 				{ID: 4, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "failure"},
@@ -99,7 +99,7 @@ func TestEvaluateReadiness(t *testing.T) {
 		}, want: ReadinessFail, wantMessage: "an earlier run on this head concluded failure"},
 		{name: "more than one rerun needs the engineer", change: func(e *ReadinessEvidence) {
 			e.CheckRuns = append([]CheckRunEvidence{
-				{ID: 4, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "cancelled"},
+				{ID: 4, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "startup_failure"},
 				{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "startup_failure"},
 			}, e.CheckRuns...)
 		}, want: ReadinessIncomplete, wantMessage: "Go checks: 2 earlier runs on this head ended with no result; only one rerun is allowed, so the engineer decides."},

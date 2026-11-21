@@ -124,21 +124,25 @@ expect earlier-failure 1 FAIL "Go checks: an earlier run on this head concluded 
 earlier_run() { # earlier_run CONCLUSION HOUR
   printf '{"name":"Go checks","status":"completed","conclusion":"%s","started_at":"2026-11-21T0%s:00:00Z","app":{"id":15368}}' "$1" "$2"
 }
-make_case cancelled-rerun 0 "$(review_body "$head_sha" "$clean_groups")" success success
-fixture cancelled-rerun "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson e "$(earlier_run cancelled 8)" '.check_runs += [$e]')"
-expect cancelled-rerun 0 PASS "Go checks: success on a rerun; an earlier run ended cancelled with no result"
+make_case startup-failure-rerun 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture startup-failure-rerun "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson e "$(earlier_run startup_failure 8)" '.check_runs += [$e]')"
+expect startup-failure-rerun 0 PASS "Go checks: success on a rerun; an earlier run ended startup_failure with no result"
 
 make_case failure-then-cancelled 0 "$(review_body "$head_sha" "$clean_groups")" success success
 fixture failure-then-cancelled "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson a "$(earlier_run failure 7)" --argjson b "$(earlier_run cancelled 8)" '.check_runs += [$a, $b]')"
 expect failure-then-cancelled 1 FAIL "Go checks: an earlier run on this head concluded failure"
 
 make_case two-no-result 0 "$(review_body "$head_sha" "$clean_groups")" success success
-fixture two-no-result "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson a "$(earlier_run cancelled 7)" --argjson b "$(earlier_run startup_failure 8)" '.check_runs += [$a, $b]')"
+fixture two-no-result "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson a "$(earlier_run startup_failure 7)" --argjson b "$(earlier_run startup_failure 8)" '.check_runs += [$a, $b]')"
 expect two-no-result 2 INCOMPLETE "Go checks: 2 earlier runs on this head ended with no result; only one rerun is allowed, so the engineer decides"
 
 make_case timed-out-rerun 0 "$(review_body "$head_sha" "$clean_groups")" success success
 fixture timed-out-rerun "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson e "$(earlier_run timed_out 8)" '.check_runs += [$e]')"
-expect timed-out-rerun 2 INCOMPLETE "Go checks: an earlier run on this head timed out, which a hang in the code or the runner can cause; the engineer decides"
+expect timed-out-rerun 2 INCOMPLETE "Go checks: an earlier run on this head ended timed_out; GitHub does not show whether the runner or the code caused it, so the engineer decides"
+
+make_case cancelled-rerun 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture cancelled-rerun "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson e "$(earlier_run cancelled 8)" '.check_runs += [$e]')"
+expect cancelled-rerun 2 INCOMPLETE "Go checks: an earlier run on this head ended cancelled; GitHub does not show whether the runner or the code caused it, so the engineer decides"
 
 make_case wrong-app 0 "$(review_body "$head_sha" "$clean_groups")" success success
 fixture wrong-app "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq '(.check_runs[] | select(.name == "Go checks") | .app.id) = 999')"

@@ -249,24 +249,27 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 	}
 	// docs/factory-verification.md: a run that reported a result stays a real result even
 	// if a rerun on the same head passed. Only a run that ended without a result, because
-	// of the runner or the network, may be rerun, and only once.
+	// of the runner or the network, may be rerun, and only once. GitHub records that cause
+	// only for a job that never started; any other no-result run needs the engineer.
 	var noResult []CheckRunEvidence
-	timedOut := false
+	unknownCause := ""
 	for _, earlier := range runs[:len(runs)-1] {
 		switch {
 		case earlier.Status != "completed" || passingConclusion(earlier.Conclusion):
 		case noResultConclusion(earlier.Conclusion):
 			noResult = append(noResult, earlier)
-		case earlier.Conclusion == "timed_out":
-			timedOut = true
+		case unknownCauseConclusion(earlier.Conclusion):
+			if unknownCause == "" {
+				unknownCause = earlier.Conclusion
+			}
 		default:
 			add(subject, ReadinessFail, earlier.URL, "%s: an earlier run on this head concluded %s; a passing rerun does not clear it.", required.Context, earlier.Conclusion)
 			return
 		}
 	}
 	switch {
-	case timedOut:
-		add(subject, ReadinessIncomplete, latest.URL, "%s: an earlier run on this head timed out, which a hang in the code or the runner can cause; the engineer decides.", required.Context)
+	case unknownCause != "":
+		add(subject, ReadinessIncomplete, latest.URL, "%s: an earlier run on this head ended %s; GitHub does not show whether the runner or the code caused it, so the engineer decides.", required.Context, unknownCause)
 	case len(noResult) > 1:
 		add(subject, ReadinessIncomplete, latest.URL, "%s: %d earlier runs on this head ended with no result; only one rerun is allowed, so the engineer decides.", required.Context, len(noResult))
 	case len(noResult) == 1:
@@ -276,12 +279,18 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 	}
 }
 
-// noResultConclusion reports a run that ended without the checked code producing a
-// result: it was cancelled, could not start, or GitHub marked it stale. A timeout is
-// not one, because a hang in the code under test can cause it.
+// noResultConclusion reports a run that provably produced no result: the job never
+// started, so the checked code cannot have run.
 func noResultConclusion(conclusion string) bool {
+	return conclusion == "startup_failure"
+}
+
+// unknownCauseConclusion reports a run that ended without a result for a reason GitHub
+// does not record: a person may have cancelled a hang, or the code under test may have
+// timed out or stopped reporting, as well as the runner or the network.
+func unknownCauseConclusion(conclusion string) bool {
 	switch conclusion {
-	case "cancelled", "startup_failure", "stale":
+	case "cancelled", "timed_out", "stale":
 		return true
 	}
 	return false

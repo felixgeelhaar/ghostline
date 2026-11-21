@@ -126,11 +126,12 @@ while IFS= read -r requirement; do
   result="$(jq -r 'last | if . == null then "" elif .status != "completed" then .status else .conclusion end' <<<"$matching")"
   # docs/factory-verification.md: a run that reported a result stays real even if a rerun on the
   # same head passed. Only a run that ended with no result (runner or network) may be rerun, once.
-  # A timeout is not "no result": a hang in the code under test can cause it.
+  # GitHub records that cause only for a job that never started (startup_failure); a cancelled,
+  # timed-out or stale run may have been a hang in the code, so the engineer decides.
   earlier="$(jq '.[:-1] | map(select(.status == "completed" and ((.conclusion // "") | IN("success","skipped","neutral") | not)) | .conclusion)' <<<"$matching")"
   earlier_failure="$(jq -r 'map(select(IN("cancelled","timed_out","startup_failure","stale") | not)) | first // ""' <<<"$earlier")"
-  timed_out="$(jq -r 'index("timed_out") != null' <<<"$earlier")"
-  no_result="$(jq -r 'map(select(IN("cancelled","startup_failure","stale"))) | "\(length) \(first // "")"' <<<"$earlier")"
+  unknown_cause="$(jq -r 'map(select(IN("cancelled","timed_out","stale"))) | first // ""' <<<"$earlier")"
+  no_result="$(jq -r 'map(select(. == "startup_failure")) | "\(length) \(first // "")"' <<<"$earlier")"
   # A commit status carries no app, so it can only satisfy a requirement that names none.
   [[ -n "$result" || -n "$app_id" ]] || result="$(jq -r --arg c "$ctx" '[.[] | select(.context == $c)] | sort_by(.updated_at // "") | last | .state // ""' <<<"$statuses")"
   case "$result" in
@@ -138,9 +139,9 @@ while IFS= read -r requirement; do
       if [[ -n "$earlier_failure" ]]; then
         echo "check $ctx: $result"
         failed+=("$ctx: an earlier run on this head concluded $earlier_failure; a passing rerun does not clear it")
-      elif [[ "$timed_out" == true ]]; then
+      elif [[ -n "$unknown_cause" ]]; then
         echo "check $ctx: $result"
-        incomplete+=("$ctx: an earlier run on this head timed out, which a hang in the code or the runner can cause; the engineer decides")
+        incomplete+=("$ctx: an earlier run on this head ended $unknown_cause; GitHub does not show whether the runner or the code caused it, so the engineer decides")
       elif [[ "${no_result%% *}" == 1 ]]; then
         echo "check $ctx: $result on a rerun; an earlier run ended ${no_result#* } with no result"
       elif [[ "${no_result%% *}" != 0 ]]; then
