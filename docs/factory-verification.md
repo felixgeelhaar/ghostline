@@ -246,14 +246,18 @@ its review found nothing, yet it got no label. So #86's missing label cannot be
 attributed to the guard. #86 and #87 both received Qodo's short "no issues
 found" comment, while #85 received the per-severity review. That is not the
 cause either: [#88](https://github.com/felixgeelhaar/ghostline/pull/88) got a
-clean per-severity review on `a4c3f5d`, does not touch a guarded path, and got
-no label. The cause is unknown, and the portal shows no workflow run history to
-check. Each review names its reviewed commit, and all
+clean per-severity review on `a4c3f5d` and does not touch a guarded path. Its
+GitHub events show `qodo-code-review[bot]` adding "Qodo approved" and removing it
+in the same second (11:18:51Z). After the next head, `cf9be89`, also reviewed
+clean, the bot added the label at 11:23:39Z and it stayed. #86 and #87 have no
+label events at all. The cause is unknown, and the portal shows no workflow run
+history to check. Each review names its reviewed commit, and all
 match the heads above. Required checks and `warden/gate` passed on all three
 heads.
 
 Result: the workflow is configured, but its behaviour is **not yet
-established**. One PR shows the label working. Neither the guard nor the
+established**. Two heads show the label kept (#85, and #88 at `cf9be89`); one
+shows it added and removed at once; two clean PRs never received it. Neither the guard nor the
 condition has been shown to decide a missing label. Until it is, gate ④ ignores
 the label and relies on gate ③'s SHA-matched review. The diagram shows the
 label as a dotted, advisory branch for that reason.
