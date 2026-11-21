@@ -58,8 +58,11 @@ flowchart TB
 **Label step (Day 14):** after gate ③, a Qodo workflow adds the "Qodo approved"
 label when Qodo's review of the PR finds nothing rated Medium or higher. The
 label is a signal for gate ④, not an approval: it never approves or merges, and
-Lows stay visible in the review. A PR that touches a guarded path such as
-`.github/workflows/**` gets no label and goes to the engineer unlabelled.
+Lows stay visible in the review. On PR #86, a change under the guarded path
+`.github/workflows/**` received no label. A label also does not show which
+head it covers: Qodo applies it when a review finishes, and nothing observed so
+far removes it after a later push. Gate ④ therefore still compares the reviewed
+SHA in Qodo's latest review with the PR head, label or not.
 
 **Stop rule:** if the same confirmed finding returns after one focused repair, a required check cannot be made to pass, or the evidence cannot settle a disagreement, the agent stops, reports the finding, repair attempt and revisions, and the engineer decides.
 
@@ -226,7 +229,8 @@ Configured in the Qodo portal on 2026-11-21.
 | [#85](https://github.com/felixgeelhaar/ghostline/pull/85) explain unlinked Nox runs | `d006f64` | No | No High, Medium or Low findings | Label | Labelled "Qodo approved" by `qodo-code-review[bot]` at 08:55:24Z |
 | [#86](https://github.com/felixgeelhaar/ghostline/pull/86) bound CI job runtime | `75c5f73` | Yes, only `.github/workflows/ci.yml` | No findings | No label | No "Qodo approved" label |
 
-Both predictions held. #86 shows that the guard blocks the label as well as
+Both predictions held. This is one test of each case, not proof that the
+guard always withholds the label. #86 shows that the guard blocks the label as well as
 auto-approval, although the portal describes guards only as "Qodo won't
 auto-approve PRs that match a guard". Each review names its reviewed commit,
 and both match the PR heads above. Required checks and `warden/gate` passed on
@@ -237,5 +241,14 @@ PR Triage lists #85 and #86 as "Needs a reviewer", with merge risk Medium for
 for a person.
 
 ![PR Triage after the test PRs](feature-evidence/qodo-pr-triage-day14.jpg)
+
+### Known gap
+
+The guard covers only `.github/workflows/**`. Other files that control a gate,
+such as `.nox.yaml`, `.nox/`, `.warden.yaml` and `AGENTS.md`, are not guarded,
+so a PR that only changes them can still be labelled. Such a PR still needs the
+engineer at gate ④, and baseline changes still need a written reason
+(AGENTS.md rule 5). Adding these paths to the guard is an open decision for the
+engineer.
 
 Neither PR is merged by the agent; gate ④ is unchanged.
