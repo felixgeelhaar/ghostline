@@ -228,7 +228,7 @@ Configured in the Qodo portal on 2026-11-21.
 | Trigger | Qodo finishes reviewing a PR |
 | Condition | No findings rated Medium or higher |
 | Action | Add the "Qodo approved" label. Auto-approve is not used |
-| Protected path | Approval guard on `.github/workflows/**` in `felixgeelhaar/ghostline` |
+| Protected paths | Approval guard in `felixgeelhaar/ghostline` on `.github/workflows/**`; extended later the same day to `.nox.yaml`, `.nox/**`, `.warden.yaml` and `AGENTS.md` (see Guard coverage) |
 | Existing settings | No workspace-wide guards existed. The built-in "Auto-approve low-risk PRs" and "Label clean PRs" workflows stay inactive |
 
 ![Qodo workflow for ghostline](feature-evidence/qodo-workflow-day14.jpg)
@@ -244,9 +244,11 @@ Configured in the Qodo portal on 2026-11-21.
 #85 matched its prediction. #87 did not: it does not touch the guarded path and
 its review found nothing, yet it got no label. So #86's missing label cannot be
 attributed to the guard. #86 and #87 both received Qodo's short "no issues
-found" comment, while #85 received the per-severity review. The label may
-follow only that review, but this has not been confirmed. The portal shows no
-workflow run history to check. Each review names its reviewed commit, and all
+found" comment, while #85 received the per-severity review. That is not the
+cause either: [#88](https://github.com/felixgeelhaar/ghostline/pull/88) got a
+clean per-severity review on `a4c3f5d`, does not touch a guarded path, and got
+no label. The cause is unknown, and the portal shows no workflow run history to
+check. Each review names its reviewed commit, and all
 match the heads above. Required checks and `warden/gate` passed on all three
 heads.
 
@@ -262,13 +264,13 @@ for a person.
 
 ![PR Triage after the test PRs](feature-evidence/qodo-pr-triage-day14.jpg)
 
-### Known gap
+### Guard coverage
 
-The guard covers only `.github/workflows/**`. Other files that control a gate,
-such as `.nox.yaml`, `.nox/`, `.warden.yaml` and `AGENTS.md`, are not guarded,
-so a PR that only changes them can still be labelled. Such a PR still needs the
+On 2026-11-21 the engineer extended the guard to the other files that control a
+gate: `.nox.yaml`, `.nox/**`, `.warden.yaml` and `AGENTS.md`, alongside
+`.github/workflows/**`. Because the label's behaviour is not established, this
+has not been tested separately. A PR that changes these files still needs the
 engineer at gate ④, and baseline changes still need a written reason
-(AGENTS.md rule 5). Adding these paths to the guard is an open decision for the
-engineer.
+(AGENTS.md rule 5).
 
 Neither PR is merged by the agent; gate ④ is unchanged.
