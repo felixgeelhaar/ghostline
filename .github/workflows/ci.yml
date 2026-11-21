@@ -17,12 +17,18 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Bound each job well above its usual runtime (under a minute) so a hung
+  # step fails visibly instead of holding a runner for GitHub's 6-hour default.
   go:
     name: Go checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check out revision
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # No job pushes, so the token is not left in the checkout's git config.
+          persist-credentials: false
       - name: Test scheduled day lock
         run: bash .agents/skills/ghostline-ready-issue/scripts/test-day-lock.sh
       - name: Set up Go
@@ -38,12 +44,16 @@ jobs:
   frontend:
     name: Frontend checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: frontend
     steps:
       - name: Check out revision
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # No job pushes, so the token is not left in the checkout's git config.
+          persist-credentials: false
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -60,9 +70,13 @@ jobs:
   production-container:
     name: Production container smoke test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Check out revision
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # No job pushes, so the token is not left in the checkout's git config.
+          persist-credentials: false
       - name: Build production image
         run: docker build --tag ghostline:ci .
       - name: Start with required authentication
