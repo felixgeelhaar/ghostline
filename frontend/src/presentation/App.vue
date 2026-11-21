@@ -7,6 +7,8 @@ import { createNoxReportLoader } from '../application/noxReportLoader'
 import { fetchCheckAnnotations } from '../application/fetchCheckAnnotations'
 import { copyRevisionSha, type CopyResult } from '../application/copyRevisionSha'
 import { fetchQodoReviewSession } from '../application/fetchQodoReviewSession'
+import { fetchReadiness } from '../application/fetchReadiness'
+import type { Readiness } from '../domain/readiness'
 import { buildChangeActivity, countReviewsWithUnavailableDetails, describeCheckActivity } from '../domain/changeActivity'
 import { checkOutcome, checkSummaryPreview, headCommitLabel, orderChecks, summarizeChecks, type Check, type CheckTone } from '../domain/checks'
 import type { CheckAnnotationPage } from '../domain/checkAnnotations'
@@ -20,6 +22,7 @@ import { GhostlineApiError } from '../application/apiError'
 import ReviewCard from './ReviewCard.vue'
 import DeepTrace from './DeepTrace.vue'
 import StructuredQodoReview from './StructuredQodoReview.vue'
+import ReadinessPanel from './ReadinessPanel.vue'
 import { useGhostlineSession } from './useGhostlineSession'
 
 const url = ref('')
@@ -45,6 +48,9 @@ const qodoApiKey = ref('')
 const qodoStructuredReview = ref<QodoStructuredReview>()
 const qodoReviewError = ref('')
 const qodoReviewLoading = ref(false)
+const readiness = ref<Readiness>()
+const readinessLoading = ref(false)
+const readinessError = ref('')
 const qodoKeyTransportSecure = computed(() => globalThis.isSecureContext === true)
 const { ghostlineSession, sessionLoading, sessionError, refreshGhostlineSession, handleSessionRejected, endSession } = useGhostlineSession()
 let traceTrigger: HTMLButtonElement | undefined
@@ -54,6 +60,7 @@ let importRequest = 0
 let annotationGeneration = 0
 const annotationRequests = new Map<string, number>()
 let qodoRequest = 0
+let readinessRequest = 0
 const activeChecks = computed(() => selectedRevision.value ? focusedChecks.value : pr.value?.checks)
 const orderedChecks = computed(() => orderChecks(activeChecks.value?.availability === 'available' ? activeChecks.value.items : []))
 const checksSummary = computed(() => summarizeChecks(orderedChecks.value))
@@ -155,6 +162,35 @@ function clearWorkspace() {
   qodoStructuredReview.value = undefined
   qodoReviewError.value = ''
   qodoReviewLoading.value = false
+  resetReadiness()
+}
+
+function resetReadiness() {
+  readinessRequest++
+  readiness.value = undefined
+  readinessLoading.value = false
+  readinessError.value = ''
+}
+
+// The verdict is bound to the imported pull request and to the latest request for it.
+async function checkReadiness() {
+  const target = pr.value
+  if (!target) return
+  const request = ++readinessRequest
+  readinessLoading.value = true
+  readinessError.value = ''
+  try {
+    const result = await fetchReadiness(target.url, target.repository, target.number)
+    if (request === readinessRequest && pr.value?.url === target.url) readiness.value = result
+  } catch (e) {
+    handleUnauthorized(e)
+    if (request === readinessRequest) {
+      readiness.value = undefined
+      readinessError.value = e instanceof Error ? e.message : 'Could not check merge readiness.'
+    }
+  } finally {
+    if (request === readinessRequest) readinessLoading.value = false
+  }
 }
 
 async function loadPR() {
@@ -187,6 +223,7 @@ async function loadPR() {
     copyResult.value = undefined
     qodoStructuredReview.value = undefined
     qodoReviewError.value = ''
+    resetReadiness()
   }
   copyRequest++
   resetAnnotations()
@@ -440,6 +477,8 @@ function optionalDate(value?: string) { return value ? date(value) : 'not report
     <section v-if="pr" class="change-card">
       <div class="change-heading"><div><span class="eyebrow">{{ pr.repository }} / PULL REQUEST #{{ pr.number }}</span><h2>{{ pr.title }}</h2></div><span class="state" :class="pr.state">{{ pr.state }}</span></div>
       <div class="meta"><span>{{ pr.commits.length }} COMMITS</span><span>OPENED {{ date(pr.createdAt) }}</span><a :href="pr.url" target="_blank" rel="noreferrer">VIEW ON GITHUB ↗</a></div>
+
+      <ReadinessPanel :readiness="readiness" :loading="readinessLoading" :error="readinessError" :imported-head-sha="pr.checks.revisionSha || undefined" @check="checkReadiness" />
 
       <section v-if="pr.referencedIssues?.items.length || pr.referencedIssues?.availability === 'unavailable'" class="referenced-issues" aria-labelledby="referenced-issues-title">
         <h3 id="referenced-issues-title" class="section-title">REFERENCED ISSUES · GITHUB STATE</h3>
