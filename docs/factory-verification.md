@@ -58,8 +58,8 @@ flowchart TB
 **Label step (Day 14):** after gate ③, a Qodo workflow adds the "Qodo approved"
 label when Qodo's review of the PR finds nothing rated Medium or higher. The
 label is a signal for gate ④, not an approval: it never approves or merges, and
-Lows stay visible in the review. On PR #86, a change under the guarded path
-`.github/workflows/**` received no label. A label also does not show which
+Lows stay visible in the review. The label has not been applied reliably
+(see Day 14 below), so a missing label proves nothing. A label also does not show which
 head it covers: Qodo applies it when a review finishes, and nothing observed so
 far removes it after a later push. Gate ④ therefore still compares the reviewed
 SHA in Qodo's latest review with the PR head, label or not.
@@ -228,15 +228,23 @@ Configured in the Qodo portal on 2026-11-21.
 |---|---|---|---|---|---|
 | [#85](https://github.com/felixgeelhaar/ghostline/pull/85) explain unlinked Nox runs | `d006f64` | No | No High, Medium or Low findings | Label | Labelled "Qodo approved" by `qodo-code-review[bot]` at 08:55:24Z |
 | [#86](https://github.com/felixgeelhaar/ghostline/pull/86) bound CI job runtime | `75c5f73` | Yes, only `.github/workflows/ci.yml` | No findings | No label | No "Qodo approved" label |
+| [#87](https://github.com/felixgeelhaar/ghostline/pull/87) this record (head when tested) | `4668a02` | No | No findings | Label | No "Qodo approved" label |
 
-Both predictions held. This is one test of each case, not proof that the
-guard always withholds the label. On #86 the guard appears to block the label as well as
-auto-approval, although the portal describes guards only as "Qodo won't
-auto-approve PRs that match a guard". Each review names its reviewed commit,
-and both match the PR heads above. Required checks and `warden/gate` passed on
-both heads.
+#85 matched its prediction. #87 did not: it does not touch the guarded path and
+its review found nothing, yet it got no label. So #86's missing label cannot be
+attributed to the guard. #86 and #87 both received Qodo's short "no issues
+found" comment, while #85 received the per-severity review. The label may
+follow only that review, but this has not been confirmed. The portal shows no
+workflow run history to check. Each review names its reviewed commit, and all
+match the heads above. Required checks and `warden/gate` passed on all three
+heads.
 
-PR Triage lists #85 and #86 as "Needs a reviewer", with merge risk Medium for
+Result: the workflow is configured, but its behaviour is **not yet
+established**. One PR shows the label working. Neither the guard nor the
+condition has been shown to decide a missing label. Until it is, gate ④ ignores
+the label and relies on gate ③'s SHA-matched review.
+
+PR Triage listed #85 and #86 as "Needs a reviewer", with merge risk Medium for
 #85 and Low for #86. The label didn't change the next action: both still wait
 for a person.
 
