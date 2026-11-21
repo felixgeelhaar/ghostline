@@ -247,14 +247,44 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 		add(subject, ReadinessFail, latest.URL, "%s: %s.", required.Context, latest.Conclusion)
 		return
 	}
-	// A failed run is a real result even if a rerun on the same head passed.
+	// docs/factory-verification.md: a run that reported a result stays a real result even
+	// if a rerun on the same head passed. Only a run that ended without a result, because
+	// of the runner or the network, may be rerun, and only once.
+	var noResult []CheckRunEvidence
+	timedOut := false
 	for _, earlier := range runs[:len(runs)-1] {
-		if earlier.Status == "completed" && !passingConclusion(earlier.Conclusion) {
+		switch {
+		case earlier.Status != "completed" || passingConclusion(earlier.Conclusion):
+		case noResultConclusion(earlier.Conclusion):
+			noResult = append(noResult, earlier)
+		case earlier.Conclusion == "timed_out":
+			timedOut = true
+		default:
 			add(subject, ReadinessFail, earlier.URL, "%s: an earlier run on this head concluded %s; a passing rerun does not clear it.", required.Context, earlier.Conclusion)
 			return
 		}
 	}
-	add(subject, ReadinessPass, latest.URL, "%s: %s.", required.Context, latest.Conclusion)
+	switch {
+	case timedOut:
+		add(subject, ReadinessIncomplete, latest.URL, "%s: an earlier run on this head timed out, which a hang in the code or the runner can cause; the engineer decides.", required.Context)
+	case len(noResult) > 1:
+		add(subject, ReadinessIncomplete, latest.URL, "%s: %d earlier runs on this head ended with no result; only one rerun is allowed, so the engineer decides.", required.Context, len(noResult))
+	case len(noResult) == 1:
+		add(subject, ReadinessPass, latest.URL, "%s: %s on a rerun; an earlier run ended %s with no result.", required.Context, latest.Conclusion, noResult[0].Conclusion)
+	default:
+		add(subject, ReadinessPass, latest.URL, "%s: %s.", required.Context, latest.Conclusion)
+	}
+}
+
+// noResultConclusion reports a run that ended without the checked code producing a
+// result: it was cancelled, could not start, or GitHub marked it stale. A timeout is
+// not one, because a hang in the code under test can cause it.
+func noResultConclusion(conclusion string) bool {
+	switch conclusion {
+	case "cancelled", "startup_failure", "stale":
+		return true
+	}
+	return false
 }
 
 func latestStatus(statuses []CommitStatusEvidence, context string) (CommitStatusEvidence, bool) {
