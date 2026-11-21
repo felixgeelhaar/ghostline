@@ -9,7 +9,8 @@ set -euo pipefail
 
 pr="${1:-}"
 repo="${2:-felixgeelhaar/ghostline}"
-qodo_bot="qodo-code-review[bot]"
+# The same Qodo identities backend/reviews.go accepts.
+qodo_bots='["qodo-code-review","qodo-code-review[bot]","qodo-free-for-open-source-projects[bot]"]'
 
 usage_error() { echo "error: $1" >&2; echo "usage: head-evidence.sh PR_NUMBER [OWNER/REPO]" >&2; exit 3; }
 [[ "$pr" =~ ^[0-9]+$ ]] || usage_error "PR_NUMBER must be a number"
@@ -39,6 +40,10 @@ incomplete=()
 failed=()
 
 pr_json="$(api "repos/$repo/pulls/$pr")"
+if ! jq -e '(.state | type == "string") and (.draft | type == "boolean") and (.head.sha | type == "string" and test("^[0-9a-f]{40}$")) and (.base.ref | type == "string" and length > 0)' <<<"$pr_json" >/dev/null; then
+  echo "error: unexpected pull request response (missing state, draft, head.sha or base.ref); no verdict" >&2
+  exit 3
+fi
 state="$(jq -r '.state' <<<"$pr_json")"
 draft="$(jq -r '.draft' <<<"$pr_json")"
 head="$(jq -r '.head.sha' <<<"$pr_json")"
@@ -58,20 +63,26 @@ fi
 
 # Qodo edits one "Code Review by Qodo" comment in place; its commit marker names the reviewed head.
 comments="$(api --paginate "repos/$repo/issues/$pr/comments?per_page=100" | jq -s 'add // []')"
-review="$(jq --arg bot "$qodo_bot" '[.[] | select(.user.login == $bot and (.body | contains("Code Review by Qodo")))] | sort_by(.updated_at) | last // empty' <<<"$comments")"
-summary_names_head="$(jq --arg bot "$qodo_bot" --arg head "$head" '[.[] | select(.user.login == $bot and (.body | contains("PR Summary by Qodo")) and (.body | contains("/commit/" + $head)))] | length > 0' <<<"$comments")"
+review="$(jq --argjson bots "$qodo_bots" '[.[] | select((.user.login as $l | $bots | index($l)) and (.body | contains("Code Review by Qodo")))] | sort_by(.updated_at) | last // empty' <<<"$comments")"
+# Only a marker comment for this repository counts, as in backend/reviews.go.
+marker_re="<!--[[:space:]]*https://github\\.com/${repo//./\\\\.}/commit/([0-9a-f]{40})[[:space:]]*-->"
+summary_names_head="$(jq --argjson bots "$qodo_bots" --arg re "$marker_re" --arg head "$head" '[.[] | select((.user.login as $l | $bots | index($l)) and (.body | contains("PR Summary by Qodo"))) | .body | scan($re; "i") | .[0]] | index($head) != null' <<<"$comments")"
 
 if [[ -z "$review" ]]; then
   echo "qodo review: none"
   incomplete+=("no Qodo code review comment")
 else
-  reviewed="$(jq -r '[.body | scan("/commit/([0-9a-f]{40})") | .[0]] | unique | join(",")' <<<"$review")"
+  reviewed="$(jq -r --arg re "$marker_re" '[.body | scan($re; "i") | .[0]] | unique | join(",")' <<<"$review")"
   if [[ "$reviewed" == "$head" ]]; then
     echo "qodo review: covers head (comment updated $(jq -r '.updated_at' <<<"$review"))"
     body="$(jq -r '.body' <<<"$review" | sed 's/<[^>]*>/ /g')"
     count() { { grep -oiE "View $1 \(([0-9]+)\)" <<<"$body" || true; } | { grep -oE '[0-9]+' || true; } | awk '{s+=$1} END {print s+0}'; }
     high="$(count high)"; medium="$(count medium)"; low="$(count low)"
-    if (( high + medium + low == 0 )) && ! grep -qiE 'no open findings for this group|no issues found' <<<"$body"; then
+    # Fail closed: any finding group or tally the counter can't attribute to high/medium/low.
+    all_groups="$(count '[a-z]+')"
+    unknown_groups=$((all_groups - high - medium - low))
+    nonzero_tallies="$({ grep -oiE '(Bugs|Rule violations|Requirement gaps) \(([0-9]+)\)' <<<"$body" || true; } | { grep -oE '[0-9]+' || true; } | awk '{s+=$1} END {print s+0}')"
+    if (( unknown_groups > 0 || nonzero_tallies > 0 )) || { (( high + medium + low == 0 )) && ! grep -qiE 'no open findings for this group|no issues found' <<<"$body"; }; then
       echo "findings: unknown"
       incomplete+=("could not read finding counts from the Qodo review; read it manually")
     else
@@ -82,7 +93,9 @@ else
     fi
   else
     echo "qodo review: covers ${reviewed:-no commit marker}, not the head"
-    if [[ "$summary_names_head" == "true" ]]; then
+    if [[ -z "$reviewed" ]]; then
+      incomplete+=("the Qodo code review names no commit of $repo")
+    elif [[ "$summary_names_head" == "true" ]]; then
       incomplete+=("Qodo code review covers ${reviewed:-an unknown commit}; only the PR summary names the head (a merge-only update can cause this)")
     else
       incomplete+=("Qodo code review covers ${reviewed:-an unknown commit}, not the head")
@@ -90,15 +103,23 @@ else
   fi
 fi
 
-required="$(api "repos/$repo/branches/$base/protection/required_status_checks" | jq -r '.contexts[]')"
+# Each requirement is a context plus, when branch protection names one, the app that must produce it.
+required="$(api "repos/$repo/branches/$base/protection/required_status_checks" | jq -c 'if (.checks | length) > 0 then .checks[] else (.contexts[] | {context: ., app_id: null}) end')"
 runs="$(api --paginate "repos/$repo/commits/$head/check-runs?per_page=100" | jq -s '[.[].check_runs[]]')"
 statuses="$(api "repos/$repo/commits/$head/status" | jq '.statuses')"
-while IFS= read -r ctx; do
-  [[ -n "$ctx" ]] || continue
-  result="$(jq -r --arg c "$ctx" '[.[] | select(.name == $c)] | sort_by(.started_at) | last | if . == null then "" elif .status != "completed" then .status else .conclusion end' <<<"$runs")"
+while IFS= read -r requirement; do
+  [[ -n "$requirement" ]] || continue
+  ctx="$(jq -r '.context' <<<"$requirement")"
+  app_id="$(jq -r '.app_id // ""' <<<"$requirement")"
+  matching="$(jq --arg c "$ctx" --arg app "$app_id" '[.[] | select(.name == $c and ($app == "" or ((.app.id // "") | tostring) == $app))] | sort_by(.started_at)' <<<"$runs")"
+  result="$(jq -r 'last | if . == null then "" elif .status != "completed" then .status else .conclusion end' <<<"$matching")"
+  # AGENTS.md gate rules: a failed run is a real result even if a rerun on the same head passed.
+  earlier_failure="$(jq -r '.[:-1] | map(select(.status == "completed" and ((.conclusion // "") | IN("success","skipped","neutral") | not))) | first | .conclusion // ""' <<<"$matching")"
   [[ -n "$result" ]] || result="$(jq -r --arg c "$ctx" '[.[] | select(.context == $c)] | last | .state // ""' <<<"$statuses")"
   case "$result" in
-    success|skipped|neutral) echo "check $ctx: $result" ;;
+    success|skipped|neutral)
+      echo "check $ctx: $result"
+      if [[ -n "$earlier_failure" ]]; then failed+=("$ctx: an earlier run on this head concluded $earlier_failure; a rerun passing does not clear it"); fi ;;
     "") echo "check $ctx: missing on head"; incomplete+=("$ctx: missing on head") ;;
     queued|in_progress|pending|waiting|requested) echo "check $ctx: $result"; incomplete+=("$ctx: $result") ;;
     *) echo "check $ctx: $result"; failed+=("$ctx: $result") ;;

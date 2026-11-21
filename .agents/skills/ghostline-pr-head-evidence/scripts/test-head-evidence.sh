@@ -41,6 +41,8 @@ review_body() { # review_body SHA GROUPS_HTML
   printf '<h3>Code Review by Qodo</h3>%s<!-- https://github.com/%s/commit/%s -->' "$2" "$repo" "$1"
 }
 
+required_json='{"contexts":["Go checks","Frontend checks","warden/gate","Security (nox)"],"checks":[{"context":"Go checks","app_id":15368},{"context":"Frontend checks","app_id":15368},{"context":"warden/gate","app_id":null},{"context":"Security (nox)","app_id":15368}]}'
+
 clean_groups='<p>Nice, no open findings for this group</p><p>Nice, no open findings for this group</p><p>Nice, no open findings for this group</p>'
 
 comments_json() { # comments_json BODY [SUMMARY_SHA]
@@ -54,9 +56,9 @@ comments_json() { # comments_json BODY [SUMMARY_SHA]
 
 checks_json() { # checks_json GO_CONCLUSION
   jq -n --arg go "$1" '{"check_runs":[
-    {"name":"Go checks","status":"completed","conclusion":$go,"started_at":"2026-11-21T09:00:00Z"},
-    {"name":"Frontend checks","status":"completed","conclusion":"success","started_at":"2026-11-21T09:00:00Z"},
-    {"name":"Security (nox)","status":"completed","conclusion":"success","started_at":"2026-11-21T09:00:00Z"}]}'
+    {"name":"Go checks","status":"completed","conclusion":$go,"started_at":"2026-11-21T09:00:00Z","app":{"id":15368}},
+    {"name":"Frontend checks","status":"completed","conclusion":"success","started_at":"2026-11-21T09:00:00Z","app":{"id":15368}},
+    {"name":"Security (nox)","status":"completed","conclusion":"success","started_at":"2026-11-21T09:00:00Z","app":{"id":15368}}]}'
 }
 
 statuses_json() { # statuses_json [WARDEN_STATE]
@@ -68,7 +70,7 @@ make_case() { # make_case NAME BEHIND REVIEW_BODY GO_CONCLUSION WARDEN_STATE [SU
   local name="$1"
   fixture "$name" "repos/$repo/pulls/7" "{\"state\":\"open\",\"draft\":false,\"head\":{\"sha\":\"$head_sha\"},\"base\":{\"ref\":\"main\"}}"
   fixture "$name" "repos/$repo/compare/main...$head_sha" "{\"behind_by\":$2}"
-  fixture "$name" "repos/$repo/branches/main/protection/required_status_checks" '{"contexts":["Go checks","Frontend checks","warden/gate","Security (nox)"]}'
+  fixture "$name" "repos/$repo/branches/main/protection/required_status_checks" "$required_json"
   fixture "$name" "repos/$repo/issues/7/comments?per_page=100" "$(comments_json "$3" "${6:-$old_sha}")"
   fixture "$name" "repos/$repo/commits/$head_sha/check-runs?per_page=100" "$(checks_json "$4")"
   fixture "$name" "repos/$repo/commits/$head_sha/status" "$(statuses_json "$5")"
@@ -112,6 +114,36 @@ expect behind-main 2 INCOMPLETE "behind main by 3"
 
 make_case unreadable-findings 0 "$(review_body "$head_sha" '<p>something new</p>')" success success
 expect unreadable-findings 2 INCOMPLETE "could not read finding counts"
+
+# Review findings from the local Qodo review of this skill (2026-11-21).
+make_case earlier-failure 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture earlier-failure "repos/$repo/commits/$head_sha/check-runs?per_page=100" "$(checks_json success | jq '.check_runs += [{"name":"Go checks","status":"completed","conclusion":"failure","started_at":"2026-11-21T08:00:00Z","app":{"id":15368}}]')"
+expect earlier-failure 1 FAIL "Go checks: an earlier run on this head concluded failure"
+
+make_case wrong-app 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture wrong-app "repos/$repo/commits/$head_sha/check-runs?per_page=100" "$(checks_json success | jq '(.check_runs[] | select(.name == "Go checks") | .app.id) = 999')"
+expect wrong-app 2 INCOMPLETE "Go checks: missing on head"
+
+make_case alt-login 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture alt-login "repos/$repo/issues/7/comments?per_page=100" "$(comments_json "$(review_body "$head_sha" "$clean_groups")" | jq 'map(if .user.login == "qodo-code-review[bot]" then .user.login = "qodo-free-for-open-source-projects[bot]" else . end)')"
+expect alt-login 0 PASS
+
+make_case foreign-marker 0 "$(printf '<h3>Code Review by Qodo</h3>%s<!-- https://github.com/other/fork/commit/%s -->' "$clean_groups" "$head_sha")" success success
+expect foreign-marker 2 INCOMPLETE "names no commit of $repo"
+
+make_case unknown-group 0 "$(review_body "$head_sha" '<details><summary>View critical (1)</summary></details><p>Nice, no open findings for this group</p><p>Nice, no open findings for this group</p>')" success success
+expect unknown-group 2 INCOMPLETE "could not read finding counts"
+
+make_case short-nonzero 0 "$(review_body "$head_sha" '<code>Bugs (0)</code><code>Rule violations (1)</code><h3>Great, no issues found!</h3>')" success success
+expect short-nonzero 2 INCOMPLETE "could not read finding counts"
+
+fixture malformed-pr "repos/$repo/pulls/7" '{"state":"open","draft":false,"head":{},"base":{"ref":"main"}}'
+out="$(PATH="$tmp_dir/bin:$PATH" FIXTURES="$tmp_dir/malformed-pr" bash "$checker" 7 "$repo" 2>&1)" && status=0 || status=$?
+if [[ "$status" == 3 ]] && grep -qF "error: unexpected pull request response" <<<"$out"; then
+  echo "ok   malformed-pr"
+else
+  echo "FAIL malformed-pr: want exit 3 rejecting the response; got exit $status:"; sed 's/^/  | /' <<<"$out"; failures=$((failures + 1))
+fi
 
 # A failed gh call, or any unexpected tool failure, must map to the documented exit 3.
 mkdir -p "$tmp_dir/api-error"

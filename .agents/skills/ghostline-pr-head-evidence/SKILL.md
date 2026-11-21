@@ -25,6 +25,8 @@ Stop and ask the user if no PR number is given, or if more than one PR could be 
    bash .agents/skills/ghostline-pr-head-evidence/scripts/head-evidence.sh PR_NUMBER
    ```
 
+   If the user named a repository, pass it as the second argument (`… head-evidence.sh PR_NUMBER OWNER/REPO`) and check that the `pr:` line names it. Without it the script checks `felixgeelhaar/ghostline`.
+
    Keep the complete output; it is the evidence. Don't summarise it from memory.
 2. Read the exit status and the `verdict:` line:
    - `0` PASS: the Qodo review names the head and has no High or Medium findings, every required check passed (or was skipped) on the head, and the branch is up to date.
