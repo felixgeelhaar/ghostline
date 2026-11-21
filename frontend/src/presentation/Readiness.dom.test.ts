@@ -178,6 +178,18 @@ describe('merge readiness panel', () => {
     expect(panelText()).toContain('FAIL')
   })
 
+  it('clears a verdict when a same-head re-import finds the pull request closed', async () => {
+    vi.mocked(importPullRequest).mockResolvedValueOnce(makePR(7)).mockResolvedValueOnce({ ...makePR(7), title: 'Closed', state: 'closed' })
+    vi.mocked(fetchReadiness).mockResolvedValue(verdict(7, { verdict: 'pass', reasons: [] }))
+    await mount()
+    await importPR(7)
+    checkButton().click()
+    await vi.waitFor(() => expect(panelText()).toContain('PASS'))
+    await importPR(7, 'Closed')
+    await settle()
+    expect(host!.querySelector('.readiness-verdict')).toBeNull()
+  })
+
   it('shows the server error instead of a verdict', async () => {
     vi.mocked(importPullRequest).mockResolvedValue(makePR(7))
     vi.mocked(fetchReadiness).mockRejectedValue(new Error('This pull request changed while its readiness was being checked. Check it again.'))
