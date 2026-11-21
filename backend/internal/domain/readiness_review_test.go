@@ -24,6 +24,10 @@ func TestSelectQodoReviewEvidence(t *testing.T) {
 			{CommitSHA: olderHead, UpdatedAt: at(12)},
 			{CommitSHA: readyHead, UpdatedAt: at(10)},
 		}, wantCommit: olderHead},
+		{name: "the later comment wins a tie on update time", reviews: []QodoReviewCandidate{
+			{CommentID: 9, CommitSHA: readyHead, UpdatedAt: at(11)},
+			{CommentID: 3, CommitSHA: olderHead, UpdatedAt: at(11)},
+		}, wantCommit: readyHead},
 		{name: "a summary is never the code review", reviews: []QodoReviewCandidate{
 			{CommitSHA: olderHead, UpdatedAt: at(9)},
 			{Summary: true, CommitSHA: readyHead, UpdatedAt: at(12)},

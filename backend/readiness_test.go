@@ -14,16 +14,22 @@ const readinessHead = "cccccccccccccccccccccccccccccccccccccccc"
 // readinessGitHub serves one public pull request for the readiness endpoint. Each
 // field overrides one GitHub response; the zero value is a PR that is ready to merge.
 type readinessGitHub struct {
-	headAfterEvaluation  string
-	stateAfterEvaluation string
-	baseRef              string
-	behindBy             int
-	protection           string
-	checkRuns            string
-	statuses             string
-	qodoComments         string
-	commentsCode         int
-	prReads              atomic.Int32
+	headAfterEvaluation    string
+	stateAfterEvaluation   string
+	draftAfterEvaluation   bool
+	baseAfterEvaluation    string
+	defaultAfterEvaluation string
+	headSHA                string
+	repoReads              atomic.Int32
+	noDefaultBranch        bool
+	baseRef                string
+	behindBy               int
+	protection             string
+	checkRuns              string
+	statuses               string
+	qodoComments           string
+	commentsCode           int
+	prReads                atomic.Int32
 }
 
 func cleanQodoReview(sha string) string {
@@ -61,18 +67,33 @@ func (f *readinessGitHub) serve(t *testing.T) *httptest.Server {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/acme/app", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"name":"app","private":false,"default_branch":"main","owner":{"login":"acme"}}`))
+		branch := "main"
+		if f.noDefaultBranch {
+			branch = ""
+		}
+		if f.repoReads.Add(1) > 1 && f.defaultAfterEvaluation != "" {
+			branch = f.defaultAfterEvaluation
+		}
+		_, _ = w.Write([]byte(`{"name":"app","private":false,"default_branch":"` + branch + `","owner":{"login":"acme"}}`))
 	})
 	mux.HandleFunc("/repos/acme/app/pulls/7", func(w http.ResponseWriter, r *http.Request) {
-		head := readinessHead
-		if f.prReads.Add(1) > 1 && f.headAfterEvaluation != "" {
+		head := or(f.headSHA, readinessHead)
+		later := f.prReads.Add(1) > 1
+		if later && f.headAfterEvaluation != "" {
 			head = f.headAfterEvaluation
 		}
+		draft, base := "false", or(f.baseRef, "main")
+		if later && f.draftAfterEvaluation {
+			draft = "true"
+		}
+		if later && f.baseAfterEvaluation != "" {
+			base = f.baseAfterEvaluation
+		}
 		state := "open"
-		if f.prReads.Load() > 1 && f.stateAfterEvaluation != "" {
+		if later && f.stateAfterEvaluation != "" {
 			state = f.stateAfterEvaluation
 		}
-		_, _ = w.Write([]byte(`{"number":7,"title":"Ready?","state":"` + state + `","draft":false,"html_url":"https://github.com/acme/app/pull/7","head":{"sha":"` + head + `"},"base":{"ref":"` + or(f.baseRef, "main") + `","repo":{"name":"app","owner":{"login":"acme"}}}}`))
+		_, _ = w.Write([]byte(`{"number":7,"title":"Ready?","state":"` + state + `","draft":` + draft + `,"html_url":"https://github.com/acme/app/pull/7","head":{"sha":"` + head + `"},"base":{"ref":"` + base + `","repo":{"name":"app","owner":{"login":"acme"}}}}`))
 	})
 	mux.HandleFunc("/repos/acme/app/compare/main..."+readinessHead, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": f.behindBy, "html_url": "https://github.com/acme/app/compare/main..." + readinessHead})
@@ -253,13 +274,6 @@ func TestReadinessReportsUnavailableQodoComments(t *testing.T) {
 	}
 }
 
-func TestReadinessRefusesAVerdictWhenTheHeadMoves(t *testing.T) {
-	code, body := postReadiness(t, &readinessGitHub{headAfterEvaluation: olderSHA})
-	if code != http.StatusConflict || body.Verdict != "" {
-		t.Fatalf("got %d verdict %q, want 409 with no verdict", code, body.Verdict)
-	}
-}
-
 func TestReadinessRejectsAnInvalidURL(t *testing.T) {
 	router := newRouter(&githubClient{baseURL: "http://127.0.0.1:1", http: http.DefaultClient})
 	request := httptest.NewRequest(http.MethodPost, "/api/readiness", strings.NewReader(`{"url":"https://example.com/acme/app/pull/7"}`))
@@ -271,9 +285,37 @@ func TestReadinessRejectsAnInvalidURL(t *testing.T) {
 	}
 }
 
-func TestReadinessRefusesAVerdictWhenThePullRequestClosesDuringEvaluation(t *testing.T) {
-	code, body := postReadiness(t, &readinessGitHub{stateAfterEvaluation: "closed"})
-	if code != http.StatusConflict || body.Verdict != "" {
-		t.Fatalf("got %d verdict %q, want 409 with no verdict", code, body.Verdict)
+func TestReadinessRefusesAVerdictWhenAFactChangesDuringEvaluation(t *testing.T) {
+	tests := []struct {
+		name string
+		fake *readinessGitHub
+	}{
+		{name: "head moves", fake: &readinessGitHub{headAfterEvaluation: olderSHA}},
+		{name: "pull request closes", fake: &readinessGitHub{stateAfterEvaluation: "closed"}},
+		{name: "pull request becomes a draft", fake: &readinessGitHub{draftAfterEvaluation: true}},
+		{name: "pull request is retargeted", fake: &readinessGitHub{baseAfterEvaluation: "release"}},
+		{name: "default branch changes", fake: &readinessGitHub{defaultAfterEvaluation: "trunk"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, body := postReadiness(t, tt.fake)
+			if code != http.StatusConflict || body.Verdict != "" {
+				t.Fatalf("got %d verdict %q, want 409 with no verdict", code, body.Verdict)
+			}
+		})
+	}
+}
+
+func TestReadinessReportsAnErrorWhenGitHubNamesNoHead(t *testing.T) {
+	code, body := postReadiness(t, &readinessGitHub{headSHA: "not-a-sha"})
+	if code != http.StatusBadGateway || body.Verdict != "" || body.Error == "" {
+		t.Fatalf("got %d verdict %q error %q, want 502 with an error", code, body.Verdict, body.Error)
+	}
+}
+
+func TestReadinessReportsAnUnknownDefaultBranch(t *testing.T) {
+	code, body := postReadiness(t, &readinessGitHub{noDefaultBranch: true})
+	if code != http.StatusBadGateway || body.Verdict != "" || !strings.Contains(body.Error, "default branch") {
+		t.Fatalf("got %d verdict %q error %q, want 502 naming the default branch", code, body.Verdict, body.Error)
 	}
 }

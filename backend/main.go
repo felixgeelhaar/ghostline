@@ -308,6 +308,8 @@ func (a api) loadQodoReview(c *gin.Context) {
 func respondGitHubError(c *gin.Context, err error) {
 	var statusErr statusError
 	switch {
+	case errors.Is(err, errDefaultBranchUnknown):
+		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub did not report the repository's default branch, so readiness cannot be checked."})
 	case errors.Is(err, errRepositoryVisibilityUnknown):
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Could not confirm that this repository is public; GitHub data was not loaded."})
 	// A private repository answers exactly like a missing one: the server token

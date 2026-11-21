@@ -5,6 +5,7 @@ import "time"
 // QodoReviewCandidate is one Qodo comment as the readiness rules see it. Summary marks
 // Qodo's PR summary, which names a commit but is not a code review.
 type QodoReviewCandidate struct {
+	CommentID      int64
 	Summary        bool
 	CommitSHA      string
 	URL            string
@@ -27,7 +28,8 @@ func SelectQodoReviewEvidence(reviews []QodoReviewCandidate, head string) (*Qodo
 			summaryNamesHead = summaryNamesHead || review.CommitSHA == head
 			continue
 		}
-		if latest == nil || review.UpdatedAt.After(latest.UpdatedAt) {
+		// GitHub timestamps have one-second resolution; on a tie the later comment wins.
+		if latest == nil || review.UpdatedAt.After(latest.UpdatedAt) || review.UpdatedAt.Equal(latest.UpdatedAt) && review.CommentID > latest.CommentID {
 			latest = review
 		}
 	}

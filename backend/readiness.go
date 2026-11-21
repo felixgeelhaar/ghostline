@@ -115,19 +115,17 @@ func (a api) loadReadiness(c *gin.Context) {
 			return
 		}
 	}
-	var repository struct {
-		DefaultBranch string `json:"default_branch"`
+	if !fullSHA.MatchString(pr.Head.SHA) {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub did not identify the pull request's head commit, so no readiness evidence can be tied to it."})
+		return
 	}
-	if err := a.gh.get(ctx, fmt.Sprintf("/repos/%s/%s", url.PathEscape(identity.Owner), url.PathEscape(identity.Name)), &repository); err != nil {
+	defaultBranch, err := fetchDefaultBranch(ctx, a.gh, identity)
+	if err != nil {
 		respondGitHubError(c, err)
 		return
 	}
-	if repository.DefaultBranch == "" {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub did not report the repository's default branch."})
-		return
-	}
 
-	evidence := gatherReadinessEvidence(ctx, a.gh, identity, pr, repository.DefaultBranch)
+	evidence := gatherReadinessEvidence(ctx, a.gh, identity, pr, defaultBranch)
 
 	// GitHub requests are separate snapshots. A verdict is only returned when the
 	// head did not move while its evidence was being read.
@@ -136,7 +134,12 @@ func (a api) loadReadiness(c *gin.Context) {
 		respondGitHubError(c, err)
 		return
 	}
-	if !sameReadinessSnapshot(pr, verified) || !verifiedIdentity.Equal(identity) {
+	verifiedDefault, err := fetchDefaultBranch(ctx, a.gh, identity)
+	if err != nil {
+		respondGitHubError(c, err)
+		return
+	}
+	if !sameReadinessSnapshot(pr, verified) || !verifiedIdentity.Equal(identity) || verifiedDefault != defaultBranch {
 		c.JSON(http.StatusConflict, gin.H{"error": "This pull request changed while its readiness was being checked. Check it again."})
 		return
 	}
@@ -160,6 +163,21 @@ func (a api) loadReadiness(c *gin.Context) {
 // unchanged: the head, whether it is open or a draft, and the branch it targets.
 func sameReadinessSnapshot(before, after githubReadinessPR) bool {
 	return before.Head.SHA == after.Head.SHA && before.State == after.State && before.Draft == after.Draft && before.Base.Ref == after.Base.Ref
+}
+
+var errDefaultBranchUnknown = errors.New("GitHub did not report the repository's default branch")
+
+func fetchDefaultBranch(ctx context.Context, gh *githubClient, repo domain.RepositoryIdentity) (string, error) {
+	var repository struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if err := gh.get(ctx, fmt.Sprintf("/repos/%s/%s", url.PathEscape(repo.Owner), url.PathEscape(repo.Name)), &repository); err != nil {
+		return "", err
+	}
+	if repository.DefaultBranch == "" {
+		return "", errDefaultBranchUnknown
+	}
+	return repository.DefaultBranch, nil
 }
 
 func fetchReadinessPR(ctx context.Context, gh *githubClient, owner, repo string, number int) (githubReadinessPR, domain.RepositoryIdentity, error) {
@@ -287,7 +305,7 @@ func qodoReviewCandidates(reviews []qodoReview) []domain.QodoReviewCandidate {
 	candidates := make([]domain.QodoReviewCandidate, 0, len(reviews))
 	for _, review := range reviews {
 		counts := review.severityCounts
-		candidates = append(candidates, domain.QodoReviewCandidate{Summary: review.Kind == "summary", CommitSHA: review.CommitSHA, URL: review.URL, UpdatedAt: review.updatedAt, High: counts.High, Medium: counts.Medium, Low: counts.Low, CountsReadable: counts.Readable})
+		candidates = append(candidates, domain.QodoReviewCandidate{CommentID: review.ID, Summary: review.Kind == "summary", CommitSHA: review.CommitSHA, URL: review.URL, UpdatedAt: review.updatedAt, High: counts.High, Medium: counts.Medium, Low: counts.Low, CountsReadable: counts.Readable})
 	}
 	return candidates
 }
