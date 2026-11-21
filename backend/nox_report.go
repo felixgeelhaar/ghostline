@@ -339,7 +339,7 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		if workflowHistoryTruncated {
 			result.Reason = "GitHub has more workflow history than Ghostline can inspect for this revision. Narrow the revision or try again after older runs expire."
 		} else if unlinkedRunFound {
-			result.Reason = "GitHub ran the Security workflow for this revision but did not link the run to a pull request, as it does for runs from forks, so its report cannot be attributed to this pull request and is not trusted."
+			result.Reason = "GitHub ran the Security workflow for this revision but did not link the run to a pull request, so its report cannot be attributed to this pull request and is not trusted. GitHub leaves runs unlinked, for example, when the pull request comes from a fork."
 		} else {
 			result.Reason = "GitHub has no pull-request workflow run for this revision."
 		}

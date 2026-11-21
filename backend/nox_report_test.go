@@ -413,7 +413,7 @@ func TestLoadNoxReportExplainsRunsGitHubDoesNotLinkToThePullRequest(t *testing.T
 	defer server.Close()
 
 	report := loadNoxReport(context.Background(), noxTestGitHubClient(server), "acme", "app", 7, sha)
-	want := "GitHub ran the Security workflow for this revision but did not link the run to a pull request, as it does for runs from forks, so its report cannot be attributed to this pull request and is not trusted."
+	want := "GitHub ran the Security workflow for this revision but did not link the run to a pull request, so its report cannot be attributed to this pull request and is not trusted. GitHub leaves runs unlinked, for example, when the pull request comes from a fork."
 	if report.Availability != noxReportUnavailable || report.Reason != want || artifactRequests != 0 {
 		t.Fatalf("an unlinked run was reported as missing or trusted: %+v, artifact requests=%d", report, artifactRequests)
 	}
