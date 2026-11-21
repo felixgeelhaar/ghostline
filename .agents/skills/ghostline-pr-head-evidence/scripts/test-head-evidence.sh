@@ -21,7 +21,13 @@ for arg in "$@"; do
   case "$arg" in api|--paginate) ;; *) path="$arg" ;; esac
 done
 file="$FIXTURES/$(printf '%s' "$path" | tr '/?=&.' '_____').json"
-if [[ -f "$file" ]]; then cat "$file"; else echo "fake gh: no fixture for $path" >&2; exit 1; fi
+if [[ -f "$file" ]]; then
+  cat "$file"
+  # Real gh (2.8x) prints this advisory on stderr even when the call succeeds.
+  echo "hint: if you need to wait for this pull request to be reviewed, merged, or closed before continuing, use this instead of polling:" >&2
+else
+  echo "fake gh: no fixture for $path" >&2; exit 1
+fi
 FAKE
 chmod +x "$tmp_dir/bin/gh"
 
@@ -106,6 +112,23 @@ expect behind-main 2 INCOMPLETE "behind main by 3"
 
 make_case unreadable-findings 0 "$(review_body "$head_sha" '<p>something new</p>')" success success
 expect unreadable-findings 2 INCOMPLETE "could not read finding counts"
+
+# A failed gh call, or any unexpected tool failure, must map to the documented exit 3.
+mkdir -p "$tmp_dir/api-error"
+out="$(PATH="$tmp_dir/bin:$PATH" FIXTURES="$tmp_dir/api-error" bash "$checker" 7 "$repo" 2>&1)" && status=0 || status=$?
+if [[ "$status" == 3 ]] && grep -qF "error: gh api repos/$repo/pulls/7 failed" <<<"$out"; then
+  echo "ok   api-error"
+else
+  echo "FAIL api-error: want exit 3 and the failed call named; got exit $status:"; sed 's/^/  | /' <<<"$out"; failures=$((failures + 1))
+fi
+
+fixture bad-json "repos/$repo/pulls/7" 'not json'
+out="$(PATH="$tmp_dir/bin:$PATH" FIXTURES="$tmp_dir/bad-json" bash "$checker" 7 "$repo" 2>&1)" && status=0 || status=$?
+if [[ "$status" == 3 ]] && grep -qF "error:" <<<"$out"; then
+  echo "ok   bad-json"
+else
+  echo "FAIL bad-json: want exit 3 with an error line; got exit $status:"; sed 's/^/  | /' <<<"$out"; failures=$((failures + 1))
+fi
 
 if (( failures > 0 )); then echo "$failures case(s) failed"; exit 1; fi
 echo "all head-evidence cases passed"

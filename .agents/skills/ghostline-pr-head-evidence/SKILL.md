@@ -30,7 +30,10 @@ Stop and ask the user if no PR number is given, or if more than one PR could be 
    - `0` PASS: the Qodo review names the head and has no High or Medium findings, every required check passed (or was skipped) on the head, and the branch is up to date.
    - `1` FAIL: the head has a High or Medium Qodo finding, or a required check failed.
    - `2` INCOMPLETE: something is missing. For example, no review names the head, a required check is missing or still running, the branch is behind `main`, the PR is a draft or closed, or the finding counts can't be read.
-   - `3` error: bad input, missing tool, or a failed `gh api` call. Stop and report the exact error. Don't retry with different credentials.
+   - `3` error: bad input, a missing tool, a failed `gh api` call, or an unreadable response. The `error:` line names the cause.
+   - Any other status, or output with no `verdict:` line, is also an error: the script didn't finish. Never read a verdict into partial output.
+
+   On an error, stop and report the exact output. Don't retry with different credentials, and don't edit the script during the check.
 3. Confirm independently that the `head:` line matches `gh pr view PR_NUMBER --json headRefOid -q .headRefOid`. If they differ, a push happened during the check: run step 1 again once. If they still differ, stop and report.
 4. Report to the user:
    - the PR and head SHA;

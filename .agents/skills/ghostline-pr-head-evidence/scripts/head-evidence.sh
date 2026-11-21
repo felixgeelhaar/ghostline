@@ -17,12 +17,21 @@ usage_error() { echo "error: $1" >&2; echo "usage: head-evidence.sh PR_NUMBER [O
 command -v gh >/dev/null || usage_error "gh is not installed"
 command -v jq >/dev/null || usage_error "jq is not installed"
 
+# Any unexpected failure (for example jq rejecting a response) is a tool error, not a verdict.
+# An api() failure already exits 3 with its own message, so only other failures are announced here.
+trap 'status=$?; if [[ "$status" != 3 ]]; then echo "error: unexpected failure (exit $status) at line $LINENO; no verdict" >&2; fi; exit 3' ERR
+
+# gh writes advisories such as "hint: ... gh event listen" to stderr even on success,
+# so stdout (the JSON) and stderr are captured separately.
 api() {
-  local out
-  if ! out="$(gh api "$@" 2>&1)"; then
-    echo "error: gh api ${*: -1} failed: $out" >&2
+  local out err_file
+  err_file="$(mktemp)"
+  if ! out="$(gh api "$@" 2>"$err_file")"; then
+    echo "error: gh api ${*: -1} failed: $(cat "$err_file")" >&2
+    rm -f "$err_file"
     exit 3
   fi
+  rm -f "$err_file"
   printf '%s' "$out"
 }
 
