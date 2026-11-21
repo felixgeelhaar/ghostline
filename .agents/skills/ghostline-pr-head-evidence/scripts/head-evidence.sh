@@ -115,7 +115,8 @@ gate_checks='["Go checks","Frontend checks","Security (nox)","warden/gate"]'
 required="$(api "repos/$repo/branches/$gate_branch/protection/required_status_checks" | jq -c --argjson gate "$gate_checks" '
   (if (.checks | length) > 0 then .checks else [.contexts[] | {context: ., app_id: null}] end) as $protected
   | ($protected + [$gate[] | select(. as $c | $protected | map(.context) | index($c) | not) | {context: ., app_id: null}])[]')"
-runs="$(api --paginate "repos/$repo/commits/$head/check-runs?per_page=100" | jq -s '[.[].check_runs[]]')"
+# filter=all: GitHub otherwise returns only the latest run of each check, hiding earlier runs.
+runs="$(api --paginate "repos/$repo/commits/$head/check-runs?per_page=100&filter=all" | jq -s '[.[].check_runs[]]')"
 statuses="$(api "repos/$repo/commits/$head/status" | jq '.statuses')"
 while IFS= read -r requirement; do
   [[ -n "$requirement" ]] || continue
@@ -123,14 +124,32 @@ while IFS= read -r requirement; do
   app_id="$(jq -r '.app_id // ""' <<<"$requirement")"
   matching="$(jq --arg c "$ctx" --arg app "$app_id" '[.[] | select(.name == $c and ($app == "" or ((.app.id // "") | tostring) == $app))] | sort_by(.id // 0, .started_at // "")' <<<"$runs")"
   result="$(jq -r 'last | if . == null then "" elif .status != "completed" then .status else .conclusion end' <<<"$matching")"
-  # AGENTS.md gate rules: a failed run is a real result even if a rerun on the same head passed.
-  earlier_failure="$(jq -r '.[:-1] | map(select(.status == "completed" and ((.conclusion // "") | IN("success","skipped","neutral") | not))) | first | .conclusion // ""' <<<"$matching")"
+  # docs/factory-verification.md: a run that reported a result stays real even if a rerun on the
+  # same head passed. Only a run that ended with no result (runner or network) may be rerun, once.
+  # GitHub records that cause only for a job that never started (startup_failure); a cancelled,
+  # timed-out or stale run may have been a hang in the code, so the engineer decides.
+  earlier="$(jq '.[:-1] | map(select(.status == "completed" and ((.conclusion // "") | IN("success","skipped","neutral") | not)) | .conclusion)' <<<"$matching")"
+  earlier_failure="$(jq -r 'map(select(IN("cancelled","timed_out","startup_failure","stale") | not)) | first // ""' <<<"$earlier")"
+  unknown_cause="$(jq -r 'map(select(IN("cancelled","timed_out","stale"))) | first // ""' <<<"$earlier")"
+  no_result="$(jq -r 'map(select(. == "startup_failure")) | "\(length) \(first // "")"' <<<"$earlier")"
   # A commit status carries no app, so it can only satisfy a requirement that names none.
   [[ -n "$result" || -n "$app_id" ]] || result="$(jq -r --arg c "$ctx" '[.[] | select(.context == $c)] | sort_by(.updated_at // "") | last | .state // ""' <<<"$statuses")"
   case "$result" in
     success|skipped|neutral)
-      echo "check $ctx: $result"
-      if [[ -n "$earlier_failure" ]]; then failed+=("$ctx: an earlier run on this head concluded $earlier_failure; a rerun passing does not clear it"); fi ;;
+      if [[ -n "$earlier_failure" ]]; then
+        echo "check $ctx: $result"
+        failed+=("$ctx: an earlier run on this head concluded $earlier_failure; a passing rerun does not clear it")
+      elif [[ -n "$unknown_cause" ]]; then
+        echo "check $ctx: $result"
+        incomplete+=("$ctx: an earlier run on this head ended $unknown_cause; GitHub does not show whether the runner or the code caused it, so the engineer decides")
+      elif [[ "${no_result%% *}" == 1 ]]; then
+        echo "check $ctx: $result on a rerun; an earlier run ended ${no_result#* } with no result"
+      elif [[ "${no_result%% *}" != 0 ]]; then
+        echo "check $ctx: $result"
+        incomplete+=("$ctx: ${no_result%% *} earlier runs on this head ended with no result; only one rerun is allowed, so the engineer decides")
+      else
+        echo "check $ctx: $result"
+      fi ;;
     "") echo "check $ctx: missing on head"; incomplete+=("$ctx: missing on head") ;;
     queued|in_progress|pending|waiting|requested) echo "check $ctx: $result"; incomplete+=("$ctx: $result") ;;
     *) echo "check $ctx: $result"; failed+=("$ctx: $result") ;;

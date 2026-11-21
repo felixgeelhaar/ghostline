@@ -70,6 +70,39 @@ func TestEvaluateReadiness(t *testing.T) {
 		{name: "earlier failure on the same head", change: func(e *ReadinessEvidence) {
 			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "failure"}}, e.CheckRuns...)
 		}, want: ReadinessFail, wantMessage: "an earlier run on this head concluded failure"},
+		{name: "earlier action_required run still counts as a result", change: func(e *ReadinessEvidence) {
+			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "action_required"}}, e.CheckRuns...)
+		}, want: ReadinessFail, wantMessage: "an earlier run on this head concluded action_required"},
+		{name: "a cancelled run may have been a hang in the code", change: func(e *ReadinessEvidence) {
+			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "cancelled"}}, e.CheckRuns...)
+		}, want: ReadinessIncomplete, wantMessage: "Go checks: an earlier run on this head ended cancelled; GitHub does not show whether the runner or the code caused it, so the engineer decides."},
+		{name: "a stale run's cause is unknown", change: func(e *ReadinessEvidence) {
+			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "stale"}}, e.CheckRuns...)
+		}, want: ReadinessIncomplete, wantMessage: "Go checks: an earlier run on this head ended stale; GitHub does not show whether the runner or the code caused it, so the engineer decides."},
+		{name: "a timed out run may be a hang in the code", change: func(e *ReadinessEvidence) {
+			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "timed_out"}}, e.CheckRuns...)
+		}, want: ReadinessIncomplete, wantMessage: "Go checks: an earlier run on this head ended timed_out; GitHub does not show whether the runner or the code caused it, so the engineer decides."},
+		{name: "a reported failure outranks a timeout", change: func(e *ReadinessEvidence) {
+			e.CheckRuns = append([]CheckRunEvidence{
+				{ID: 4, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "timed_out"},
+				{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "failure"},
+			}, e.CheckRuns...)
+		}, want: ReadinessFail, wantMessage: "an earlier run on this head concluded failure"},
+		{name: "one rerun after a startup failure", change: func(e *ReadinessEvidence) {
+			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "startup_failure"}}, e.CheckRuns...)
+		}, want: ReadinessPass, wantMessage: "Go checks: success on a rerun; an earlier run ended startup_failure with no result."},
+		{name: "a reported failure is not cleared by a later no-result run and pass", change: func(e *ReadinessEvidence) {
+			e.CheckRuns = append([]CheckRunEvidence{
+				{ID: 4, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "failure"},
+				{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "cancelled"},
+			}, e.CheckRuns...)
+		}, want: ReadinessFail, wantMessage: "an earlier run on this head concluded failure"},
+		{name: "more than one rerun needs the engineer", change: func(e *ReadinessEvidence) {
+			e.CheckRuns = append([]CheckRunEvidence{
+				{ID: 4, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "startup_failure"},
+				{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "startup_failure"},
+			}, e.CheckRuns...)
+		}, want: ReadinessIncomplete, wantMessage: "Go checks: 2 earlier runs on this head ended with no result; only one rerun is allowed, so the engineer decides."},
 		{name: "queued rerun is the latest run", change: func(e *ReadinessEvidence) {
 			e.CheckRuns = append(e.CheckRuns, CheckRunEvidence{ID: 90, Name: "Go checks", AppID: actionsID, Status: "queued"})
 		}, want: ReadinessIncomplete, wantMessage: "Go checks: queued"},
@@ -145,4 +178,41 @@ func hasReasonContaining(reasons []ReadinessReason, text string) bool {
 		}
 	}
 	return false
+}
+
+// A reason the engineer must decide links the run they need to inspect, not the passing rerun.
+func TestEvaluateReadinessLinksTheEarlierRunTheEngineerDecides(t *testing.T) {
+	tests := []struct {
+		name    string
+		earlier []CheckRunEvidence
+		want    string
+	}{
+		{name: "cancelled", earlier: []CheckRunEvidence{{ID: 5, Conclusion: "cancelled", URL: "https://github.com/acme/app/runs/5"}}, want: "https://github.com/acme/app/runs/5"},
+		{name: "timed out after a cancel", earlier: []CheckRunEvidence{
+			{ID: 4, Conclusion: "cancelled", URL: "https://github.com/acme/app/runs/4"},
+			{ID: 5, Conclusion: "timed_out", URL: "https://github.com/acme/app/runs/5"},
+		}, want: "https://github.com/acme/app/runs/4"},
+		{name: "two runs that never started", earlier: []CheckRunEvidence{
+			{ID: 4, Conclusion: "startup_failure", URL: "https://github.com/acme/app/runs/4"},
+			{ID: 5, Conclusion: "startup_failure", URL: "https://github.com/acme/app/runs/5"},
+		}, want: "https://github.com/acme/app/runs/5"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evidence := readyEvidence()
+			for _, run := range tt.earlier {
+				run.Name, run.AppID, run.Status = "Go checks", actionsID, "completed"
+				evidence.CheckRuns = append(evidence.CheckRuns, run)
+			}
+			for _, reason := range EvaluateReadiness(evidence).Reasons {
+				if reason.Subject == "check:Go checks" {
+					if reason.Outcome != ReadinessIncomplete || reason.SourceURL != tt.want {
+						t.Fatalf("reason = %+v, want incomplete linking %s", reason, tt.want)
+					}
+					return
+				}
+			}
+			t.Fatal("no reason for Go checks")
+		})
+	}
 }

@@ -43,17 +43,8 @@ type qodoReview struct {
 
 	// updatedAt is when GitHub last changed the comment; Qodo edits its review in place.
 	updatedAt time.Time
-	// severityCounts are read from the review's "View <severity> (N)" group headings.
-	severityCounts qodoSeverityCounts
-}
-
-// qodoSeverityCounts holds a code review's open-finding counts by severity. Readable is
-// false when any group or tally could not be attributed to High, Medium or Low.
-type qodoSeverityCounts struct {
-	High     int
-	Medium   int
-	Low      int
-	Readable bool
+	// severityCounts are attributed by the domain rules from the review's stated counts.
+	severityCounts domain.QodoSeverityCounts
 }
 
 type qodoFinding struct {
@@ -129,7 +120,7 @@ func parseQodoReviews(comments []githubIssueComment, repo domain.RepositoryIdent
 			review.Summary = qodoSummaryText(heading)
 		case "Code Review by Qodo":
 			review.Findings, review.UnparsedFindingCount = qodoFindings(doc, comment.ID, comment.HTMLURL)
-			review.severityCounts = qodoReviewSeverityCounts(doc)
+			review.severityCounts = domain.ReadQodoSeverityCounts(qodoReviewCountFacts(doc))
 			if len(review.Findings) == 0 && qodoReportsNoOpenFindings(nodeText(doc)) && !qodoHasNonzeroFindingGroup(doc) {
 				review.Kind = "no_open_findings"
 			} else {
@@ -150,31 +141,16 @@ func parseQodoReviews(comments []githubIssueComment, repo domain.RepositoryIdent
 	return reviews, unrecognized
 }
 
-// qodoReviewSeverityCounts reads open-finding counts from "View <severity> (N)" group
-// headings. It fails closed: a group naming another severity, a nonzero tally such as
-// "Rule violations (1)" that carries no severity, or a review with neither groups nor a
-// "no findings" statement makes the counts unreadable.
-func qodoReviewSeverityCounts(root *html.Node) qodoSeverityCounts {
-	counts := qodoSeverityCounts{Readable: true}
-	groups := 0
+// qodoReviewCountFacts reads the counts a Qodo code review states: its
+// "View <severity> (N)" group headings, its "<kind> (N)" tallies, and whether it says it
+// has no open findings. domain.ReadQodoSeverityCounts decides what they mean.
+func qodoReviewCountFacts(root *html.Node) domain.QodoReviewCounts {
+	var facts domain.QodoReviewCounts
 	var walk func(*html.Node)
 	walk = func(node *html.Node) {
 		if node.Type == html.ElementNode && node.Data == "summary" {
 			if match := qodoSeverityGroup.FindStringSubmatch(nodeText(node)); match != nil {
-				groups++
-				count, err := strconv.Atoi(match[2])
-				switch {
-				case err != nil:
-					counts.Readable = false
-				case strings.EqualFold(match[1], "high"):
-					counts.High += count
-				case strings.EqualFold(match[1], "medium"):
-					counts.Medium += count
-				case strings.EqualFold(match[1], "low"):
-					counts.Low += count
-				default:
-					counts.Readable = false
-				}
+				facts.Groups = append(facts.Groups, domain.QodoSeverityGroup{Severity: match[1], Count: statedCount(match[2])})
 			}
 		}
 		for child := node.FirstChild; child != nil; child = child.NextSibling {
@@ -184,14 +160,19 @@ func qodoReviewSeverityCounts(root *html.Node) qodoSeverityCounts {
 	walk(root)
 	text := nodeText(root)
 	for _, tally := range qodoFindingTally.FindAllStringSubmatch(text, -1) {
-		if count, err := strconv.Atoi(tally[2]); err != nil || count > 0 {
-			counts.Readable = false
-		}
+		facts.Tallies = append(facts.Tallies, domain.QodoFindingTally{Kind: tally[1], Count: statedCount(tally[2])})
 	}
-	if groups == 0 && !qodoReportsNoOpenFindings(text) {
-		counts.Readable = false
+	facts.StatesNoOpenFindings = qodoReportsNoOpenFindings(text)
+	return facts
+}
+
+// statedCount converts a count matched as digits; -1 marks one too large to read.
+func statedCount(digits string) int {
+	count, err := strconv.Atoi(digits)
+	if err != nil {
+		return -1
 	}
-	return counts
+	return count
 }
 
 func qodoHasNonzeroFindingGroup(root *html.Node) bool {
