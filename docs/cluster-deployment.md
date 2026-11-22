@@ -12,7 +12,7 @@ The general production rules in [hosted-deployment.md](hosted-deployment.md) app
 | Instances | `replicas: 1` with a `Recreate` rollout. Sessions, OAuth state and rate windows live in memory, so two pods must never run at once. |
 | Shutdown | `GHOSTLINE_SHUTDOWN_GRACE=25s` within `terminationGracePeriodSeconds: 30`. |
 | TLS | cert-manager `letsencrypt-prod`; HTTP redirects to HTTPS; Traefik adds HSTS and a referrer policy. |
-| Client IP | The app trusts Traefik's `X-Real-Ip` from the pod network `10.42.0.0/16`. The NetworkPolicy admits only Traefik's pods (`kube-system`, `app.kubernetes.io/name: traefik`) on port 8080, so no other pod can choose a rate-limit identity. |
+| Client IP | The app trusts Traefik's `X-Real-Ip` from the pod network `10.42.0.0/16`. The NetworkPolicy admits only Traefik's pods (`kube-system`, `app.kubernetes.io/name: traefik`), on port 8080 and on cert-manager's HTTP-01 solver port 8089, so no other pod can choose a rate-limit identity. |
 | Request IDs | Traefik forwards a client's `X-Request-ID` unchanged, so the `edge-headers` middleware removes it and the app generates one. |
 | Resources | Requests 25m CPU and 64 MiB; memory limit 384 MiB. The nodes run at 70–85% memory, so a one-time ResourceQuota and LimitRange also bound the whole namespace. |
 | Security | Non-root user 65532, read-only root filesystem, no capabilities, `RuntimeDefault` seccomp, no service-account token. |

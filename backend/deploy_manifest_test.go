@@ -203,6 +203,13 @@ func TestOnlyTraefikCanReachThePod(t *testing.T) {
 			t.Errorf("NetworkPolicy lacks %q", want)
 		}
 	}
+	// cert-manager's HTTP-01 solver pod runs in this namespace on 8089; without it
+	// Traefik answers the ACME challenge with a 502 and the certificate never issues.
+	for _, port := range []string{"port: 8080", "port: 8089"} {
+		if !strings.Contains(policy, port) {
+			t.Errorf("NetworkPolicy must admit Traefik on %s", port)
+		}
+	}
 	if strings.Contains(policy, "observability") || strings.Count(policy, "namespaceSelector") != 1 {
 		t.Error("NetworkPolicy must admit Traefik's pods and nothing else")
 	}

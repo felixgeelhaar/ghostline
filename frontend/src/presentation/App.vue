@@ -475,7 +475,7 @@ function optionalDate(value?: string) { return value ? date(value) : 'not report
 <template>
   <div class="shell">
     <a class="skip-link" href="#main-content">Skip to main content</a>
-    <header class="topbar"><a class="brand" href="#"><span class="brand-mark">G</span><span>GHOSTLINE<small>ENGINEERING CONTROL ROOM</small></span></a><span v-if="ghostlineSession?.authenticated && ghostlineSession.login" class="account"><span>{{ ghostlineSession.login }}</span><button type="button" @click="logout">SIGN OUT</button></span><span v-else class="live"><i></i> SYSTEM READY</span></header>
+    <header class="topbar"><a class="brand" href="#"><img class="brand-mark" src="/logo.svg" alt="" width="40" height="40"><span>GHOSTLINE<small>ENGINEERING CONTROL ROOM</small></span></a><span v-if="ghostlineSession?.authenticated && ghostlineSession.login" class="account"><span>{{ ghostlineSession.login }}</span><button type="button" @click="logout">SIGN OUT</button></span><span v-else class="live"><i></i> SYSTEM READY</span></header>
     <main id="main-content" tabindex="-1">
     <section v-if="sessionLoading && !ghostlineSession" class="auth-message" role="status"><p class="eyebrow">ACCESS CHECK</p><h1>Checking sign-in…</h1></section>
     <section v-else-if="sessionError && !ghostlineSession" class="auth-message" role="alert"><p class="eyebrow">CONNECTION REQUIRED</p><h1>Can’t verify access.</h1><p>{{ sessionError }}</p><button type="button" @click="refreshGhostlineSession">TRY AGAIN</button></section>
