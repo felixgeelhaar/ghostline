@@ -135,6 +135,21 @@ func bodyFailure(ctx context.Context, err error) string {
 	return "transport"
 }
 
+// readErrorRecorder passes reads through and keeps the first read error other than EOF,
+// so a decode failure can be traced to a body that stopped arriving.
+type readErrorRecorder struct {
+	r   io.Reader
+	err error
+}
+
+func (rec *readErrorRecorder) Read(p []byte) (int, error) {
+	n, err := rec.r.Read(p)
+	if err != nil && err != io.EOF && rec.err == nil {
+		rec.err = err
+	}
+	return n, err
+}
+
 func pathWithoutQuery(path string) string {
 	if i := strings.IndexAny(path, "?#"); i >= 0 {
 		return path[:i]

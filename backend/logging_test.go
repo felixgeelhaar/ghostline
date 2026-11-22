@@ -619,3 +619,23 @@ func (zeroReader) Read(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+
+// The cap must fit the largest page Ghostline reads: 100 issue comments at GitHub's
+// 65,536-character limit, each character escaped as \uXXXX in the worst case.
+func TestGitHubReplyCapFitsTheLargestCommentPage(t *testing.T) {
+	if worst := 100 * 65536 * len(`é`); maxGitHubResponseBytes < worst+worst/10 {
+		t.Fatalf("maxGitHubResponseBytes = %d, below the %d-byte worst-case comment page plus 10%% overhead", maxGitHubResponseBytes, worst)
+	}
+}
+
+func TestReadErrorRecorderKeepsOnlyTransportErrors(t *testing.T) {
+	clean := &readErrorRecorder{r: strings.NewReader("ok")}
+	if _, err := io.ReadAll(clean); err != nil || clean.err != nil {
+		t.Fatalf("clean read recorded %v", clean.err)
+	}
+	cut := &readErrorRecorder{r: io.MultiReader(strings.NewReader("o"), errReaderWith{io.ErrUnexpectedEOF})}
+	_, _ = io.ReadAll(cut)
+	if !errors.Is(cut.err, io.ErrUnexpectedEOF) {
+		t.Fatalf("cut read recorded %v, want io.ErrUnexpectedEOF", cut.err)
+	}
+}

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,10 +27,11 @@ var (
 	errRepositoryVisibilityUnknown = errors.New("repository visibility is missing")
 )
 
-// maxGitHubResponseBytes bounds one GitHub API reply, which is read whole before it is
-// decoded. The largest page Ghostline reads is 100 issue comments of at most 65,536
-// characters each, about 6.5 MB before JSON escaping.
-const maxGitHubResponseBytes = 16 << 20
+// maxGitHubResponseBytes guards against a pathological GitHub reply. Replies are decoded
+// as they stream in, so this is a ceiling, not a buffer. The largest page Ghostline
+// reads is 100 issue comments of at most 65,536 characters; even if every character
+// were escaped as \uXXXX that is about 39 MB, which fits.
+const maxGitHubResponseBytes = 64 << 20
 
 var errGitHubResponseTooLarge = errors.New("GitHub API response exceeded the size limit")
 
@@ -93,19 +93,20 @@ func (g *githubClient) getWithNextUsingToken(ctx context.Context, path string, t
 		}
 		return false, statusError{code: resp.StatusCode}
 	}
-	// Read the whole body first, so a body that stops arriving (transport) is told apart
-	// from one that arrived but does not decode (invalid_response).
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxGitHubResponseBytes+1))
-	if err != nil {
-		logUpstreamFailure(ctx, "github", path, resp.StatusCode, bodyFailure(ctx, err))
-		return false, err
-	}
-	if len(data) > maxGitHubResponseBytes {
-		logUpstreamFailure(ctx, "github", path, resp.StatusCode, "invalid_response")
-		return false, errGitHubResponseTooLarge
-	}
-	if err := json.NewDecoder(bytes.NewReader(data)).Decode(target); err != nil {
-		logUpstreamFailure(ctx, "github", path, resp.StatusCode, "invalid_response")
+	// Decode as the body streams in. The recorder tells a body that stopped arriving
+	// (transport) from one that arrived but does not decode (invalid_response).
+	limited := &io.LimitedReader{R: resp.Body, N: maxGitHubResponseBytes + 1}
+	body := &readErrorRecorder{r: limited}
+	if err := json.NewDecoder(body).Decode(target); err != nil {
+		switch {
+		case body.err != nil:
+			logUpstreamFailure(ctx, "github", path, resp.StatusCode, bodyFailure(ctx, body.err))
+		case limited.N <= 0:
+			logUpstreamFailure(ctx, "github", path, resp.StatusCode, "invalid_response")
+			return false, errGitHubResponseTooLarge
+		default:
+			logUpstreamFailure(ctx, "github", path, resp.StatusCode, "invalid_response")
+		}
 		return false, err
 	}
 	return hasNextLink(resp.Header.Values("Link")), nil
