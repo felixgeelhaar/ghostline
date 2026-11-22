@@ -593,3 +593,29 @@ func TestArtifactRedirectToTrailingDotGitHubNamesGitHub(t *testing.T) {
 		t.Fatalf("line = %v, want upstream github", line)
 	}
 }
+
+// A GitHub reply larger than any page Ghostline reads is refused before it can exhaust memory.
+func TestGitHubReplyIsSizeLimited(t *testing.T) {
+	transport := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		body := io.MultiReader(strings.NewReader(`{"pad":"`), io.LimitReader(zeroReader{}, maxGitHubResponseBytes+1), strings.NewReader(`"}`))
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Request: r, Body: io.NopCloser(body)}, nil
+	})
+	var buf bytes.Buffer
+	ctx := withRequestLogger(context.Background(), jsonTestLogger(&buf))
+	client := &githubClient{baseURL: "https://api.github.com", http: &http.Client{Transport: transport}}
+	if err := client.get(ctx, "/repos/acme/app/pulls/7", &struct{}{}); err == nil {
+		t.Fatal("an oversized reply was accepted")
+	}
+	if line := findLog(t, logLines(t, &buf), "upstream request failed"); line["failure"] != "invalid_response" {
+		t.Fatalf("line = %v, want invalid_response", line)
+	}
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'a'
+	}
+	return len(p), nil
+}
