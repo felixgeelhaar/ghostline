@@ -796,7 +796,7 @@ func (client *qodoReviewClient) post(ctx context.Context, apiKey, sessionID stri
 	}
 	response, err := client.http.Do(request)
 	if err != nil {
-		return empty, "", errors.New("could not connect to Qodo review service")
+		return empty, "", withContextCause(ctx, errors.New("could not connect to Qodo review service"))
 	}
 	defer response.Body.Close()
 	newSessionID := response.Header.Get("Mcp-Session-Id")
@@ -821,7 +821,7 @@ func (client *qodoReviewClient) post(ctx context.Context, apiKey, sessionID stri
 		}
 	}
 	if err != nil {
-		return empty, newSessionID, errors.New("Qodo MCP response was not valid JSON-RPC")
+		return empty, newSessionID, withContextCause(ctx, errors.New("Qodo MCP response was not valid JSON-RPC"))
 	}
 	if envelope.Error != nil {
 		return empty, newSessionID, fmt.Errorf("Qodo review service reported an MCP error (%d)", envelope.Error.Code)
@@ -1190,4 +1190,13 @@ func secureCredentialOrigin(raw string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// withContextCause keeps a request deadline or cancellation as the cause of err, so the
+// handler can answer 504 for a deadline. Transport details stay out of the error.
+func withContextCause(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("%w: %w", err, ctxErr)
+	}
+	return err
 }
