@@ -35,6 +35,27 @@ Stop it with:
 
 The app fails at startup unless production mode, required sign-in, the built frontend, an HTTPS callback, a 32-byte session secret, OAuth credentials, and at least one allowed GitHub account ID are configured. `/api` access requires GitHub sign-in. The container runs non-root from a minimal scratch image, drops Linux capabilities, and has a read-only filesystem. Docker Compose and the image health check call the unauthenticated `/api/health` endpoint; this confirms the HTTP process responds, not application correctness or revision validity.
 
+## Deploy a published image
+
+Each `v*` tag publishes `ghcr.io/felixgeelhaar/ghostline` for linux/amd64 and linux/arm64. Each image is tagged with its version and full commit SHA. `latest` moves only to the highest stable version, never to a prerelease such as `-rc.1` or an older version tagged later. The workflow publishes only commits already on `main`, reruns the Go and frontend checks first, and refuses to overwrite a version that is already published. The draft GitHub release for the tag lists the image digest. Deploy by that digest rather than a tag, so the running image cannot change under you and a rollback is a known previous digest:
+
+```yaml
+# compose.hosted.yml: replace the build: block with
+services:
+  ghostline:
+    image: ghcr.io/felixgeelhaar/ghostline@sha256:<digest from the release notes>
+```
+
+Before deploying, check that the image was built by this repository's release workflow and has an SBOM:
+
+```sh
+gh attestation verify oci://ghcr.io/felixgeelhaar/ghostline@sha256:<digest> --repo felixgeelhaar/ghostline --signer-workflow felixgeelhaar/ghostline/.github/workflows/release.yml
+gh attestation verify oci://ghcr.io/felixgeelhaar/ghostline@sha256:<digest> --repo felixgeelhaar/ghostline --signer-workflow felixgeelhaar/ghostline/.github/workflows/release.yml \
+  --predicate-type https://spdx.dev/Document/v2.3
+```
+
+Releases stay drafts until a maintainer adds a screenshot of the release candidate running (AGENTS.md rule 6) and publishes them.
+
 ## Timeouts and shutdown
 
 The server sets explicit connection limits. Each can be changed with a Go duration such as `30s`, the first four in `.env.hosted`; the app refuses to start with a value that is not a positive duration.
