@@ -28,6 +28,15 @@ describe('Ghostline brand', () => {
     for (const [, href] of links) expect(existsSync(join(frontend, 'public', href ?? ''))).toBe(true)
   })
 
+  it('ships real PNG fallbacks at their declared sizes', () => {
+    for (const [file, size] of [['public/favicon-32.png', 32], ['public/apple-touch-icon.png', 180]] as const) {
+      const png = readFileSync(join(frontend, file))
+      // PNG signature, then the IHDR chunk's width and height.
+      expect(png.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
+      expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([size, size])
+    }
+  })
+
   it('keeps the logo files self-contained, so the img-src self CSP renders them', () => {
     for (const file of ['public/favicon.svg', 'public/logo.svg']) {
       const svg = read(file)
