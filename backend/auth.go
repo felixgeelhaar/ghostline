@@ -368,10 +368,12 @@ func (m *authManager) exchangeCode(ctx context.Context, code, verifier string) (
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := m.client.Do(req)
 	if err != nil {
+		logUpstreamFailure(ctx, "github", req.URL.Path, 0, transportFailure(ctx, err))
 		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, "status")
 		return "", fmt.Errorf("OAuth token endpoint returned HTTP %d", resp.StatusCode)
 	}
 	var result struct {
@@ -380,6 +382,7 @@ func (m *authManager) exchangeCode(ctx context.Context, code, verifier string) (
 		Error       string `json:"error"`
 	}
 	if err := decodeLimitedJSON(resp.Body, &result); err != nil || result.Error != "" || result.AccessToken == "" || !strings.EqualFold(result.TokenType, "bearer") {
+		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, "invalid_response")
 		return "", errors.New("OAuth token response was incomplete")
 	}
 	return result.AccessToken, nil
@@ -395,10 +398,12 @@ func (m *authManager) fetchIdentity(ctx context.Context, token string) (domain.G
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	resp, err := m.client.Do(req)
 	if err != nil {
+		logUpstreamFailure(ctx, "github", req.URL.Path, 0, transportFailure(ctx, err))
 		return domain.GitHubIdentity{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, "status")
 		return domain.GitHubIdentity{}, fmt.Errorf("GitHub user endpoint returned HTTP %d", resp.StatusCode)
 	}
 	var result struct {

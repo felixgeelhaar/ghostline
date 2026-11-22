@@ -17,6 +17,13 @@ describe('setClientIpHeader', () => {
     expect(req.headers.get(CLIENT_IP_HEADER.toLowerCase())).toBe('192.168.1.10')
   })
 
+  it('drops a caller-supplied request ID so the backend generates one', () => {
+    const req = proxyRequest()
+    req.headers.set('x-request-id', 'forged-id')
+    setClientIpHeader(req, { socket: { remoteAddress: '192.168.1.10' } })
+    expect(req.headers.has('x-request-id')).toBe(false)
+  })
+
   it('removes the header when the connection address is unknown', () => {
     const req = proxyRequest()
     setClientIpHeader(req, { socket: {} })

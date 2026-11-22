@@ -100,7 +100,7 @@ func logUpstreamFailure(ctx context.Context, upstream, path string, status int, 
 	level := slog.LevelWarn
 	if status != 0 {
 		attrs = append(attrs, slog.Int("upstream_status", status))
-		if failure == "status" && status < http.StatusInternalServerError {
+		if failure == "status" && status >= http.StatusBadRequest && status < http.StatusInternalServerError {
 			level = slog.LevelInfo
 		}
 	}

@@ -52,11 +52,17 @@ function clientAddress(req: IncomingRequest, trustedProxies?: BlockList): string
   return remote
 }
 
-// Always overwrite, never forward: a caller must not be able to choose its own identity.
+// The backend trusts this proxy's X-Request-ID, so a caller's own value is dropped and
+// the backend generates the ID.
+export const REQUEST_ID_HEADER = 'X-Request-ID'
+
+// Always overwrite, never forward: a caller must not be able to choose its own identity
+// or the request ID its requests are logged under.
 export function setClientIpHeader(proxyReq: OutgoingProxyRequest, req: IncomingRequest, trustedProxies?: BlockList): void {
   const address = clientAddress(req, trustedProxies)
   if (address) proxyReq.setHeader(CLIENT_IP_HEADER, address)
   else proxyReq.removeHeader(CLIENT_IP_HEADER)
+  proxyReq.removeHeader(REQUEST_ID_HEADER)
 }
 
 export function clientIpAwareProxy(target: string, trustedProxyCIDRs: readonly string[] = []): ProxyOptions {

@@ -925,7 +925,10 @@ func (g *githubClient) downloadGitHubArtifact(ctx context.Context, endpoint stri
 				return err
 			}
 		}
-		redirected = true
+		// A redirect between GitHub hosts is still GitHub; anything else is storage.
+		if host := strings.ToLower(next.URL.Hostname()); host != "github.com" && host != "api.github.com" {
+			redirected = true
+		}
 		return nil
 	}
 	// After GitHub redirects to artifact storage, failures belong to storage. Its URL is
@@ -954,13 +957,16 @@ func (g *githubClient) downloadGitHubArtifact(ctx context.Context, endpoint stri
 		return nil, statusError{code: response.StatusCode}
 	}
 	if response.ContentLength > maxBytes {
+		logFailure(response.StatusCode, "invalid_response")
 		return nil, errors.New("artifact exceeds size limit")
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
 	if err != nil {
+		logFailure(response.StatusCode, transportFailure(ctx, err))
 		return nil, err
 	}
 	if int64(len(data)) > maxBytes {
+		logFailure(response.StatusCode, "invalid_response")
 		return nil, errors.New("artifact exceeds size limit")
 	}
 	return data, nil

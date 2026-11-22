@@ -827,9 +827,12 @@ func (client *qodoReviewClient) post(ctx context.Context, apiKey, sessionID stri
 		return empty, newSessionID, withContextCause(ctx, errors.New("Qodo MCP response was not valid JSON-RPC"))
 	}
 	if envelope.Error != nil {
+		// The error message can describe the caller's workspace, so only its kind is logged.
+		logUpstreamFailure(ctx, "qodo", request.URL.Path, response.StatusCode, "rpc_error")
 		return empty, newSessionID, fmt.Errorf("Qodo review service reported an MCP error (%d)", envelope.Error.Code)
 	}
 	if !mcpResponseIDMatches(envelope.ID, expectedID) {
+		logUpstreamFailure(ctx, "qodo", request.URL.Path, response.StatusCode, "invalid_response")
 		return empty, newSessionID, errors.New("Qodo MCP response did not match the request")
 	}
 	return envelope, newSessionID, nil

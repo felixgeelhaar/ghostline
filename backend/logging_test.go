@@ -246,6 +246,7 @@ func TestUpstreamFailureLevels(t *testing.T) {
 		{name: "server error", status: 502, failure: "status", level: "WARN"},
 		{name: "no response", status: 0, failure: "transport", level: "WARN"},
 		{name: "undecodable success", status: 200, failure: "invalid_response", level: "WARN"},
+		{name: "refused redirect", status: 302, failure: "status", level: "WARN"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -275,6 +276,9 @@ func TestArtifactStorageFailureNamesStorage(t *testing.T) {
 		{name: "storage error status", storage: func() (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}}, nil
 		}, want: map[string]any{"upstream": "artifact-storage", "upstream_status": float64(503), "failure": "status", "path": ""}},
+		{name: "storage body cut short", storage: func() (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(io.MultiReader(strings.NewReader("PK"), errReader{})), Header: http.Header{}}, nil
+		}, want: map[string]any{"upstream": "artifact-storage", "upstream_status": float64(200), "failure": "transport", "path": ""}},
 		{name: "storage unreachable", storage: func() (*http.Response, error) {
 			return nil, errors.New("dial tcp: lookup productionresultssa1.blob.core.windows.net?sig=signed-secret")
 		}, want: map[string]any{"upstream": "artifact-storage", "failure": "transport", "path": ""}},
@@ -307,5 +311,96 @@ func TestArtifactStorageFailureNamesStorage(t *testing.T) {
 				t.Fatalf("log contains the signed storage URL: %s", buf.String())
 			}
 		})
+	}
+}
+
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("connection reset by peer") }
+
+// A redirect between GitHub hosts is still GitHub: its failure names the API endpoint.
+func TestArtifactRedirectWithinGitHubNamesGitHub(t *testing.T) {
+	transport := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "api.github.com" {
+			return &http.Response{StatusCode: http.StatusFound, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{"Location": []string{"https://github.com/acme/app/suites/1/artifacts/9"}}, Request: r}, nil
+		}
+		return &http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}, Request: r}, nil
+	})
+	var buf bytes.Buffer
+	ctx := withRequestLogger(context.Background(), jsonTestLogger(&buf))
+	client := &githubClient{baseURL: "https://api.github.com", http: &http.Client{Transport: transport}}
+	if _, err := client.downloadGitHubArtifact(ctx, "/repos/acme/app/actions/artifacts/9/zip", 1<<20); err == nil {
+		t.Fatal("download succeeded")
+	}
+	line := findLog(t, logLines(t, &buf), "upstream request failed")
+	if line["upstream"] != "github" || line["path"] != "/repos/acme/app/actions/artifacts/9/zip" || line["upstream_status"] != float64(502) {
+		t.Fatalf("line = %v, want the GitHub endpoint", line)
+	}
+}
+
+func TestOAuthUpstreamFailuresAreLogged(t *testing.T) {
+	tests := []struct {
+		name    string
+		call    func(context.Context, *authManager) error
+		respond func(*http.Request) (*http.Response, error)
+		want    map[string]any
+	}{
+		{name: "token exchange status", call: func(ctx context.Context, m *authManager) error {
+			_, err := m.exchangeCode(ctx, "code-secret", "verifier-secret")
+			return err
+		}, respond: func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}, Request: r}, nil
+		}, want: map[string]any{"upstream": "github", "path": "/login/oauth/access_token", "upstream_status": float64(503), "failure": "status"}},
+		{name: "identity transport", call: func(ctx context.Context, m *authManager) error {
+			_, err := m.fetchIdentity(ctx, "token-secret")
+			return err
+		}, respond: func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("dial tcp: connection refused")
+		}, want: map[string]any{"upstream": "github", "path": "/user", "failure": "transport"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			ctx := withRequestLogger(context.Background(), jsonTestLogger(&buf).With("request_id", "r-3"))
+			auth := newAuthManager(testAuthConfig(), &http.Client{Transport: roundTripperFunc(tt.respond)})
+			if err := tt.call(ctx, auth); err == nil {
+				t.Fatal("call succeeded")
+			}
+			line := findLog(t, logLines(t, &buf), "upstream request failed")
+			for key, want := range tt.want {
+				if line[key] != want {
+					t.Fatalf("%s = %v, want %v; line %v", key, line[key], want, line)
+				}
+			}
+			if line["request_id"] != "r-3" {
+				t.Fatalf("line has no request ID: %v", line)
+			}
+			for _, secret := range []string{"code-secret", "verifier-secret", "token-secret", testAuthConfig().ClientSecret} {
+				if strings.Contains(buf.String(), secret) {
+					t.Fatalf("log contains %q: %s", secret, buf.String())
+				}
+			}
+		})
+	}
+}
+
+// Qodo can reject a call inside a successful HTTP response; that is an upstream failure too.
+func TestQodoRPCErrorIsLoggedAsUpstreamFailure(t *testing.T) {
+	transport := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Request: r,
+			Body: io.NopCloser(strings.NewReader(`{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"workspace detail-secret"}}`))}, nil
+	})
+	var buf bytes.Buffer
+	ctx := withRequestLogger(context.Background(), jsonTestLogger(&buf))
+	client := &qodoReviewClient{endpoint: "https://qodo.test/v1/tools/mcp/", http: &http.Client{Transport: transport}, logger: slog.New(slog.DiscardHandler)}
+	if _, err := client.fetch(ctx, "qodo-key", "https://github.com/acme/payments/pull/42"); err == nil {
+		t.Fatal("fetch succeeded")
+	}
+	line := findLog(t, logLines(t, &buf), "upstream request failed")
+	if line["upstream"] != "qodo" || line["failure"] != "rpc_error" || line["upstream_status"] != float64(200) || line["path"] != "/v1/tools/mcp/" {
+		t.Fatalf("line = %v", line)
+	}
+	if strings.Contains(buf.String(), "detail-secret") || strings.Contains(buf.String(), "qodo-key") {
+		t.Fatalf("log contains Qodo response details or the key: %s", buf.String())
 	}
 }
