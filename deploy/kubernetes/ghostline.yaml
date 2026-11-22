@@ -1,0 +1,253 @@
+# Ghostline on the k3s cluster at https://ghostline.felixgeelhaar.de.
+#
+# rollopsd applies the Deployment, Service, Middlewares and Ingress from the configs in
+# .rollops/; this file is the break-glass copy for `kubectl apply -f` when rollopsd is
+# down. backend/deploy_manifest_test.go fails CI when the two drift apart. The
+# Namespace and its NetworkPolicy are one-time setup applied from here.
+#
+# The ghostline-env Secret is created out of band, never in git, with values piped
+# through stdin so they stay out of process arguments and shell history
+# (docs/cluster-deployment.md, step 4):
+#   { printf 'GITHUB_OAUTH_CLIENT_SECRET=%s\n' "$(secret-manager read ...)"; ... } |
+#     kubectl -n ghostline create secret generic ghostline-env --from-env-file=/dev/stdin
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ghostline
+  labels:
+    ghostline.felixgeelhaar.de/setup: one-time
+---
+# Bound what the namespace can claim on nodes that run at 70-85% memory: one Ghostline
+# pod plus a rollout's overlap, never more.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ghostline
+  namespace: ghostline
+  labels:
+    ghostline.felixgeelhaar.de/setup: one-time
+spec:
+  hard:
+    pods: "2"
+    requests.cpu: 200m
+    requests.memory: 256Mi
+    limits.memory: 1Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ghostline
+  namespace: ghostline
+  labels:
+    ghostline.felixgeelhaar.de/setup: one-time
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 25m
+        memory: 64Mi
+      default:
+        memory: 384Mi
+      max:
+        memory: 512Mi
+---
+# Only Traefik's pods may reach the pod: the app trusts X-Real-Ip from the pod network,
+# so any other pod could choose its own rate-limit identity. Ghostline exposes no metrics,
+# so monitoring needs no access. The namespace and pod selectors form one peer (AND).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: namespace-isolation
+  namespace: ghostline
+  labels:
+    ghostline.felixgeelhaar.de/setup: one-time
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+              app.kubernetes.io/instance: traefik-kube-system
+      ports:
+        - port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ghostline
+  namespace: ghostline
+  labels:
+    app: ghostline
+spec:
+  selector:
+    app: ghostline
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# The app trusts Traefik's X-Request-ID (it is a trusted proxy), and Traefik forwards a
+# client's own value unchanged, so it is removed here and the app generates the ID. The
+# app sets its CSP, frame and nosniff headers; Traefik adds HSTS and the referrer policy.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: edge-headers
+  namespace: ghostline
+spec:
+  headers:
+    customRequestHeaders:
+      X-Request-ID: ""
+    stsSeconds: 31536000
+    stsIncludeSubdomains: false
+    referrerPolicy: strict-origin-when-cross-origin
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: https-redirect
+  namespace: ghostline
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ghostline
+  namespace: ghostline
+  labels:
+    app: ghostline
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.middlewares: ghostline-https-redirect@kubernetescrd,ghostline-edge-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: ghostline.felixgeelhaar.de
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ghostline
+                port:
+                  name: http
+  tls:
+    - hosts:
+        - ghostline.felixgeelhaar.de
+      secretName: ghostline-tls
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ghostline
+  namespace: ghostline
+  labels:
+    app: ghostline
+spec:
+  # Sessions, OAuth state, logout revocations and rate windows live in process memory,
+  # so exactly one pod runs, and a rollout stops the old pod before starting the new.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ghostline
+  template:
+    metadata:
+      labels:
+        app: ghostline
+    spec:
+      # Above GHOSTLINE_SHUTDOWN_GRACE so in-flight requests finish before SIGKILL.
+      terminationGracePeriodSeconds: 30
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ghostline
+          image: ghcr.io/felixgeelhaar/ghostline:v0.1.0-rc.1@sha256:1bde3dd8d413b598b1691cccd89c87928006e347d919adbafd34ac3643fa2c79
+          ports:
+            - name: http
+              containerPort: 8080
+          # Each value is read by name from ghostline-env, so a key added to the Secret
+          # later does not silently reach the process.
+          env:
+            - name: GHOSTLINE_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ghostline-env
+                  key: GHOSTLINE_SESSION_SECRET
+            - name: GITHUB_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ghostline-env
+                  key: GITHUB_OAUTH_CLIENT_ID
+            - name: GITHUB_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ghostline-env
+                  key: GITHUB_OAUTH_CLIENT_SECRET
+            - name: GHOSTLINE_ALLOWED_GITHUB_IDS
+              valueFrom:
+                secretKeyRef:
+                  name: ghostline-env
+                  key: GHOSTLINE_ALLOWED_GITHUB_IDS
+            # Optional: without it the server uses GitHub's lower anonymous rate limit.
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ghostline-env
+                  key: GITHUB_TOKEN
+                  optional: true
+            - name: GITHUB_OAUTH_CALLBACK_URL
+              value: https://ghostline.felixgeelhaar.de/auth/callback
+            - name: RATE_LIMIT_CLIENT_IP_HEADER
+              value: X-Real-Ip
+            - name: RATE_LIMIT_TRUSTED_PROXIES
+              value: 10.42.0.0/16
+            - name: GHOSTLINE_SHUTDOWN_GRACE
+              value: 25s
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

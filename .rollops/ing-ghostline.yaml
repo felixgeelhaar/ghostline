@@ -1,0 +1,46 @@
+# rollopsd applies this; deploy/kubernetes/ghostline.yaml is the break-glass copy and
+# must stay identical (backend/deploy_manifest_test.go).
+apiVersion: rollops.klarlabs.de/v1
+kind: RolloutConfig
+metadata:
+  name: ghostline-ing-ghostline
+spec:
+  target:
+    kind: kubernetes
+    ref: ghostline/prod/ing-ghostline
+    criticality: medium
+    spec:
+      namespace: ghostline
+      resource: ingress/ghostline
+      manifest: |
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: ghostline
+          namespace: ghostline
+          labels:
+            app: ghostline
+          annotations:
+            cert-manager.io/cluster-issuer: letsencrypt-prod
+            traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+            traefik.ingress.kubernetes.io/router.middlewares: ghostline-https-redirect@kubernetescrd,ghostline-edge-headers@kubernetescrd
+        spec:
+          ingressClassName: traefik
+          rules:
+            - host: ghostline.felixgeelhaar.de
+              http:
+                paths:
+                  - path: /
+                    pathType: Prefix
+                    backend:
+                      service:
+                        name: ghostline
+                        port:
+                          name: http
+          tls:
+            - hosts:
+                - ghostline.felixgeelhaar.de
+              secretName: ghostline-tls
+  strategy:
+    type: rolling
+  verification: shallow

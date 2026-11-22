@@ -1,0 +1,32 @@
+# rollopsd applies this; deploy/kubernetes/ghostline.yaml is the break-glass copy and
+# must stay identical (backend/deploy_manifest_test.go).
+apiVersion: rollops.klarlabs.de/v1
+kind: RolloutConfig
+metadata:
+  name: ghostline-svc-ghostline
+spec:
+  target:
+    kind: kubernetes
+    ref: ghostline/prod/svc-ghostline
+    criticality: low
+    spec:
+      namespace: ghostline
+      resource: service/ghostline
+      manifest: |
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ghostline
+          namespace: ghostline
+          labels:
+            app: ghostline
+        spec:
+          selector:
+            app: ghostline
+          ports:
+            - name: http
+              port: 80
+              targetPort: http
+  strategy:
+    type: rolling
+  verification: shallow

@@ -1,0 +1,30 @@
+# rollopsd applies this; deploy/kubernetes/ghostline.yaml is the break-glass copy and
+# must stay identical (backend/deploy_manifest_test.go).
+apiVersion: rollops.klarlabs.de/v1
+kind: RolloutConfig
+metadata:
+  name: ghostline-mw-edge-headers
+spec:
+  target:
+    kind: kubernetes
+    ref: ghostline/prod/mw-edge-headers
+    criticality: medium
+    spec:
+      namespace: ghostline
+      resource: middleware/edge-headers
+      manifest: |
+        apiVersion: traefik.io/v1alpha1
+        kind: Middleware
+        metadata:
+          name: edge-headers
+          namespace: ghostline
+        spec:
+          headers:
+            customRequestHeaders:
+              X-Request-ID: ""
+            stsSeconds: 31536000
+            stsIncludeSubdomains: false
+            referrerPolicy: strict-origin-when-cross-origin
+  strategy:
+    type: rolling
+  verification: shallow
