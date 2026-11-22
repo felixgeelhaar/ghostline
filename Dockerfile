@@ -1,16 +1,19 @@
-FROM node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS frontend-build
+# The frontend build output is static, and Go cross-compiles, so both build stages run on
+# the build machine's platform; only the scratch runtime differs per target platform.
+FROM --platform=$BUILDPLATFORM node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS frontend-build
 WORKDIR /src/frontend
 COPY --chown=65532:65532 frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY --chown=65532:65532 frontend/ ./
 RUN npm run build
 
-FROM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS backend-build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS backend-build
+ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY --chown=65532:65532 go.mod go.sum ./
 RUN go mod download
 COPY --chown=65532:65532 backend ./backend
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ghostline ./backend
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/ghostline ./backend
 
 FROM scratch AS runtime
 LABEL maintainer="Ghostline maintainers"

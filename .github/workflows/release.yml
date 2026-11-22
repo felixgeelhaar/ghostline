@@ -1,0 +1,246 @@
+# Publishes a versioned image for a v* tag and drafts its GitHub release.
+# A person adds the AGENTS.md rule 6 screenshot of the running release candidate
+# and publishes the draft; nothing here publishes the release.
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: read
+
+# One release at a time, so an older tag cannot finish last and move latest backwards.
+concurrency:
+  group: release
+  cancel-in-progress: false
+  # By default a group keeps one pending run and drops the rest; every tag must release.
+  queue: max
+
+env:
+  IMAGE: ghcr.io/felixgeelhaar/ghostline
+
+jobs:
+  # A tag can point at any commit; only commits already on main went through the PR gate
+  # (Warden, CI and a Qodo review of the exact head). The checks run again here anyway.
+  verify:
+    name: Verify the tagged commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require the commit to be on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Go checks
+        run: |
+          go vet ./...
+          go test ./... -count=1
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Frontend checks
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+  image:
+    name: Build, push and attest the image
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest || steps.published.outputs.digest }}
+      previous: ${{ steps.version.outputs.previous }}
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      # latest moves only to the highest stable version on main, never to a prerelease,
+      # an older version tagged later, or a tag that cannot release because it is off main.
+      # previous is the nearest earlier version tag, where the draft notes start.
+      - name: Decide whether this version becomes latest
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          semver='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+          if ! grep -Eq "$semver" <<<"$TAG"; then
+            echo "::error::$TAG is not a vMAJOR.MINOR.PATCH version."
+            exit 1
+          fi
+          # Ascending version order, a prerelease before its release (v1.0.0-rc.1 < v1.0.0).
+          versions() { git -c versionsort.suffix=- tag -l 'v*' --sort=v:refname "$@" | grep -E "$semver" || true; }
+          highest="$(versions --merged origin/main | { grep -v -- '-' || true; } | tail -n 1)"
+          # The tag itself is in the list (it points at this commit); previous is the one before it.
+          previous="$(versions --merged "$GITHUB_SHA" | awk -v tag="$TAG" '$0 == tag { print last; exit } { last = $0 }')"
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          latest=false
+          case "$TAG" in
+            *-*) ;;
+            *) if [ "$TAG" = "$highest" ]; then latest=true; fi ;;
+          esac
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A published version is immutable: moving a tag must not silently replace the
+      # image its release notes name. Fix a bad release with a new version. A rerun of
+      # this commit's own failed release may continue; only a definite "not found"
+      # counts as unpublished, so a registry error cannot open the way to an overwrite.
+      - name: Refuse to overwrite a published version
+        id: published
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if found="$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Image}}' 2>&1)"; then
+            revision="$(jq -r '[.. | objects | .Labels? // empty | .["org.opencontainers.image.revision"] // empty] | first // ""' <<<"$found")"
+            if [ "$revision" = "$GITHUB_SHA" ]; then
+              # Reuse the pushed image: a rebuild would give the version a new digest.
+              digest="$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r '.digest // empty')"
+              if ! grep -Eq '^sha256:[0-9a-f]{64}$' <<<"$digest"; then
+                echo "::error::Could not read the digest of $IMAGE:$TAG (got '${digest}')."
+                exit 1
+              fi
+              echo "$IMAGE:$TAG ($digest) was pushed from this commit by an earlier attempt; reusing it."
+              echo "digest=$digest" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::$IMAGE:$TAG is already published from ${revision:-an unknown commit}; tag a new version instead."
+            exit 1
+          fi
+          if grep -qi 'not found' <<<"$found"; then
+            exit 0
+          fi
+          echo "::error::Could not check whether $IMAGE:$TAG is published: $found"
+          exit 1
+
+      # vX.Y.Z and the full commit SHA always; latest as decided above.
+      - name: Compute tags and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=ref,event=tag
+            type=sha,format=long,prefix=
+            type=raw,value=latest,enable=${{ steps.version.outputs.latest == 'true' }}
+
+      - name: Build and push linux/amd64 and linux/arm64
+        id: build
+        if: steps.published.outputs.digest == ''
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Attestations come from the GitHub attestation steps below, which
+          # `gh attestation verify` checks; keep the image index free of BuildKit's.
+          provenance: false
+          sbom: false
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest || steps.published.outputs.digest }}
+          push-to-registry: true
+          # A storage record needs the artifact-metadata permission, which this job does not hold.
+          create-storage-record: false
+
+      - name: Generate the SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest || steps.published.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      # actions/attest, not attest-sbom: attest-sbom hides create-storage-record and
+      # leaves it on, which needs a permission this job does not hold.
+      - name: Attest the SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest || steps.published.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+
+  draft-release:
+    name: Draft the GitHub release
+    needs: image
+    runs-on: ubuntu-latest
+    # Creating a release needs contents: write; only this job, which builds nothing, holds it.
+    permissions:
+      contents: write
+    steps:
+      - name: Create the draft with notes since the previous tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+          PREVIOUS: ${{ needs.image.outputs.previous }}
+        run: |
+          set -euo pipefail
+          prerelease=()
+          case "$TAG" in *-*) prerelease=(--prerelease) ;; esac
+          # Start at the previous version tag even while it is still a draft release.
+          since=()
+          if [ -n "$PREVIOUS" ]; then since=(--notes-start-tag "$PREVIOUS"); fi
+          notes="$(cat <<NOTES
+          ## Image
+
+          \`${IMAGE}@${DIGEST}\` (linux/amd64, linux/arm64), also tagged \`${TAG}\`.
+          Deploy by digest; see docs/hosted-deployment.md. Verify provenance and SBOM with:
+
+          \`\`\`sh
+          gh attestation verify oci://${IMAGE}@${DIGEST} --repo felixgeelhaar/ghostline --signer-workflow felixgeelhaar/ghostline/.github/workflows/release.yml
+          gh attestation verify oci://${IMAGE}@${DIGEST} --repo felixgeelhaar/ghostline --signer-workflow felixgeelhaar/ghostline/.github/workflows/release.yml --predicate-type https://spdx.dev/Document/v2.3
+          \`\`\`
+
+          ## Before publishing
+
+          Add a screenshot of this image running (AGENTS.md rule 6), then publish the draft.
+          NOTES
+          )"
+          gh release create "$TAG" --draft --verify-tag --title "$TAG" \
+            --generate-notes "${since[@]}" --notes "$notes" "${prerelease[@]}"
