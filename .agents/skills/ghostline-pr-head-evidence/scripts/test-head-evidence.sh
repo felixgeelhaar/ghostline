@@ -72,7 +72,7 @@ make_case() { # make_case NAME BEHIND REVIEW_BODY GO_CONCLUSION WARDEN_STATE [SU
   fixture "$name" "repos/$repo/compare/main...$head_sha" "{\"behind_by\":$2}"
   fixture "$name" "repos/$repo/branches/main/protection/required_status_checks" "$required_json"
   fixture "$name" "repos/$repo/issues/7/comments?per_page=100" "$(comments_json "$3" "${6:-$old_sha}")"
-  fixture "$name" "repos/$repo/commits/$head_sha/check-runs?per_page=100" "$(checks_json "$4")"
+  fixture "$name" "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json "$4")"
   fixture "$name" "repos/$repo/commits/$head_sha/status" "$(statuses_json "$5")"
 }
 
@@ -117,11 +117,35 @@ expect unreadable-findings 2 INCOMPLETE "could not read finding counts"
 
 # Review findings from the local Qodo review of this skill (2026-11-21).
 make_case earlier-failure 0 "$(review_body "$head_sha" "$clean_groups")" success success
-fixture earlier-failure "repos/$repo/commits/$head_sha/check-runs?per_page=100" "$(checks_json success | jq '.check_runs += [{"name":"Go checks","status":"completed","conclusion":"failure","started_at":"2026-11-21T08:00:00Z","app":{"id":15368}}]')"
+fixture earlier-failure "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq '.check_runs += [{"name":"Go checks","status":"completed","conclusion":"failure","started_at":"2026-11-21T08:00:00Z","app":{"id":15368}}]')"
 expect earlier-failure 1 FAIL "Go checks: an earlier run on this head concluded failure"
 
+# docs/factory-verification.md: only a run that ended with no result may be rerun, once.
+earlier_run() { # earlier_run CONCLUSION HOUR
+  printf '{"name":"Go checks","status":"completed","conclusion":"%s","started_at":"2026-11-21T0%s:00:00Z","app":{"id":15368}}' "$1" "$2"
+}
+make_case startup-failure-rerun 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture startup-failure-rerun "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson e "$(earlier_run startup_failure 8)" '.check_runs += [$e]')"
+expect startup-failure-rerun 0 PASS "Go checks: success on a rerun; an earlier run ended startup_failure with no result"
+
+make_case failure-then-cancelled 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture failure-then-cancelled "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson a "$(earlier_run failure 7)" --argjson b "$(earlier_run cancelled 8)" '.check_runs += [$a, $b]')"
+expect failure-then-cancelled 1 FAIL "Go checks: an earlier run on this head concluded failure"
+
+make_case two-no-result 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture two-no-result "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson a "$(earlier_run startup_failure 7)" --argjson b "$(earlier_run startup_failure 8)" '.check_runs += [$a, $b]')"
+expect two-no-result 2 INCOMPLETE "Go checks: 2 earlier runs on this head ended with no result; only one rerun is allowed, so the engineer decides"
+
+make_case timed-out-rerun 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture timed-out-rerun "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson e "$(earlier_run timed_out 8)" '.check_runs += [$e]')"
+expect timed-out-rerun 2 INCOMPLETE "Go checks: an earlier run on this head ended timed_out; GitHub does not show whether the runner or the code caused it, so the engineer decides"
+
+make_case cancelled-rerun 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture cancelled-rerun "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson e "$(earlier_run cancelled 8)" '.check_runs += [$e]')"
+expect cancelled-rerun 2 INCOMPLETE "Go checks: an earlier run on this head ended cancelled; GitHub does not show whether the runner or the code caused it, so the engineer decides"
+
 make_case wrong-app 0 "$(review_body "$head_sha" "$clean_groups")" success success
-fixture wrong-app "repos/$repo/commits/$head_sha/check-runs?per_page=100" "$(checks_json success | jq '(.check_runs[] | select(.name == "Go checks") | .app.id) = 999')"
+fixture wrong-app "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq '(.check_runs[] | select(.name == "Go checks") | .app.id) = 999')"
 expect wrong-app 2 INCOMPLETE "Go checks: missing on head"
 
 make_case alt-login 0 "$(review_body "$head_sha" "$clean_groups")" success success
@@ -145,7 +169,7 @@ expect other-base 2 INCOMPLETE "targets release, not main"
 
 make_case protection-omits-nox 0 "$(review_body "$head_sha" "$clean_groups")" success success
 fixture protection-omits-nox "repos/$repo/branches/main/protection/required_status_checks" '{"contexts":["Go checks"],"checks":[{"context":"Go checks","app_id":15368}]}'
-fixture protection-omits-nox "repos/$repo/commits/$head_sha/check-runs?per_page=100" "$(checks_json success | jq '.check_runs |= map(select(.name != "Security (nox)"))')"
+fixture protection-omits-nox "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq '.check_runs |= map(select(.name != "Security (nox)"))')"
 expect protection-omits-nox 2 INCOMPLETE "Security (nox): missing on head"
 
 make_case upper-marker 0 "$(printf '<h3>Code Review by Qodo</h3>%s<!-- https://github.com/%s/commit/%s -->' "$clean_groups" "$repo" "$(tr a-f A-F <<<"$head_sha")")" success success
@@ -157,7 +181,7 @@ expect newer-status 0 PASS
 
 # Third local Qodo review round.
 make_case status-impersonates-app 0 "$(review_body "$head_sha" "$clean_groups")" success success
-fixture status-impersonates-app "repos/$repo/commits/$head_sha/check-runs?per_page=100" "$(checks_json success | jq '.check_runs |= map(select(.name != "Go checks"))')"
+fixture status-impersonates-app "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq '.check_runs |= map(select(.name != "Go checks"))')"
 fixture status-impersonates-app "repos/$repo/commits/$head_sha/status" '{"statuses":[{"context":"warden/gate","state":"success"},{"context":"Go checks","state":"success"}]}'
 expect status-impersonates-app 2 INCOMPLETE "Go checks: missing on head"
 
@@ -170,7 +194,7 @@ fixture summary-mentions-review "repos/$repo/issues/7/comments?per_page=100" "$(
 expect summary-mentions-review 2 INCOMPLETE "not the head"
 
 make_case queued-rerun 0 "$(review_body "$head_sha" "$clean_groups")" success success
-fixture queued-rerun "repos/$repo/commits/$head_sha/check-runs?per_page=100" "$(checks_json success | jq '.check_runs |= (to_entries | map(.value + {id: (100 + .key)})) | .check_runs += [{"id":900,"name":"Go checks","status":"queued","conclusion":null,"started_at":null,"app":{"id":15368}}]')"
+fixture queued-rerun "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq '.check_runs |= (to_entries | map(.value + {id: (100 + .key)})) | .check_runs += [{"id":900,"name":"Go checks","status":"queued","conclusion":null,"started_at":null,"app":{"id":15368}}]')"
 expect queued-rerun 2 INCOMPLETE "Go checks: queued"
 
 dotted="acme/widget.v2"
