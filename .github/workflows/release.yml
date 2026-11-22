@@ -5,7 +5,7 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
 
 permissions:
   contents: read
@@ -69,7 +69,8 @@ jobs:
       id-token: write
       attestations: write
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.build.outputs.digest || steps.published.outputs.digest }}
+      previous: ${{ steps.version.outputs.previous }}
     steps:
       - name: Check out the tagged commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -78,15 +79,26 @@ jobs:
           fetch-tags: true
           persist-credentials: false
 
-      # latest moves only to the highest stable version, never to a prerelease or to
-      # an older version tagged later.
+      # latest moves only to the highest stable version on main, never to a prerelease,
+      # an older version tagged later, or a tag that cannot release because it is off main.
+      # previous is the nearest earlier version tag, where the draft notes start.
       - name: Decide whether this version becomes latest
         id: version
         env:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          highest="$(git tag -l 'v*' --sort=-v:refname | grep -v -- '-' | head -n 1 || true)"
+          semver='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+          if ! grep -Eq "$semver" <<<"$TAG"; then
+            echo "::error::$TAG is not a vMAJOR.MINOR.PATCH version."
+            exit 1
+          fi
+          # Ascending version order, a prerelease before its release (v1.0.0-rc.1 < v1.0.0).
+          versions() { git -c versionsort.suffix=- tag -l 'v*' --sort=v:refname "$@" | grep -E "$semver" || true; }
+          highest="$(versions --merged origin/main | { grep -v -- '-' || true; } | tail -n 1)"
+          # The tag itself is in the list (it points at this commit); previous is the one before it.
+          previous="$(versions --merged "$GITHUB_SHA" | awk -v tag="$TAG" '$0 == tag { print last; exit } { last = $0 }')"
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
           latest=false
           case "$TAG" in
             *-*) ;;
@@ -109,6 +121,7 @@ jobs:
       # this commit's own failed release may continue; only a definite "not found"
       # counts as unpublished, so a registry error cannot open the way to an overwrite.
       - name: Refuse to overwrite a published version
+        id: published
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -116,7 +129,14 @@ jobs:
           if found="$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Image}}' 2>&1)"; then
             revision="$(jq -r '[.. | objects | .Labels? // empty | .["org.opencontainers.image.revision"] // empty] | first // ""' <<<"$found")"
             if [ "$revision" = "$GITHUB_SHA" ]; then
-              echo "$IMAGE:$TAG was pushed from this commit by an earlier attempt; continuing."
+              # Reuse the pushed image: a rebuild would give the version a new digest.
+              digest="$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r '.digest // empty')"
+              if ! grep -Eq '^sha256:[0-9a-f]{64}$' <<<"$digest"; then
+                echo "::error::Could not read the digest of $IMAGE:$TAG (got '${digest}')."
+                exit 1
+              fi
+              echo "$IMAGE:$TAG ($digest) was pushed from this commit by an earlier attempt; reusing it."
+              echo "digest=$digest" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             echo "::error::$IMAGE:$TAG is already published from ${revision:-an unknown commit}; tag a new version instead."
@@ -142,6 +162,7 @@ jobs:
 
       - name: Build and push linux/amd64 and linux/arm64
         id: build
+        if: steps.published.outputs.digest == ''
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -159,7 +180,7 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.build.outputs.digest || steps.published.outputs.digest }}
           push-to-registry: true
           # A storage record needs the artifact-metadata permission, which this job does not hold.
           create-storage-record: false
@@ -167,7 +188,7 @@ jobs:
       - name: Generate the SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
-          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest || steps.published.outputs.digest }}
           format: spdx-json
           output-file: sbom.spdx.json
           upload-artifact: false
@@ -178,7 +199,7 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.build.outputs.digest || steps.published.outputs.digest }}
           sbom-path: sbom.spdx.json
           push-to-registry: true
           create-storage-record: false
@@ -197,10 +218,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
           DIGEST: ${{ needs.image.outputs.digest }}
+          PREVIOUS: ${{ needs.image.outputs.previous }}
         run: |
           set -euo pipefail
           prerelease=()
           case "$TAG" in *-*) prerelease=(--prerelease) ;; esac
+          # Start at the previous version tag even while it is still a draft release.
+          since=()
+          if [ -n "$PREVIOUS" ]; then since=(--notes-start-tag "$PREVIOUS"); fi
           notes="$(cat <<NOTES
           ## Image
 
@@ -218,4 +243,4 @@ jobs:
           NOTES
           )"
           gh release create "$TAG" --draft --verify-tag --title "$TAG" \
-            --generate-notes --notes "$notes" "${prerelease[@]}"
+            --generate-notes "${since[@]}" --notes "$notes" "${prerelease[@]}"

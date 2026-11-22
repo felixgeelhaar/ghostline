@@ -29,8 +29,8 @@ func TestReleaseWorkflowKeepsItsSupplyChainRules(t *testing.T) {
 		}
 	}
 
-	if !regexp.MustCompile(`(?m)^on:\n  push:\n    tags: \["v\*"\]\n`).MatchString(workflow) {
-		t.Error("release workflow must run only for v* tag pushes")
+	if !regexp.MustCompile(`(?m)^on:\n  push:\n    tags: \["v\[0-9\]\+\.\[0-9\]\+\.\[0-9\]\+\*"\]\n`).MatchString(workflow) {
+		t.Error("release workflow must run only for vMAJOR.MINOR.PATCH tag pushes")
 	}
 	if !regexp.MustCompile(`(?m)^permissions:\n  contents: read\n`).MatchString(workflow) {
 		t.Error("workflow-level permissions must be contents: read")
@@ -82,12 +82,38 @@ func TestReleaseWorkflowKeepsItsSupplyChainRules(t *testing.T) {
 	}
 	// A rerun after a partial failure may continue only for the same commit, and only a
 	// definite "not found" may count as an unpublished version.
+	// A same-commit rerun reuses the digest it already pushed; rebuilding would give the
+	// version a new digest (BuildKit stamps a fresh creation time).
+	if !strings.Contains(jobs["image"], "if: steps.published.outputs.digest == ''") {
+		t.Error("the build must be skipped when this commit's image is already published")
+	}
+	if !strings.Contains(jobs["image"], "digest: ${{ steps.build.outputs.digest || steps.published.outputs.digest }}") {
+		t.Error("the job must report the existing digest when it skips the build")
+	}
+	// latest is decided among tags on main only: a tag elsewhere never releases, so it
+	// must not hold latest back.
+	if !strings.Contains(jobs["image"], "--merged origin/main") {
+		t.Error("latest must be decided among tags on main")
+	}
+	if !strings.Contains(jobs["image"], semverPattern) || !strings.Contains(jobs["image"], "versionsort.suffix=-") {
+		t.Error("tag lists must keep only semver tags and sort prereleases before their release")
+	}
+	if !strings.Contains(jobs["image"], "sha256:[0-9a-f]{64}") {
+		t.Error("a reused digest must be checked to be a sha256 digest")
+	}
+	if !strings.Contains(jobs["draft-release"], `--notes-start-tag "$PREVIOUS"`) || !strings.Contains(jobs["image"], "previous=") {
+		t.Error("draft notes must start at the previous tag, which the image job computes")
+	}
 	for _, guard := range []string{"org.opencontainers.image.revision", `"$GITHUB_SHA"`, "not found", "Could not check"} {
 		if !strings.Contains(jobs["image"], guard) {
 			t.Errorf("the overwrite guard does not handle %q", guard)
 		}
 	}
 }
+
+// semverPattern is the tag shape the workflow releases: vMAJOR.MINOR.PATCH with an
+// optional prerelease suffix.
+const semverPattern = `^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`
 
 // jobBlocks splits the jobs: section into each job's lines, keyed by job ID.
 func jobBlocks(workflow string) map[string]string {
