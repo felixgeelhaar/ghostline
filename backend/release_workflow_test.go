@@ -69,6 +69,24 @@ func TestReleaseWorkflowKeepsItsSupplyChainRules(t *testing.T) {
 	if !strings.Contains(jobs["image"], "imagetools inspect") {
 		t.Error("the image job must refuse to overwrite an already published version tag")
 	}
+	// The image job lacks the artifact-metadata permission a storage record needs, so every
+	// attestation must turn it off; attest-sbom cannot, because it hides that input.
+	if strings.Contains(workflow, "actions/attest-sbom@") {
+		t.Error("use actions/attest for the SBOM: attest-sbom always creates a storage record")
+	}
+	if got, want := strings.Count(jobs["image"], "create-storage-record: false"), strings.Count(jobs["image"], "push-to-registry: true"); got != want || want == 0 {
+		t.Errorf("%d of %d registry attestations turn off the storage record", got, want)
+	}
+	if !regexp.MustCompile(`(?m)^concurrency:\n(?:  .*\n)*  queue: max\n`).MatchString(workflow) {
+		t.Error("queued tags must wait in order (queue: max), not replace each other")
+	}
+	// A rerun after a partial failure may continue only for the same commit, and only a
+	// definite "not found" may count as an unpublished version.
+	for _, guard := range []string{"org.opencontainers.image.revision", `"$GITHUB_SHA"`, "not found", "Could not check"} {
+		if !strings.Contains(jobs["image"], guard) {
+			t.Errorf("the overwrite guard does not handle %q", guard)
+		}
+	}
 }
 
 // jobBlocks splits the jobs: section into each job's lines, keyed by job ID.

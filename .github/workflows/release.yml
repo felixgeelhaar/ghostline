@@ -14,6 +14,8 @@ permissions:
 concurrency:
   group: release
   cancel-in-progress: false
+  # By default a group keeps one pending run and drops the rest; every tag must release.
+  queue: max
 
 env:
   IMAGE: ghcr.io/felixgeelhaar/ghostline
@@ -103,15 +105,28 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # A published version is immutable: moving a tag must not silently replace the
-      # image its release notes name. Fix a bad release with a new version.
+      # image its release notes name. Fix a bad release with a new version. A rerun of
+      # this commit's own failed release may continue; only a definite "not found"
+      # counts as unpublished, so a registry error cannot open the way to an overwrite.
       - name: Refuse to overwrite a published version
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          if docker buildx imagetools inspect "$IMAGE:$TAG" >/dev/null 2>&1; then
-            echo "::error::$IMAGE:$TAG is already published; tag a new version instead."
+          set -euo pipefail
+          if found="$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Image}}' 2>&1)"; then
+            revision="$(jq -r '[.. | objects | .Labels? // empty | .["org.opencontainers.image.revision"] // empty] | first // ""' <<<"$found")"
+            if [ "$revision" = "$GITHUB_SHA" ]; then
+              echo "$IMAGE:$TAG was pushed from this commit by an earlier attempt; continuing."
+              exit 0
+            fi
+            echo "::error::$IMAGE:$TAG is already published from ${revision:-an unknown commit}; tag a new version instead."
             exit 1
           fi
+          if grep -qi 'not found' <<<"$found"; then
+            exit 0
+          fi
+          echo "::error::Could not check whether $IMAGE:$TAG is published: $found"
+          exit 1
 
       # vX.Y.Z and the full commit SHA always; latest as decided above.
       - name: Compute tags and labels
@@ -157,13 +172,16 @@ jobs:
           output-file: sbom.spdx.json
           upload-artifact: false
 
+      # actions/attest, not attest-sbom: attest-sbom hides create-storage-record and
+      # leaves it on, which needs a permission this job does not hold.
       - name: Attest the SBOM
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.build.outputs.digest }}
           sbom-path: sbom.spdx.json
           push-to-registry: true
+          create-storage-record: false
 
   draft-release:
     name: Draft the GitHub release
