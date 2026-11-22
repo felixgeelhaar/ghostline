@@ -796,11 +796,13 @@ func (client *qodoReviewClient) post(ctx context.Context, apiKey, sessionID stri
 	}
 	response, err := client.http.Do(request)
 	if err != nil {
+		logUpstreamFailure(ctx, "qodo", request.URL.Path, 0, transportFailure(ctx, err))
 		return empty, "", withContextCause(ctx, errors.New("could not connect to Qodo review service"))
 	}
 	defer response.Body.Close()
 	newSessionID := response.Header.Get("Mcp-Session-Id")
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		logUpstreamFailure(ctx, "qodo", request.URL.Path, response.StatusCode, "status")
 		return empty, newSessionID, qodoServiceError{status: response.StatusCode}
 	}
 	if !expectResult {
@@ -821,6 +823,7 @@ func (client *qodoReviewClient) post(ctx context.Context, apiKey, sessionID stri
 		}
 	}
 	if err != nil {
+		logUpstreamFailure(ctx, "qodo", request.URL.Path, response.StatusCode, "invalid_response")
 		return empty, newSessionID, withContextCause(ctx, errors.New("Qodo MCP response was not valid JSON-RPC"))
 	}
 	if envelope.Error != nil {

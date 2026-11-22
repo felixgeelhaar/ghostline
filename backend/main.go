@@ -283,12 +283,12 @@ func (a api) loadQodoReview(c *gin.Context) {
 	}
 	result, err := a.qodo.fetch(c.Request.Context(), apiKey, strings.TrimSpace(body.URL))
 	if err != nil {
-		logger := a.logger
-		if logger == nil {
-			logger = slog.Default()
+		logger := requestLogger(c.Request.Context(), a.logger)
+		attrs := []any{"pull_request", strings.TrimSpace(body.URL), "cause", strings.ReplaceAll(err.Error(), apiKey, "[redacted]")}
+		if serviceErr := (qodoServiceError{}); errors.As(err, &serviceErr) {
+			attrs = append(attrs, "upstream_status", serviceErr.StatusCode())
 		}
-		cause := strings.ReplaceAll(err.Error(), apiKey, "[redacted]")
-		logger.Error("Qodo structured review request failed", "pull_request", strings.TrimSpace(body.URL), "cause", cause)
+		logger.Error("Qodo structured review request failed", attrs...)
 		// The request deadline (see newHTTPServer) ended before Qodo answered.
 		if errors.Is(err, context.DeadlineExceeded) {
 			c.JSON(http.StatusGatewayTimeout, gin.H{"error": "Qodo took too long to answer, so the request was stopped. Try again shortly."})
@@ -360,8 +360,11 @@ func newRouterWithQodoLogger(gh *githubClient, qodo qodoReviewSource, limiter *r
 func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLimiter, identity clientIdentity, logger *slog.Logger, auth *authManager) *gin.Engine {
 	// OAuth callback URLs contain one-time credentials in their query string.
 	// Keep that path out of access logs while retaining request logging elsewhere.
+	if logger == nil {
+		logger = slog.Default()
+	}
 	r := gin.New()
-	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipPaths: []string{"/auth/callback", "/api/health"}}), gin.Recovery())
+	r.Use(requestLogging(logger, identity), gin.Recovery())
 	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	if auth == nil {
 		auth = newAuthManager(authConfig{}, nil)
@@ -392,6 +395,9 @@ func main() {
 		return
 	}
 
+	logger := newLogger(os.Getenv, os.Stderr)
+	slog.SetDefault(logger)
+
 	cfg, err := loadRateLimitConfig(os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -412,7 +418,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	r := newRouterWithAuth(newGitHubClient(), newQodoReviewClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity, slog.Default(), newAuthManager(auth, nil))
+	r := newRouterWithAuth(newGitHubClient(), newQodoReviewClient(), newRateLimiter(cfg.Requests, cfg.Window, time.Now), cfg.Identity, logger, newAuthManager(auth, nil))
 	if err := registerStaticSite(r, staticDirectory); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -433,8 +439,8 @@ func main() {
 	}
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, syscall.SIGTERM, os.Interrupt)
-	slog.Info("serving HTTP", "address", listener.Addr().String())
-	if err := serveUntilSignal(newHTTPServer(address, r, serverCfg), listener, signals, serverCfg.ShutdownGrace, slog.Default()); err != nil {
+	logger.Info("serving HTTP", "address", listener.Addr().String())
+	if err := serveUntilSignal(newHTTPServer(address, r, serverCfg), listener, signals, serverCfg.ShutdownGrace, logger); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

@@ -7,7 +7,7 @@ Ghostline can run as one production container behind an HTTPS ingress. The image
 1. Create a GitHub OAuth App for the exact public site origin. Set its callback to `https://your-host/auth/callback`.
 2. Copy `hosted.env.example` to `.env.hosted` and replace its non-secret values. Set `GHOSTLINE_ALLOWED_GITHUB_IDS` to the numeric GitHub IDs allowed to use this instance. Do not put OAuth secrets in `.env.hosted` or commit the file.
 3. Provide `GHOSTLINE_SESSION_SECRET` and `GITHUB_OAUTH_CLIENT_SECRET` from the host secret manager as environment variables to Docker Compose. Compose fails early if either is absent. The session secret must contain at least 32 random bytes.
-4. If an ingress sits in front of the container, configure it to terminate HTTPS and overwrite the configured client-IP header. Set `RATE_LIMIT_CLIENT_IP_HEADER` to that header and `RATE_LIMIT_TRUSTED_PROXIES` to the exact TCP peer address seen by the container. With a host ingress and Docker port publishing, inspect the Compose network gateway and use that gateway address as a `/32` CIDR; do not assume the ingress's public or private address reaches the container as its TCP peer. Leave both empty for direct connections without a proxy.
+4. If an ingress sits in front of the container, configure it to terminate HTTPS and overwrite the configured client-IP header and `X-Request-ID`. Set `RATE_LIMIT_CLIENT_IP_HEADER` to that header and `RATE_LIMIT_TRUSTED_PROXIES` to the exact TCP peer address seen by the container. With a host ingress and Docker port publishing, inspect the Compose network gateway and use that gateway address as a `/32` CIDR; do not assume the ingress's public or private address reaches the container as its TCP peer. Leave both empty for direct connections without a proxy.
 5. Keep the container port bound to loopback and let the ingress be the public entry point. Set `GHOSTLINE_BIND_ADDRESS` only to an interface appropriate for the deployment.
 
 Start and inspect the service:
@@ -50,6 +50,22 @@ The server sets explicit connection limits. Each can be changed with a Go durati
 Request headers are limited to 64 KiB. Each request's work, including its GitHub and Qodo calls, stops 5 seconds before the write timeout so the handler can still answer. A request that fails because a call was cut off returns `504` with a message, not a dropped connection. A pull-request import keeps its partial results: a part whose GitHub call was cut off is shown as unavailable, as it is for any other GitHub failure.
 
 On SIGTERM or SIGINT the server stops accepting connections, lets in-flight requests finish within the grace period, then exits 0. A second signal, or the end of the grace period, closes the remaining connections and exits 1. Docker sends SIGKILL when its stop timeout ends, so the stop timeout must be longer than the grace period. Docker's default of 10 seconds would kill the process mid-shutdown. `compose.hosted.yml` therefore sets both values side by side, `GHOSTLINE_SHUTDOWN_GRACE: 25s` and `stop_grace_period: 30s`, and a test keeps the stop timeout at least 5 seconds longer. Change them together in that file; `.env.hosted` cannot override the grace period, because Compose's `environment` takes precedence over `env_file`. When you run the image another way, give it a matching stop timeout, for example `docker run --stop-timeout 30`.
+
+## Logs
+
+With `GHOSTLINE_ENV=production` the service writes JSON logs to stderr, one object per line, ready for a log collector. Otherwise it writes readable `key=value` text. Read them with `docker compose … logs`.
+
+Every request gets a request ID, which the response returns as `X-Request-ID`. When the TCP peer is one of `RATE_LIMIT_TRUSTED_PROXIES`, an inbound `X-Request-ID` is kept, so the ingress's ID follows the request. As with the client-IP header, configure the ingress to set or overwrite `X-Request-ID`. An ingress that passes a client's header through lets the client choose the ID it is logged under. The value must be 1–128 letters, digits or `._:-`; any other value, or one from an untrusted peer, is replaced with a new ID.
+
+Each request writes one access line:
+
+```json
+{"level":"INFO","msg":"request","request_id":"3f9c…","method":"POST","route":"/api/import","status":200,"duration_ms":412.7}
+```
+
+`route` is the route template, never the raw path. Requests that match no API route, including the frontend's static files, log `unmatched`. Query strings, headers, cookies, tokens and Qodo keys are never logged. The health check calls `/api/health` every 10 seconds, so expect its line too.
+
+A failed GitHub or Qodo call writes an `upstream request failed` line with the same `request_id`. The line gives `upstream` (`github`, `qodo`, or `artifact-storage` when an artifact download fails after GitHub redirects it), the API `path` without its query (empty for artifact storage, whose URLs are signed), `upstream_status` when a response arrived, and `failure` (`status`, `invalid_response`, `transport`, `deadline` or `canceled`). It never includes a response body or a transport error's text, which can contain signed artifact download URLs. A 4xx response logs at `INFO`, because some lookups expect a 404; every other failure, including a 5xx, an unreadable response or a failure to connect, logs at `WARN`. To follow one request, filter on its `request_id`.
 
 ## Operating limits
 

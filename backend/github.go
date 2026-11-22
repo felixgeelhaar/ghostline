@@ -70,10 +70,12 @@ func (g *githubClient) getWithNextUsingToken(ctx context.Context, path string, t
 	}
 	resp, err := g.http.Do(req)
 	if err != nil {
+		logUpstreamFailure(ctx, "github", path, 0, transportFailure(ctx, err))
 		return false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		logUpstreamFailure(ctx, "github", path, resp.StatusCode, "status")
 		if resp.StatusCode == http.StatusNotFound {
 			return false, errNotFound
 		}
@@ -83,6 +85,7 @@ func (g *githubClient) getWithNextUsingToken(ctx context.Context, path string, t
 		return false, statusError{code: resp.StatusCode}
 	}
 	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+		logUpstreamFailure(ctx, "github", path, resp.StatusCode, "invalid_response")
 		return false, err
 	}
 	return hasNextLink(resp.Header.Values("Link")), nil

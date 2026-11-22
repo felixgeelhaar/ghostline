@@ -217,13 +217,13 @@ func (m *authManager) callback(c *gin.Context) {
 	}
 	token, err := m.exchangeCode(c.Request.Context(), code, pending.Verifier)
 	if err != nil {
-		m.logger.Error("GitHub OAuth callback failed", "stage", "token_exchange", "error", err)
+		requestLogger(c.Request.Context(), m.logger).Error("GitHub OAuth callback failed", "stage", "token_exchange", "error", err)
 		c.String(http.StatusBadGateway, "Ghostline could not complete GitHub sign-in. Try again shortly.")
 		return
 	}
 	identity, err := m.fetchIdentity(c.Request.Context(), token)
 	if err != nil {
-		m.logger.Error("GitHub OAuth callback failed", "stage", "identity_lookup", "error", err)
+		requestLogger(c.Request.Context(), m.logger).Error("GitHub OAuth callback failed", "stage", "identity_lookup", "error", err)
 		c.String(http.StatusBadGateway, "Ghostline could not verify the GitHub account. Try again shortly.")
 		return
 	}
