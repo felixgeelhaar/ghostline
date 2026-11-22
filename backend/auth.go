@@ -381,7 +381,11 @@ func (m *authManager) exchangeCode(ctx context.Context, code, verifier string) (
 		TokenType   string `json:"token_type"`
 		Error       string `json:"error"`
 	}
-	if err := decodeLimitedJSON(resp.Body, &result); err != nil || result.Error != "" || result.AccessToken == "" || !strings.EqualFold(result.TokenType, "bearer") {
+	if err := decodeLimitedJSON(resp.Body, &result); err != nil {
+		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, oauthBodyFailure(ctx, err))
+		return "", errors.New("OAuth token response was incomplete")
+	}
+	if result.Error != "" || result.AccessToken == "" || !strings.EqualFold(result.TokenType, "bearer") {
 		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, "invalid_response")
 		return "", errors.New("OAuth token response was incomplete")
 	}
@@ -411,15 +415,28 @@ func (m *authManager) fetchIdentity(ctx context.Context, token string) (domain.G
 		Login string `json:"login"`
 	}
 	if err := decodeLimitedJSON(resp.Body, &result); err != nil {
+		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, oauthBodyFailure(ctx, err))
 		return domain.GitHubIdentity{}, err
 	}
 	return domain.NewGitHubIdentity(result.ID, result.Login)
 }
 
+// errOAuthBodyRead marks a response body that stopped arriving, as opposed to one that
+// arrived but could not be decoded.
+var errOAuthBodyRead = errors.New("OAuth response body could not be read")
+
+// oauthBodyFailure classifies a decodeLimitedJSON error for the upstream log.
+func oauthBodyFailure(ctx context.Context, err error) string {
+	if errors.Is(err, errOAuthBodyRead) {
+		return bodyFailure(ctx, err)
+	}
+	return "invalid_response"
+}
+
 func decodeLimitedJSON(body io.Reader, target any) error {
 	data, err := io.ReadAll(io.LimitReader(body, maxOAuthResponseBytes+1))
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errOAuthBodyRead, err)
 	}
 	if len(data) > maxOAuthResponseBytes {
 		return errors.New("OAuth response was too large")

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -84,7 +86,14 @@ func (g *githubClient) getWithNextUsingToken(ctx context.Context, path string, t
 		}
 		return false, statusError{code: resp.StatusCode}
 	}
-	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+	// Read the whole body first, so a body that stops arriving (transport) is told apart
+	// from one that arrived but does not decode (invalid_response).
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logUpstreamFailure(ctx, "github", path, resp.StatusCode, bodyFailure(ctx, err))
+		return false, err
+	}
+	if err := json.NewDecoder(bytes.NewReader(data)).Decode(target); err != nil {
 		logUpstreamFailure(ctx, "github", path, resp.StatusCode, "invalid_response")
 		return false, err
 	}

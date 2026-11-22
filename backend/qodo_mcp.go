@@ -554,11 +554,8 @@ func (client *qodoReviewClient) fetch(ctx context.Context, apiKey, prURL string)
 			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 			defer cancel()
 			if cleanupErr := client.closeSession(cleanupCtx, apiKey, sessionID); cleanupErr != nil {
-				logger := client.logger
-				if logger == nil {
-					logger = slog.Default()
-				}
-				logger.Warn("Qodo MCP session cleanup failed", "cause", cleanupErr)
+				// cleanupCtx keeps the request's values, so the warning carries its request ID.
+				requestLogger(cleanupCtx, client.logger).Warn("Qodo MCP session cleanup failed", "cause", cleanupErr)
 			}
 		}()
 	}
@@ -815,15 +812,23 @@ func (client *qodoReviewClient) post(ctx context.Context, apiKey, sessionID stri
 	} else {
 		var data []byte
 		data, err = io.ReadAll(io.LimitReader(response.Body, maxQodoResponseBytes+1))
-		if err == nil && len(data) > maxQodoResponseBytes {
-			err = errors.New("Qodo review response exceeded the size limit")
+		if err != nil {
+			logUpstreamFailure(ctx, "qodo", request.URL.Path, response.StatusCode, bodyFailure(ctx, err))
+			return empty, newSessionID, withContextCause(ctx, errors.New("Qodo MCP response was not valid JSON-RPC"))
 		}
-		if err == nil {
+		if len(data) > maxQodoResponseBytes {
+			err = errors.New("Qodo review response exceeded the size limit")
+		} else {
 			envelope, err = decodeMCPEnvelope(data, contentType, expectedID)
 		}
 	}
 	if err != nil {
-		logUpstreamFailure(ctx, "qodo", request.URL.Path, response.StatusCode, "invalid_response")
+		// A stream is decoded while it is read, so a read failure there also lands here.
+		failure := "invalid_response"
+		if isMCPEventStream(contentType) && ctx.Err() != nil {
+			failure = transportFailure(ctx, err)
+		}
+		logUpstreamFailure(ctx, "qodo", request.URL.Path, response.StatusCode, failure)
 		return empty, newSessionID, withContextCause(ctx, errors.New("Qodo MCP response was not valid JSON-RPC"))
 	}
 	if envelope.Error != nil {

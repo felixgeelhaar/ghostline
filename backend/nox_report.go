@@ -926,7 +926,7 @@ func (g *githubClient) downloadGitHubArtifact(ctx context.Context, endpoint stri
 			}
 		}
 		// A redirect between GitHub hosts is still GitHub; anything else is storage.
-		if host := strings.ToLower(next.URL.Hostname()); host != "github.com" && host != "api.github.com" {
+		if host := strings.TrimSuffix(strings.ToLower(next.URL.Hostname()), "."); host != "github.com" && host != "api.github.com" {
 			redirected = true
 		}
 		return nil

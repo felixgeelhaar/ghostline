@@ -7,11 +7,13 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -247,6 +249,10 @@ func TestUpstreamFailureLevels(t *testing.T) {
 		{name: "no response", status: 0, failure: "transport", level: "WARN"},
 		{name: "undecodable success", status: 200, failure: "invalid_response", level: "WARN"},
 		{name: "refused redirect", status: 302, failure: "status", level: "WARN"},
+		{name: "server token rejected", status: 401, failure: "status", level: "WARN"},
+		{name: "quota or permission refusal", status: 403, failure: "status", level: "WARN"},
+		{name: "rate limited", status: 429, failure: "status", level: "WARN"},
+		{name: "validation refusal", status: 422, failure: "status", level: "WARN"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -402,5 +408,188 @@ func TestQodoRPCErrorIsLoggedAsUpstreamFailure(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "detail-secret") || strings.Contains(buf.String(), "qodo-key") {
 		t.Fatalf("log contains Qodo response details or the key: %s", buf.String())
+	}
+}
+
+func TestBodyFailureSeparatesStallsFromMalformedReplies(t *testing.T) {
+	expired, cancel := context.WithCancel(context.Background())
+	cancel()
+	tests := []struct {
+		name string
+		ctx  context.Context
+		err  error
+		want string
+	}{
+		{name: "body cut short", ctx: context.Background(), err: io.ErrUnexpectedEOF, want: "transport"},
+		{name: "connection reset", ctx: context.Background(), err: &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}, want: "transport"},
+		{name: "client timeout mid-body", ctx: context.Background(), err: timeoutError{}, want: "deadline"},
+		{name: "request canceled", ctx: expired, err: errors.New("read: use of closed connection"), want: "canceled"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := bodyFailure(tt.ctx, tt.err); got != tt.want {
+				t.Fatalf("bodyFailure = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "Client.Timeout exceeded while reading body" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
+
+type errReaderWith struct{ err error }
+
+func (e errReaderWith) Read([]byte) (int, error) { return 0, e.err }
+
+// A GitHub body that stops mid-read is a transport failure; one that arrived whole but
+// holds truncated JSON is malformed.
+func TestGitHubBodyFailuresAreClassified(t *testing.T) {
+	tests := []struct {
+		name string
+		body func() io.Reader
+		want string
+	}{
+		{name: "body cut short", body: func() io.Reader {
+			return io.MultiReader(strings.NewReader(`{"number":`), errReaderWith{io.ErrUnexpectedEOF})
+		}, want: "transport"},
+		{name: "truncated JSON", body: func() io.Reader { return strings.NewReader(`{"number":`) }, want: "invalid_response"},
+		{name: "not JSON", body: func() io.Reader { return strings.NewReader(`<html>`) }, want: "invalid_response"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			transport := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Request: r, Body: io.NopCloser(tt.body())}, nil
+			})
+			var buf bytes.Buffer
+			ctx := withRequestLogger(context.Background(), jsonTestLogger(&buf))
+			client := &githubClient{baseURL: "https://api.github.com", http: &http.Client{Transport: transport}}
+			if err := client.get(ctx, "/repos/acme/app/pulls/7", &struct{}{}); err == nil {
+				t.Fatal("get succeeded")
+			}
+			if line := findLog(t, logLines(t, &buf), "upstream request failed"); line["failure"] != tt.want {
+				t.Fatalf("line = %v, want failure %s", line, tt.want)
+			}
+		})
+	}
+}
+
+func TestGitHubDecodeKeepsAcceptingTrailingData(t *testing.T) {
+	transport := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Request: r, Body: io.NopCloser(strings.NewReader("{\"number\":7}\n"))}, nil
+	})
+	client := &githubClient{baseURL: "https://api.github.com", http: &http.Client{Transport: transport}}
+	var got struct{ Number int }
+	if err := client.get(context.Background(), "/repos/acme/app/pulls/7", &got); err != nil || got.Number != 7 {
+		t.Fatalf("get = %+v, %v", got, err)
+	}
+}
+
+func TestOAuthBodyFailuresAreClassified(t *testing.T) {
+	identity := func(ctx context.Context, m *authManager) error {
+		_, err := m.fetchIdentity(ctx, "token-secret")
+		return err
+	}
+	token := func(ctx context.Context, m *authManager) error {
+		_, err := m.exchangeCode(ctx, "code-secret", "verifier-secret")
+		return err
+	}
+	tests := []struct {
+		name string
+		call func(context.Context, *authManager) error
+		body func() io.Reader
+		want string
+	}{
+		{name: "identity reply truncated JSON", call: identity, body: func() io.Reader { return strings.NewReader(`{"id":`) }, want: "invalid_response"},
+		{name: "identity reply not JSON", call: identity, body: func() io.Reader { return strings.NewReader(`<html>`) }, want: "invalid_response"},
+		{name: "identity body cut short", call: identity, body: func() io.Reader {
+			return io.MultiReader(strings.NewReader(`{"id":`), errReaderWith{io.ErrUnexpectedEOF})
+		}, want: "transport"},
+		{name: "token reply cut short", call: token, body: func() io.Reader {
+			return io.MultiReader(strings.NewReader(`{"access_token":`), errReaderWith{io.ErrUnexpectedEOF})
+		}, want: "transport"},
+		{name: "token reply without a token", call: token, body: func() io.Reader { return strings.NewReader(`{"error":"bad_verification_code"}`) }, want: "invalid_response"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			ctx := withRequestLogger(context.Background(), jsonTestLogger(&buf))
+			auth := newAuthManager(testAuthConfig(), &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(tt.body()), Request: r}, nil
+			})})
+			if err := tt.call(ctx, auth); err == nil {
+				t.Fatal("call succeeded")
+			}
+			if line := findLog(t, logLines(t, &buf), "upstream request failed"); line["failure"] != tt.want || line["upstream_status"] != float64(200) {
+				t.Fatalf("line = %v, want failure %s", line, tt.want)
+			}
+		})
+	}
+}
+
+func TestQodoJSONReplyFailuresAreClassified(t *testing.T) {
+	tests := []struct {
+		name string
+		body func() io.Reader
+		want string
+	}{
+		{name: "body cut short", body: func() io.Reader {
+			return io.MultiReader(strings.NewReader(`{"jsonrpc":`), errReaderWith{io.ErrUnexpectedEOF})
+		}, want: "transport"},
+		{name: "truncated JSON", body: func() io.Reader { return strings.NewReader(`{"jsonrpc":`) }, want: "invalid_response"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			transport := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Request: r, Body: io.NopCloser(tt.body())}, nil
+			})
+			var buf bytes.Buffer
+			ctx := withRequestLogger(context.Background(), jsonTestLogger(&buf))
+			client := &qodoReviewClient{endpoint: "https://qodo.test/v1/tools/mcp/", http: &http.Client{Transport: transport}, logger: slog.New(slog.DiscardHandler)}
+			if _, err := client.fetch(ctx, "qodo-key", "https://github.com/acme/payments/pull/42"); err == nil {
+				t.Fatal("fetch succeeded")
+			}
+			if line := findLog(t, logLines(t, &buf), "upstream request failed"); line["failure"] != tt.want {
+				t.Fatalf("line = %v, want failure %s", line, tt.want)
+			}
+		})
+	}
+}
+
+func TestQodoSessionCleanupWarningCarriesTheRequestID(t *testing.T) {
+	transport := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodDelete {
+			return &http.Response{StatusCode: http.StatusInternalServerError, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Mcp-Session-Id": []string{"session-1"}, "Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`not json`)), Request: r}, nil
+	})
+	var buf bytes.Buffer
+	ctx := withRequestLogger(context.Background(), jsonTestLogger(&buf).With("request_id", "r-9"))
+	client := &qodoReviewClient{endpoint: "https://qodo.test/v1/tools/mcp/", http: &http.Client{Transport: transport}, logger: slog.New(slog.DiscardHandler)}
+	if _, err := client.fetch(ctx, "qodo-key", "https://github.com/acme/payments/pull/42"); err == nil {
+		t.Fatal("fetch succeeded")
+	}
+	if line := findLog(t, logLines(t, &buf), "Qodo MCP session cleanup failed"); line["request_id"] != "r-9" {
+		t.Fatalf("cleanup warning = %v, want request_id r-9", line)
+	}
+}
+
+func TestArtifactRedirectToTrailingDotGitHubNamesGitHub(t *testing.T) {
+	transport := roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "api.github.com" {
+			return &http.Response{StatusCode: http.StatusFound, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{"Location": []string{"https://github.com./acme/app/artifacts/9"}}, Request: r}, nil
+		}
+		return &http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}, Request: r}, nil
+	})
+	var buf bytes.Buffer
+	ctx := withRequestLogger(context.Background(), jsonTestLogger(&buf))
+	client := &githubClient{baseURL: "https://api.github.com", http: &http.Client{Transport: transport}}
+	if _, err := client.downloadGitHubArtifact(ctx, "/repos/acme/app/actions/artifacts/9/zip", 1<<20); err == nil {
+		t.Fatal("download succeeded")
+	}
+	if line := findLog(t, logLines(t, &buf), "upstream request failed"); line["upstream"] != "github" {
+		t.Fatalf("line = %v, want upstream github", line)
 	}
 }

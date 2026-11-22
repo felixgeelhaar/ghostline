@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -96,11 +97,12 @@ func logUpstreamFailure(ctx context.Context, upstream, path string, status int, 
 		slog.String("path", pathWithoutQuery(path)),
 		slog.String("failure", failure),
 	}
-	// A 4xx is often expected (some lookups probe for a 404); anything else is a fault.
+	// Only a 404 is routine (some lookups probe for one). A rejected token, quota or rate
+	// limit (401, 403, 429) is an operator problem, like any 5xx or failed read.
 	level := slog.LevelWarn
 	if status != 0 {
 		attrs = append(attrs, slog.Int("upstream_status", status))
-		if failure == "status" && status >= http.StatusBadRequest && status < http.StatusInternalServerError {
+		if failure == "status" && status == http.StatusNotFound {
 			level = slog.LevelInfo
 		}
 	}
@@ -117,6 +119,20 @@ func transportFailure(ctx context.Context, err error) string {
 	default:
 		return "transport"
 	}
+}
+
+// bodyFailure classifies an error from reading a response body, not from decoding it:
+// the body stopped arriving because of a timeout, cancellation or dropped connection.
+// Callers read the body fully before decoding, so a decode error is "invalid_response".
+func bodyFailure(ctx context.Context, err error) string {
+	if ctx.Err() != nil {
+		return transportFailure(ctx, err)
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "deadline"
+	}
+	return "transport"
 }
 
 func pathWithoutQuery(path string) string {
