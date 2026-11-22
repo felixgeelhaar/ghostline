@@ -28,16 +28,19 @@ The general production rules in [hosted-deployment.md](hosted-deployment.md) app
    ```
 
    This applies only the Namespace and NetworkPolicy, the two documents carrying that label. rollopsd applies the rest.
-4. **Secret.** The engineer runs this, reading each value from the secret manager:
+4. **Secret.** The engineer creates it. Values go through stdin, never in command arguments or shell history; read each one from the secret manager:
 
    ```sh
-   kubectl -n ghostline create secret generic ghostline-env \
-     --from-literal=GHOSTLINE_SESSION_SECRET="$(openssl rand -base64 48)" \
-     --from-literal=GITHUB_OAUTH_CLIENT_ID=<client id> \
-     --from-literal=GITHUB_OAUTH_CLIENT_SECRET=<client secret> \
-     --from-literal=GHOSTLINE_ALLOWED_GITHUB_IDS=<numeric GitHub IDs, comma-separated> \
-     --from-literal=GITHUB_TOKEN=<fine-grained token, public repositories, read-only>
+   {
+     printf 'GHOSTLINE_SESSION_SECRET=%s\n' "$(openssl rand -base64 48 | tr -d '\n')"
+     printf 'GITHUB_OAUTH_CLIENT_ID=%s\n' "$(secret-manager read ghostline/github-oauth-client-id)"
+     printf 'GITHUB_OAUTH_CLIENT_SECRET=%s\n' "$(secret-manager read ghostline/github-oauth-client-secret)"
+     printf 'GHOSTLINE_ALLOWED_GITHUB_IDS=%s\n' "$(secret-manager read ghostline/allowed-github-ids)"
+     printf 'GITHUB_TOKEN=%s\n' "$(secret-manager read ghostline/github-token)"
+   } | kubectl -n ghostline create secret generic ghostline-env --from-env-file=/dev/stdin
    ```
+
+   `printf` is a shell builtin, so the values never appear in a process list. Use a fine-grained `GITHUB_TOKEN` with read-only access to public repositories, and comma-separate multiple GitHub IDs.
 
 5. **rollopsd access:** give the fg GitHub App (installation for `felixgeelhaar`) access to `felixgeelhaar/ghostline`. Then add this entry to the `rollopsd-watch` ConfigMap in `rollops-system`:
 

@@ -193,3 +193,21 @@ func TestIngressStripsClientRequestIDs(t *testing.T) {
 		}
 	}
 }
+
+// Secret values must never reach process arguments or shell history, so the documented
+// setup reads them from stdin rather than --from-literal.
+func TestSecretSetupKeepsValuesOutOfArguments(t *testing.T) {
+	for _, file := range []string{"../docs/cluster-deployment.md", "../deploy/kubernetes/ghostline.yaml"} {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(raw)
+		if strings.Contains(text, "--from-literal") {
+			t.Errorf("%s passes secret values with --from-literal", file)
+		}
+		if !strings.Contains(text, "--from-env-file=/dev/stdin") {
+			t.Errorf("%s must create ghostline-env from stdin", file)
+		}
+	}
+}

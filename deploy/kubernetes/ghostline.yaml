@@ -5,11 +5,11 @@
 # down. backend/deploy_manifest_test.go fails CI when the two drift apart. The
 # Namespace and its NetworkPolicy are one-time setup applied from here.
 #
-# Secrets are created out of band, never in git (docs/hosted-deployment.md):
-#   kubectl -n ghostline create secret generic ghostline-env \
-#     --from-literal=GHOSTLINE_SESSION_SECRET=... --from-literal=GITHUB_OAUTH_CLIENT_ID=... \
-#     --from-literal=GITHUB_OAUTH_CLIENT_SECRET=... --from-literal=GHOSTLINE_ALLOWED_GITHUB_IDS=... \
-#     --from-literal=GITHUB_TOKEN=...
+# The ghostline-env Secret is created out of band, never in git, with values piped
+# through stdin so they stay out of process arguments and shell history
+# (docs/cluster-deployment.md, step 4):
+#   { printf 'GITHUB_OAUTH_CLIENT_SECRET=%s\n' "$(secret-manager read ...)"; ... } |
+#     kubectl -n ghostline create secret generic ghostline-env --from-env-file=/dev/stdin
 apiVersion: v1
 kind: Namespace
 metadata:
