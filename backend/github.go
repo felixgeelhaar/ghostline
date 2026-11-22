@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,6 +26,14 @@ var (
 	errPrivateRepository           = errors.New("private repository is not supported")
 	errRepositoryVisibilityUnknown = errors.New("repository visibility is missing")
 )
+
+// maxGitHubResponseBytes guards against a pathological GitHub reply. Replies are decoded
+// as they stream in, so this is a ceiling, not a buffer. The largest page Ghostline
+// reads is 100 issue comments of at most 65,536 characters; even if every character
+// were escaped as \uXXXX that is about 39 MB, which fits.
+const maxGitHubResponseBytes = 64 << 20
+
+var errGitHubResponseTooLarge = errors.New("GitHub API response exceeded the size limit")
 
 type statusError struct{ code int }
 
@@ -70,10 +79,12 @@ func (g *githubClient) getWithNextUsingToken(ctx context.Context, path string, t
 	}
 	resp, err := g.http.Do(req)
 	if err != nil {
+		logUpstreamFailure(ctx, "github", path, 0, transportFailure(ctx, err))
 		return false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		logUpstreamFailure(ctx, "github", path, resp.StatusCode, "status")
 		if resp.StatusCode == http.StatusNotFound {
 			return false, errNotFound
 		}
@@ -82,7 +93,20 @@ func (g *githubClient) getWithNextUsingToken(ctx context.Context, path string, t
 		}
 		return false, statusError{code: resp.StatusCode}
 	}
-	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+	// Decode as the body streams in. The recorder tells a body that stopped arriving
+	// (transport) from one that arrived but does not decode (invalid_response).
+	limited := &io.LimitedReader{R: resp.Body, N: maxGitHubResponseBytes + 1}
+	body := &readErrorRecorder{r: limited}
+	if err := json.NewDecoder(body).Decode(target); err != nil {
+		switch {
+		case body.err != nil:
+			logUpstreamFailure(ctx, "github", path, resp.StatusCode, bodyFailure(ctx, body.err))
+		case limited.N <= 0:
+			logUpstreamFailure(ctx, "github", path, resp.StatusCode, "invalid_response")
+			return false, errGitHubResponseTooLarge
+		default:
+			logUpstreamFailure(ctx, "github", path, resp.StatusCode, "invalid_response")
+		}
 		return false, err
 	}
 	return hasNextLink(resp.Header.Values("Link")), nil

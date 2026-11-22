@@ -915,21 +915,39 @@ func (g *githubClient) downloadGitHubArtifact(ctx context.Context, endpoint stri
 	}
 	client := *g.http
 	previousCheck := client.CheckRedirect
+	redirected := false
 	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
 		if len(via) >= 5 || next.URL.Scheme != "https" || !allowedArtifactHost(next.URL.Hostname()) {
 			return http.ErrUseLastResponse
 		}
 		if previousCheck != nil {
-			return previousCheck(next, via)
+			if err := previousCheck(next, via); err != nil {
+				return err
+			}
+		}
+		// A redirect between GitHub hosts is still GitHub; anything else is storage.
+		if host := strings.TrimSuffix(strings.ToLower(next.URL.Hostname()), "."); host != "github.com" && host != "api.github.com" {
+			redirected = true
 		}
 		return nil
 	}
+	// After GitHub redirects to artifact storage, failures belong to storage. Its URL is
+	// signed, so it is never logged, not even its path.
+	logFailure := func(status int, failure string) {
+		if redirected {
+			logUpstreamFailure(ctx, "artifact-storage", "", status, failure)
+			return
+		}
+		logUpstreamFailure(ctx, "github", endpoint, status, failure)
+	}
 	response, err := client.Do(req)
 	if err != nil {
+		logFailure(0, transportFailure(ctx, err))
 		return nil, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		logFailure(response.StatusCode, "status")
 		if response.StatusCode == http.StatusNotFound {
 			return nil, errNotFound
 		}
@@ -939,13 +957,16 @@ func (g *githubClient) downloadGitHubArtifact(ctx context.Context, endpoint stri
 		return nil, statusError{code: response.StatusCode}
 	}
 	if response.ContentLength > maxBytes {
+		logFailure(response.StatusCode, "invalid_response")
 		return nil, errors.New("artifact exceeds size limit")
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
 	if err != nil {
+		logFailure(response.StatusCode, transportFailure(ctx, err))
 		return nil, err
 	}
 	if int64(len(data)) > maxBytes {
+		logFailure(response.StatusCode, "invalid_response")
 		return nil, errors.New("artifact exceeds size limit")
 	}
 	return data, nil
