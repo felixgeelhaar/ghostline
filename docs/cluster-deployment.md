@@ -14,7 +14,7 @@ The general production rules in [hosted-deployment.md](hosted-deployment.md) app
 | TLS | cert-manager `letsencrypt-prod`; HTTP redirects to HTTPS; Traefik adds HSTS and a referrer policy. |
 | Client IP | The app trusts Traefik's `X-Real-Ip` from the pod network `10.42.0.0/16`. The NetworkPolicy admits only Traefik's pods (`kube-system`, `app.kubernetes.io/name: traefik`) on port 8080, so no other pod can choose a rate-limit identity. |
 | Request IDs | Traefik forwards a client's `X-Request-ID` unchanged, so the `edge-headers` middleware removes it and the app generates one. |
-| Resources | Requests 25m CPU and 64 MiB; memory limit 384 MiB. The nodes run at 70–85% memory. |
+| Resources | Requests 25m CPU and 64 MiB; memory limit 384 MiB. The nodes run at 70–85% memory, so a one-time ResourceQuota and LimitRange also bound the whole namespace. |
 | Security | Non-root user 65532, read-only root filesystem, no capabilities, `RuntimeDefault` seccomp, no service-account token. |
 
 ## One-time setup
@@ -27,7 +27,7 @@ The general production rules in [hosted-deployment.md](hosted-deployment.md) app
    kubectl apply -f deploy/kubernetes/ghostline.yaml -l ghostline.felixgeelhaar.de/setup=one-time
    ```
 
-   This applies only the Namespace and NetworkPolicy, the two documents carrying that label. rollopsd applies the rest.
+   This applies only the Namespace, NetworkPolicy, ResourceQuota and LimitRange, the documents carrying that label. rollopsd applies the rest.
 4. **Secret.** The engineer creates it. Values go through stdin, never in command arguments or shell history; read each one from the secret manager:
 
    ```sh

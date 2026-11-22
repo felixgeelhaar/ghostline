@@ -88,6 +88,12 @@ func rolloutConfigs(t *testing.T) []rolloutConfig {
 	return configs
 }
 
+// oneTimeSetup are the documents applied once from the break-glass file, outside rollops.
+var oneTimeSetup = map[string]bool{
+	"Namespace/ghostline": true, "NetworkPolicy/namespace-isolation": true,
+	"ResourceQuota/ghostline": true, "LimitRange/ghostline": true,
+}
+
 func TestRolloutManifestsMatchTheBreakGlassCopy(t *testing.T) {
 	docs := breakGlassDocs(t)
 	kinds := map[string]string{"deployment": "Deployment", "service": "Service", "ingress": "Ingress", "middleware": "Middleware"}
@@ -108,7 +114,7 @@ func TestRolloutManifestsMatchTheBreakGlassCopy(t *testing.T) {
 	}
 	for key := range docs {
 		// The namespace and its isolation policy are one-time setup outside rollops.
-		if !managed[key] && key != "Namespace/ghostline" && key != "NetworkPolicy/namespace-isolation" {
+		if !managed[key] && !oneTimeSetup[key] {
 			t.Errorf("break-glass %s has no .rollops config", key)
 		}
 	}
@@ -125,6 +131,8 @@ func TestDeploymentKeepsTheSingleInstanceContract(t *testing.T) {
 		"allowPrivilegeEscalation: false",
 		"path: /api/health",
 		"name: ghostline-env",
+		// Pod and container both pin the default seccomp profile.
+		"            seccompProfile:\n              type: RuntimeDefault",
 		"value: https://ghostline.felixgeelhaar.de/auth/callback",
 		// Traefik sets X-Real-Ip; only Traefik and observability can reach the pod.
 		"value: X-Real-Ip",
@@ -161,6 +169,28 @@ func TestDeploymentKeepsTheSingleInstanceContract(t *testing.T) {
 	stopDuration, _ := time.ParseDuration(stop[1] + "s")
 	if stopDuration < graceDuration+5*time.Second {
 		t.Errorf("terminationGracePeriodSeconds %s leaves less than 5s beyond the %s shutdown grace", stopDuration, graceDuration)
+	}
+}
+
+// The container reads only the keys it needs from ghostline-env, never the whole Secret.
+func TestDeploymentReadsNamedSecretKeys(t *testing.T) {
+	deployment := breakGlassDocs(t)["Deployment/ghostline"]
+	if strings.Contains(deployment, "envFrom") {
+		t.Error("Deployment loads the entire ghostline-env Secret with envFrom")
+	}
+	for _, key := range []string{"GHOSTLINE_SESSION_SECRET", "GITHUB_OAUTH_CLIENT_ID", "GITHUB_OAUTH_CLIENT_SECRET", "GHOSTLINE_ALLOWED_GITHUB_IDS", "GITHUB_TOKEN"} {
+		if !strings.Contains(deployment, "key: "+key) {
+			t.Errorf("Deployment does not read %s from ghostline-env", key)
+		}
+	}
+}
+
+func TestNamespaceBoundsItsResources(t *testing.T) {
+	docs := breakGlassDocs(t)
+	for _, key := range []string{"ResourceQuota/ghostline", "LimitRange/ghostline"} {
+		if !strings.Contains(docs[key], "ghostline.felixgeelhaar.de/setup: one-time") {
+			t.Errorf("break-glass file lacks a one-time %s", key)
+		}
 	}
 }
 

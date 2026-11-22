@@ -47,10 +47,33 @@ spec:
                   ports:
                     - name: http
                       containerPort: 8080
-                  envFrom:
-                    - secretRef:
-                        name: ghostline-env
                   env:
+                    - name: GHOSTLINE_SESSION_SECRET
+                      valueFrom:
+                        secretKeyRef:
+                          name: ghostline-env
+                          key: GHOSTLINE_SESSION_SECRET
+                    - name: GITHUB_OAUTH_CLIENT_ID
+                      valueFrom:
+                        secretKeyRef:
+                          name: ghostline-env
+                          key: GITHUB_OAUTH_CLIENT_ID
+                    - name: GITHUB_OAUTH_CLIENT_SECRET
+                      valueFrom:
+                        secretKeyRef:
+                          name: ghostline-env
+                          key: GITHUB_OAUTH_CLIENT_SECRET
+                    - name: GHOSTLINE_ALLOWED_GITHUB_IDS
+                      valueFrom:
+                        secretKeyRef:
+                          name: ghostline-env
+                          key: GHOSTLINE_ALLOWED_GITHUB_IDS
+                    - name: GITHUB_TOKEN
+                      valueFrom:
+                        secretKeyRef:
+                          name: ghostline-env
+                          key: GITHUB_TOKEN
+                          optional: true
                     - name: GITHUB_OAUTH_CALLBACK_URL
                       value: https://ghostline.felixgeelhaar.de/auth/callback
                     - name: RATE_LIMIT_CLIENT_IP_HEADER
@@ -79,6 +102,8 @@ spec:
                   securityContext:
                     allowPrivilegeEscalation: false
                     readOnlyRootFilesystem: true
+                    seccompProfile:
+                      type: RuntimeDefault
                     capabilities:
                       drop: [ALL]
                   volumeMounts:

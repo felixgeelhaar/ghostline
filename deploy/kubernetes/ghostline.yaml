@@ -17,6 +17,40 @@ metadata:
   labels:
     ghostline.felixgeelhaar.de/setup: one-time
 ---
+# Bound what the namespace can claim on nodes that run at 70-85% memory: one Ghostline
+# pod plus a rollout's overlap, never more.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ghostline
+  namespace: ghostline
+  labels:
+    ghostline.felixgeelhaar.de/setup: one-time
+spec:
+  hard:
+    pods: "2"
+    requests.cpu: 200m
+    requests.memory: 256Mi
+    limits.memory: 1Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ghostline
+  namespace: ghostline
+  labels:
+    ghostline.felixgeelhaar.de/setup: one-time
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 25m
+        memory: 64Mi
+      default:
+        memory: 384Mi
+      max:
+        memory: 512Mi
+---
 # Only Traefik's pods may reach the pod: the app trusts X-Real-Ip from the pod network,
 # so any other pod could choose its own rate-limit identity. Ghostline exposes no metrics,
 # so monitoring needs no access. The namespace and pod selectors form one peer (AND).
@@ -148,10 +182,36 @@ spec:
           ports:
             - name: http
               containerPort: 8080
-          envFrom:
-            - secretRef:
-                name: ghostline-env
+          # Each value is read by name from ghostline-env, so a key added to the Secret
+          # later does not silently reach the process.
           env:
+            - name: GHOSTLINE_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ghostline-env
+                  key: GHOSTLINE_SESSION_SECRET
+            - name: GITHUB_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ghostline-env
+                  key: GITHUB_OAUTH_CLIENT_ID
+            - name: GITHUB_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ghostline-env
+                  key: GITHUB_OAUTH_CLIENT_SECRET
+            - name: GHOSTLINE_ALLOWED_GITHUB_IDS
+              valueFrom:
+                secretKeyRef:
+                  name: ghostline-env
+                  key: GHOSTLINE_ALLOWED_GITHUB_IDS
+            # Optional: without it the server uses GitHub's lower anonymous rate limit.
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ghostline-env
+                  key: GITHUB_TOKEN
+                  optional: true
             - name: GITHUB_OAUTH_CALLBACK_URL
               value: https://ghostline.felixgeelhaar.de/auth/callback
             - name: RATE_LIMIT_CLIENT_IP_HEADER
@@ -180,6 +240,8 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
             capabilities:
               drop: [ALL]
           volumeMounts:
