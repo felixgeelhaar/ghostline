@@ -644,7 +644,7 @@ func TestOAuthCallbackLogsSafeFailureStage(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/auth/callback?state="+url.QueryEscape(stateValue)+"&code=code-secret", nil)
 	request.AddCookie(&http.Cookie{Name: oauthCookieNameForState(state.State), Value: value})
 	response := httptest.NewRecorder()
-	newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(10, time.Minute, time.Now), clientIdentity{}, nil, auth).ServeHTTP(response, request)
+	newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(10, time.Minute, time.Now), clientIdentity{}, auth.logger, auth).ServeHTTP(response, request)
 	if response.Code != http.StatusBadGateway {
 		t.Fatalf("callback status=%d, want 502", response.Code)
 	}

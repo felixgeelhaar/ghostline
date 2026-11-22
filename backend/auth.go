@@ -217,13 +217,13 @@ func (m *authManager) callback(c *gin.Context) {
 	}
 	token, err := m.exchangeCode(c.Request.Context(), code, pending.Verifier)
 	if err != nil {
-		m.logger.Error("GitHub OAuth callback failed", "stage", "token_exchange", "error", err)
+		requestLogger(c.Request.Context(), m.logger).Error("GitHub OAuth callback failed", "stage", "token_exchange", "error", err)
 		c.String(http.StatusBadGateway, "Ghostline could not complete GitHub sign-in. Try again shortly.")
 		return
 	}
 	identity, err := m.fetchIdentity(c.Request.Context(), token)
 	if err != nil {
-		m.logger.Error("GitHub OAuth callback failed", "stage", "identity_lookup", "error", err)
+		requestLogger(c.Request.Context(), m.logger).Error("GitHub OAuth callback failed", "stage", "identity_lookup", "error", err)
 		c.String(http.StatusBadGateway, "Ghostline could not verify the GitHub account. Try again shortly.")
 		return
 	}
@@ -368,10 +368,12 @@ func (m *authManager) exchangeCode(ctx context.Context, code, verifier string) (
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := m.client.Do(req)
 	if err != nil {
+		logUpstreamFailure(ctx, "github", req.URL.Path, 0, transportFailure(ctx, err))
 		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, "status")
 		return "", fmt.Errorf("OAuth token endpoint returned HTTP %d", resp.StatusCode)
 	}
 	var result struct {
@@ -379,7 +381,12 @@ func (m *authManager) exchangeCode(ctx context.Context, code, verifier string) (
 		TokenType   string `json:"token_type"`
 		Error       string `json:"error"`
 	}
-	if err := decodeLimitedJSON(resp.Body, &result); err != nil || result.Error != "" || result.AccessToken == "" || !strings.EqualFold(result.TokenType, "bearer") {
+	if err := decodeLimitedJSON(resp.Body, &result); err != nil {
+		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, oauthBodyFailure(ctx, err))
+		return "", errors.New("OAuth token response was incomplete")
+	}
+	if result.Error != "" || result.AccessToken == "" || !strings.EqualFold(result.TokenType, "bearer") {
+		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, "invalid_response")
 		return "", errors.New("OAuth token response was incomplete")
 	}
 	return result.AccessToken, nil
@@ -395,10 +402,12 @@ func (m *authManager) fetchIdentity(ctx context.Context, token string) (domain.G
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	resp, err := m.client.Do(req)
 	if err != nil {
+		logUpstreamFailure(ctx, "github", req.URL.Path, 0, transportFailure(ctx, err))
 		return domain.GitHubIdentity{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, "status")
 		return domain.GitHubIdentity{}, fmt.Errorf("GitHub user endpoint returned HTTP %d", resp.StatusCode)
 	}
 	var result struct {
@@ -406,15 +415,28 @@ func (m *authManager) fetchIdentity(ctx context.Context, token string) (domain.G
 		Login string `json:"login"`
 	}
 	if err := decodeLimitedJSON(resp.Body, &result); err != nil {
+		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, oauthBodyFailure(ctx, err))
 		return domain.GitHubIdentity{}, err
 	}
 	return domain.NewGitHubIdentity(result.ID, result.Login)
 }
 
+// errOAuthBodyRead marks a response body that stopped arriving, as opposed to one that
+// arrived but could not be decoded.
+var errOAuthBodyRead = errors.New("OAuth response body could not be read")
+
+// oauthBodyFailure classifies a decodeLimitedJSON error for the upstream log.
+func oauthBodyFailure(ctx context.Context, err error) string {
+	if errors.Is(err, errOAuthBodyRead) {
+		return bodyFailure(ctx, err)
+	}
+	return "invalid_response"
+}
+
 func decodeLimitedJSON(body io.Reader, target any) error {
 	data, err := io.ReadAll(io.LimitReader(body, maxOAuthResponseBytes+1))
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errOAuthBodyRead, err)
 	}
 	if len(data) > maxOAuthResponseBytes {
 		return errors.New("OAuth response was too large")
