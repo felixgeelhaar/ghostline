@@ -134,6 +134,8 @@ func (a api) loadCheckAnnotations(c *gin.Context) {
 	}
 	var statusErr statusError
 	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		respondGitHubError(c, err)
 	case err == errNotFound || errors.Is(err, errPrivateRepository):
 		c.JSON(http.StatusNotFound, map[string]string{"error": "GitHub did not return annotations for that check run."})
 	case errors.Is(err, errRepositoryVisibilityUnknown):
