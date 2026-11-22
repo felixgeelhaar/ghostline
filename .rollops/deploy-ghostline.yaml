@@ -1,0 +1,98 @@
+# rollopsd applies this; deploy/kubernetes/ghostline.yaml is the break-glass copy and
+# must stay identical (backend/deploy_manifest_test.go).
+apiVersion: rollops.klarlabs.de/v1
+kind: RolloutConfig
+metadata:
+  name: ghostline
+spec:
+  target:
+    kind: kubernetes
+    ref: ghostline/prod/deploy-ghostline
+    criticality: medium
+    spec:
+      namespace: ghostline
+      resource: deployment/ghostline
+      image: ghcr.io/felixgeelhaar/ghostline:v0.1.0-rc.1@sha256:1bde3dd8d413b598b1691cccd89c87928006e347d919adbafd34ac3643fa2c79
+      manifest: |
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ghostline
+          namespace: ghostline
+          labels:
+            app: ghostline
+        spec:
+          replicas: 1
+          strategy:
+            type: Recreate
+          selector:
+            matchLabels:
+              app: ghostline
+          template:
+            metadata:
+              labels:
+                app: ghostline
+            spec:
+              terminationGracePeriodSeconds: 30
+              automountServiceAccountToken: false
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                seccompProfile:
+                  type: RuntimeDefault
+              containers:
+                - name: ghostline
+                  image: ghcr.io/felixgeelhaar/ghostline:v0.1.0-rc.1@sha256:1bde3dd8d413b598b1691cccd89c87928006e347d919adbafd34ac3643fa2c79
+                  ports:
+                    - name: http
+                      containerPort: 8080
+                  envFrom:
+                    - secretRef:
+                        name: ghostline-env
+                  env:
+                    - name: GITHUB_OAUTH_CALLBACK_URL
+                      value: https://ghostline.felixgeelhaar.de/auth/callback
+                    - name: RATE_LIMIT_CLIENT_IP_HEADER
+                      value: X-Real-Ip
+                    - name: RATE_LIMIT_TRUSTED_PROXIES
+                      value: 10.42.0.0/16
+                    - name: GHOSTLINE_SHUTDOWN_GRACE
+                      value: 25s
+                  readinessProbe:
+                    httpGet:
+                      path: /api/health
+                      port: http
+                    periodSeconds: 10
+                  livenessProbe:
+                    httpGet:
+                      path: /api/health
+                      port: http
+                    initialDelaySeconds: 10
+                    periodSeconds: 30
+                  resources:
+                    requests:
+                      cpu: 25m
+                      memory: 64Mi
+                    limits:
+                      memory: 384Mi
+                  securityContext:
+                    allowPrivilegeEscalation: false
+                    readOnlyRootFilesystem: true
+                    capabilities:
+                      drop: [ALL]
+                  volumeMounts:
+                    - name: tmp
+                      mountPath: /tmp
+              volumes:
+                - name: tmp
+                  emptyDir:
+                    sizeLimit: 64Mi
+  strategy:
+    type: rolling
+  verification: shallow
+  # A new image arrives as a pull request (rollops/image/ghostline) that a person merges,
+  # matching Ghostline's own rule that every merge needs explicit approval.
+  imagePolicy:
+    mode: minor
+    writeback: pull-request

@@ -1,0 +1,27 @@
+# rollopsd applies this; deploy/kubernetes/ghostline.yaml is the break-glass copy and
+# must stay identical (backend/deploy_manifest_test.go).
+apiVersion: rollops.klarlabs.de/v1
+kind: RolloutConfig
+metadata:
+  name: ghostline-mw-https-redirect
+spec:
+  target:
+    kind: kubernetes
+    ref: ghostline/prod/mw-https-redirect
+    criticality: medium
+    spec:
+      namespace: ghostline
+      resource: middleware/https-redirect
+      manifest: |
+        apiVersion: traefik.io/v1alpha1
+        kind: Middleware
+        metadata:
+          name: https-redirect
+          namespace: ghostline
+        spec:
+          redirectScheme:
+            scheme: https
+            permanent: true
+  strategy:
+    type: rolling
+  verification: shallow
