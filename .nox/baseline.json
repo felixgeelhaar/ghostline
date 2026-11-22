@@ -150,7 +150,7 @@
       "rule_id": "IAC-131",
       "file_path": ".rollops/deploy-ghostline.yaml",
       "severity": "medium",
-      "reason": "Informational: the Deployment does have a NetworkPolicy. deploy/kubernetes/ghostline.yaml defines namespace-isolation, which admits only Traefik's pods (kube-system, app.kubernetes.io/name=traefik) on port 8080; backend/deploy_manifest_test.go TestOnlyTraefikCanReachThePod keeps it. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "Informational: the Deployment does have a NetworkPolicy. deploy/kubernetes/ghostline.yaml defines namespace-isolation, which admits only Traefik's pods (kube-system, app.kubernetes.io/name=traefik) on port 8080; backend/deploy_manifest_test.go TestOnlyTraefikCanReachThePod keeps it. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -158,7 +158,7 @@
       "rule_id": "IAC-131",
       "file_path": "deploy/kubernetes/ghostline.yaml",
       "severity": "medium",
-      "reason": "Informational: the Deployment does have a NetworkPolicy. deploy/kubernetes/ghostline.yaml defines namespace-isolation, which admits only Traefik's pods (kube-system, app.kubernetes.io/name=traefik) on port 8080; backend/deploy_manifest_test.go TestOnlyTraefikCanReachThePod keeps it. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "Informational: the Deployment does have a NetworkPolicy. deploy/kubernetes/ghostline.yaml defines namespace-isolation, which admits only Traefik's pods (kube-system, app.kubernetes.io/name=traefik) on port 8080; backend/deploy_manifest_test.go TestOnlyTraefikCanReachThePod keeps it. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -166,7 +166,7 @@
       "rule_id": "IAC-141",
       "file_path": ".rollops/deploy-ghostline.yaml",
       "severity": "medium",
-      "reason": "Deliberate: Ghostline keeps sessions, OAuth state, logout revocations and rate windows in process memory (docs/hosted-deployment.md, docs/cluster-deployment.md), so exactly one pod may run; a second replica would split sessions and rate limits. TestDeploymentKeepsTheSingleInstanceContract enforces replicas: 1. Remove when shared session storage exists. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "Deliberate: Ghostline keeps sessions, OAuth state, logout revocations and rate windows in process memory (docs/hosted-deployment.md, docs/cluster-deployment.md), so exactly one pod may run; a second replica would split sessions and rate limits. TestDeploymentKeepsTheSingleInstanceContract enforces replicas: 1. Remove when shared session storage exists. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -174,7 +174,7 @@
       "rule_id": "IAC-141",
       "file_path": "deploy/kubernetes/ghostline.yaml",
       "severity": "medium",
-      "reason": "Deliberate: Ghostline keeps sessions, OAuth state, logout revocations and rate windows in process memory (docs/hosted-deployment.md, docs/cluster-deployment.md), so exactly one pod may run; a second replica would split sessions and rate limits. TestDeploymentKeepsTheSingleInstanceContract enforces replicas: 1. Remove when shared session storage exists. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "Deliberate: Ghostline keeps sessions, OAuth state, logout revocations and rate windows in process memory (docs/hosted-deployment.md, docs/cluster-deployment.md), so exactly one pod may run; a second replica would split sessions and rate limits. TestDeploymentKeepsTheSingleInstanceContract enforces replicas: 1. Remove when shared session storage exists. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -182,7 +182,7 @@
       "rule_id": "IAC-294",
       "file_path": ".rollops/deploy-ghostline.yaml",
       "severity": "medium",
-      "reason": "False positive in CI's pinned Nox 1.67.0: the emptyDir does set sizeLimit: 64Mi on the next line. Nox 1.69.0 does not report it (local scan, 2026-11-22). Remove when nox.yml moves to Nox >= 1.69.0. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "False positive in CI's pinned Nox 1.67.0: the emptyDir does set sizeLimit: 64Mi on the next line. Nox 1.69.0 does not report it (local scan, 2026-11-22). Remove when nox.yml moves to Nox >= 1.69.0. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -190,7 +190,7 @@
       "rule_id": "IAC-294",
       "file_path": "deploy/kubernetes/ghostline.yaml",
       "severity": "medium",
-      "reason": "False positive in CI's pinned Nox 1.67.0: the emptyDir does set sizeLimit: 64Mi on the next line. Nox 1.69.0 does not report it (local scan, 2026-11-22). Remove when nox.yml moves to Nox >= 1.69.0. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "False positive in CI's pinned Nox 1.67.0: the emptyDir does set sizeLimit: 64Mi on the next line. Nox 1.69.0 does not report it (local scan, 2026-11-22). Remove when nox.yml moves to Nox >= 1.69.0. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -198,7 +198,7 @@
       "rule_id": "IAC-363",
       "file_path": ".rollops/deploy-ghostline.yaml",
       "severity": "medium",
-      "reason": "Deliberate: with in-memory state, a RollingUpdate would briefly run two pods; Recreate stops the old pod (graceful shutdown, 25s grace within terminationGracePeriodSeconds 30) before starting the new. The short downtime per release is accepted. Remove with IAC-141 when shared session storage exists. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "Deliberate: with in-memory state, a RollingUpdate would briefly run two pods; Recreate stops the old pod (graceful shutdown, 25s grace within terminationGracePeriodSeconds 30) before starting the new. The short downtime per release is accepted. Remove with IAC-141 when shared session storage exists. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -206,7 +206,7 @@
       "rule_id": "IAC-363",
       "file_path": "deploy/kubernetes/ghostline.yaml",
       "severity": "medium",
-      "reason": "Deliberate: with in-memory state, a RollingUpdate would briefly run two pods; Recreate stops the old pod (graceful shutdown, 25s grace within terminationGracePeriodSeconds 30) before starting the new. The short downtime per release is accepted. Remove with IAC-141 when shared session storage exists. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "Deliberate: with in-memory state, a RollingUpdate would briefly run two pods; Recreate stops the old pod (graceful shutdown, 25s grace within terminationGracePeriodSeconds 30) before starting the new. The short downtime per release is accepted. Remove with IAC-141 when shared session storage exists. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -214,7 +214,7 @@
       "rule_id": "IAC-442",
       "file_path": "deploy/kubernetes/ghostline.yaml",
       "severity": "medium",
-      "reason": "Positive check reported as a finding: the namespace deliberately has a ResourceQuota (one-time setup), which this rule describes. Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "Positive check reported as a finding: the namespace deliberately has a ResourceQuota (one-time setup), which this rule describes. Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -222,7 +222,7 @@
       "rule_id": "IAC-445",
       "file_path": "deploy/kubernetes/ghostline.yaml",
       "severity": "medium",
-      "reason": "Positive check reported as a finding: the ResourceQuota deliberately limits pods to 2 (one pod plus rollout overlap). Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "Positive check reported as a finding: the ResourceQuota deliberately limits pods to 2 (one pod plus rollout overlap). Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -230,7 +230,7 @@
       "rule_id": "IAC-450",
       "file_path": "deploy/kubernetes/ghostline.yaml",
       "severity": "low",
-      "reason": "Positive check reported as a finding: the namespace deliberately has a LimitRange (one-time setup). Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "Positive check reported as a finding: the namespace deliberately has a LimitRange (one-time setup). Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -238,7 +238,7 @@
       "rule_id": "IAC-452",
       "file_path": "deploy/kubernetes/ghostline.yaml",
       "severity": "medium",
-      "reason": "Positive check reported as a finding: the LimitRange deliberately sets a default memory limit (384Mi) for containers without one. Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "Positive check reported as a finding: the LimitRange deliberately sets a default memory limit (384Mi) for containers without one. Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -246,7 +246,7 @@
       "rule_id": "IAC-453",
       "file_path": "deploy/kubernetes/ghostline.yaml",
       "severity": "medium",
-      "reason": "Positive check reported as a finding: the LimitRange deliberately sets a default CPU request (25m). Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "Positive check reported as a finding: the LimitRange deliberately sets a default CPU request (25m). Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -254,7 +254,7 @@
       "rule_id": "IAC-456",
       "file_path": "deploy/kubernetes/ghostline.yaml",
       "severity": "medium",
-      "reason": "Positive check reported as a finding: the LimitRange deliberately caps container memory at 512Mi. Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "Positive check reported as a finding: the LimitRange deliberately caps container memory at 512Mi. Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -262,7 +262,7 @@
       "rule_id": "IAC-459",
       "file_path": "deploy/kubernetes/ghostline.yaml",
       "severity": "low",
-      "reason": "Positive check reported as a finding: the LimitRange deliberately targets containers. Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "Positive check reported as a finding: the LimitRange deliberately targets containers. Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
       "created_at": "2026-11-22T00:00:00Z"
     },
     {
@@ -270,7 +270,23 @@
       "rule_id": "IAC-464",
       "file_path": "deploy/kubernetes/ghostline.yaml",
       "severity": "info",
-      "reason": "Informational: the break-glass file defines the ghostline Namespace on purpose, as one-time setup (label ghostline.felixgeelhaar.de/setup=one-time). Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22.",
+      "reason": "Informational: the break-glass file defines the ghostline Namespace on purpose, as one-time setup (label ghostline.felixgeelhaar.de/setup=one-time). Nothing to fix. Maintainer decision 2026-11-22 on PR #107; review by 2026-12-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/124.",
+      "created_at": "2026-11-22T00:00:00Z"
+    },
+    {
+      "fingerprint": "be245a4499fe01a73e9664baf0ed8c855e243ef4da2b278bd541e113a9dfae2e",
+      "rule_id": "IAC-306",
+      "file_path": ".github/workflows/release.yml",
+      "severity": "medium",
+      "reason": "Required: the image job's id-token: write lets actions/attest-build-provenance and actions/attest sign the SLSA provenance and SBOM attestations that docs/hosted-deployment.md tells deployers to verify. It is scoped to the image job only; the verify job holds contents: read. Accepted with the release design in issue #98 (#104); backend/release_workflow_test.go pins the permissions. Maintainer decision 2026-11-22. Tracked in https://github.com/felixgeelhaar/ghostline/issues/105.",
+      "created_at": "2026-11-22T00:00:00Z"
+    },
+    {
+      "fingerprint": "e37e2faa5f7d812400d1323a31d22e93b710b881ea06f3b656d724454d47a8f4",
+      "rule_id": "IAC-314",
+      "file_path": ".github/workflows/release.yml",
+      "severity": "medium",
+      "reason": "Accepted deviation: only the draft-release job holds contents: write, which gh release create needs to create the draft release; it runs after verify and image succeed and checks out nothing it executes. Maintainer decision recorded on issue #98 (2026-11-22); backend/release_workflow_test.go pins the permissions. Tracked in https://github.com/felixgeelhaar/ghostline/issues/106.",
       "created_at": "2026-11-22T00:00:00Z"
     }
   ]
