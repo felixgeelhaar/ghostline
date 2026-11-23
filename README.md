@@ -6,6 +6,8 @@
 
 Ghostline is a change-centric engineering control room. It imports a public GitHub pull request and shows its commit timeline, with commit timestamps clearly distinguished from push or pull-request event chronology. It displays GitHub checks with source-linked line annotations for a selected check run, source-linked Qodo review feedback, and the published Nox SARIF report for the exact pull-request revision. Nox reports are matched through GitHub Actions workflow runs and their `nox-results` artifacts. Ghostline accepts a report only when the workflow file at the scanned revision matches the pull request base, preventing a PR-edited workflow from supplying a fabricated clean report; it shows findings, report availability, expiry, and the source run. It says explicitly when a report is missing or expired and never treats an earlier revision's checks or scan as evidence for the current head.
 
+The import field takes a pull request URL or `owner/repo#123`. When you are signed in with GitHub, typing anything else (three or more characters) searches your own public pull requests (`is:pr is:public involves:@me`) and lists matches to pick from; nothing is listed until you type.
+
 See the [project guide](docs/project-guide.md) for the product specification, architecture overview, and complete setup path. The [threat model](docs/threat-model.md) records current trust boundaries and hosting limitations. For a production-built single-container deployment, see the [hosted deployment guide](docs/hosted-deployment.md).
 
 The [check-run annotation evidence](docs/evidence/check-run-annotations.md) shows the working panel in a clearly labeled recorded replay.
@@ -30,7 +32,7 @@ Open the URL printed by Vite. Public GitHub API requests work without a token. I
 
 ## Request rate limit
 
-`POST /api/import`, `POST /api/checks`, `POST /api/check-annotations`, `POST /api/nox-report`, and `POST /api/qodo-review` share one per-client budget so a single caller cannot use up the GitHub API quota for everyone else. The limiter is in-memory and fixed-window: the window starts at a client's first request, and the count and any recorded clients are lost when the backend restarts or if you run more than one instance. A request over the limit receives HTTP 429, a `Retry-After` header in seconds, and a JSON `{"error": "..."}` body; the UI shows when to retry. `GET /api/health` is not limited.
+`POST /api/import`, `POST /api/checks`, `POST /api/check-annotations`, `POST /api/nox-report`, and `POST /api/qodo-review` share one per-client budget so a single caller cannot use up the GitHub API quota for everyone else. The limiter is in-memory and fixed-window: the window starts at a client's first request, and the count and any recorded clients are lost when the backend restarts or if you run more than one instance. `POST /api/pr-search` also counts against this budget and is further limited to 14 searches per one-minute window per GitHub account, so even bursts on either side of a window boundary stay below GitHub's search limit of 30 a minute. A request over the limit receives HTTP 429, a `Retry-After` header in seconds, and a JSON `{"error": "..."}` body; the UI shows when to retry. `GET /api/health` is not limited.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
