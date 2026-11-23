@@ -284,6 +284,7 @@ func (m *authManager) callback(c *gin.Context) {
 		c.String(http.StatusUnauthorized, "GitHub sign-in was canceled. Return to Ghostline and try again.")
 		return
 	}
+	m.trimAccountTokens(identity.ID)
 }
 
 func (m *authManager) session(c *gin.Context) {
@@ -542,7 +543,6 @@ func (m *authManager) identityAllowed(id int64) bool {
 func (m *authManager) storeUserToken(sessionID string, accountID int64, token string, expiresAt time.Time) bool {
 	m.tokenMu.Lock()
 	defer m.tokenMu.Unlock()
-	m.keepAccountBelowLimitLocked(accountID)
 	if len(m.userTokens) >= maxStoredUserTokens {
 		m.sweepUserTokensLocked()
 	}
@@ -554,9 +554,12 @@ func (m *authManager) storeUserToken(sessionID string, accountID int64, token st
 	return true
 }
 
-// keepAccountBelowLimitLocked drops the account's expired tokens, then its
-// oldest ones until a new token fits within maxUserTokensPerAccount.
-func (m *authManager) keepAccountBelowLimitLocked(accountID int64) {
+// trimAccountTokens drops the account's expired tokens, then its oldest ones
+// beyond maxUserTokensPerAccount. The callback calls it only once the new
+// session is issued, so a canceled sign-in never costs an existing session.
+func (m *authManager) trimAccountTokens(accountID int64) {
+	m.tokenMu.Lock()
+	defer m.tokenMu.Unlock()
 	now := m.now()
 	var held []string
 	for id, stored := range m.userTokens {
@@ -569,14 +572,14 @@ func (m *authManager) keepAccountBelowLimitLocked(accountID int64) {
 		}
 		held = append(held, id)
 	}
-	if len(held) < maxUserTokensPerAccount {
+	if len(held) <= maxUserTokensPerAccount {
 		return
 	}
 	// Sessions share one lifetime, so the earliest expiry is the oldest sign-in.
 	sort.Slice(held, func(i, j int) bool {
 		return m.userTokens[held[i]].expiresAt.Before(m.userTokens[held[j]].expiresAt)
 	})
-	for _, id := range held[:len(held)-maxUserTokensPerAccount+1] {
+	for _, id := range held[:len(held)-maxUserTokensPerAccount] {
 		delete(m.userTokens, id)
 	}
 }
