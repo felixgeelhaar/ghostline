@@ -19,12 +19,16 @@ const (
 	checksPageSize       = 100
 	maxCheckSummaryRunes = 2000
 	maxCheckSummaryBytes = 64 * 1024
+	// maxRevisionCheckPages bounds the pages read for one revision's check runs
+	// and, separately, its commit statuses: at most 1,000 of each per request.
+	maxRevisionCheckPages = 10
 )
 
 var (
-	fullSHA              = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	errRevisionMismatch  = errors.New("GitHub returned checks for a different revision")
-	errCheckRunWithoutID = errors.New("GitHub returned a check run without an ID")
+	fullSHA                  = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	errRevisionMismatch      = errors.New("GitHub returned checks for a different revision")
+	errCheckRunWithoutID     = errors.New("GitHub returned a check run without an ID")
+	errTooManyRevisionChecks = errors.New("the revision has more checks than Ghostline reads")
 )
 
 // revisionChecks holds only the checks GitHub reports for the requested commit.
@@ -123,7 +127,7 @@ func fetchRevisionChecks(ctx context.Context, gh *githubClient, owner, repo, sha
 func fetchCheckRuns(ctx context.Context, gh *githubClient, commitPath, sha string) ([]check, error) {
 	var items []check
 	remainingSummaryBytes := maxCheckSummaryBytes
-	for page := 1; ; page++ {
+	for page := 1; page <= maxRevisionCheckPages; page++ {
 		var batch githubCheckRuns
 		if err := gh.get(ctx, fmt.Sprintf("%s/check-runs?filter=latest&per_page=%d&page=%d", commitPath, checksPageSize, page), &batch); err != nil {
 			return nil, err
@@ -151,6 +155,7 @@ func fetchCheckRuns(ctx context.Context, gh *githubClient, commitPath, sha strin
 			return items, nil
 		}
 	}
+	return nil, errTooManyRevisionChecks
 }
 
 // boundedCheckSummary limits both one summary and the combined summary data
@@ -175,7 +180,7 @@ func boundedCheckSummary(summary string, remainingBytes int) (string, bool, int)
 
 func fetchCommitStatuses(ctx context.Context, gh *githubClient, commitPath, sha string) ([]check, error) {
 	var items []check
-	for page := 1; ; page++ {
+	for page := 1; page <= maxRevisionCheckPages; page++ {
 		var batch githubCombinedStatus
 		if err := gh.get(ctx, fmt.Sprintf("%s/status?per_page=%d&page=%d", commitPath, checksPageSize, page), &batch); err != nil {
 			return nil, err
@@ -196,6 +201,7 @@ func fetchCommitStatuses(ctx context.Context, gh *githubClient, commitPath, sha 
 			return items, nil
 		}
 	}
+	return nil, errTooManyRevisionChecks
 }
 
 func stringValue(value *string) string {
@@ -219,6 +225,8 @@ func checksUnavailableReason(err error) string {
 	switch {
 	case errors.Is(err, errRevisionMismatch):
 		return "GitHub returned checks for a different commit than the pull request's head, so they are not shown."
+	case errors.Is(err, errTooManyRevisionChecks):
+		return "GitHub reports this revision has more checks than Ghostline reads (1,000 check runs and 1,000 commit statuses), so none are shown rather than a partial list. Open the revision on GitHub for its checks."
 	case errors.Is(err, errCheckRunWithoutID):
 		return "GitHub returned a check run without an ID, so its checks are not shown."
 	case errors.Is(err, errUserTokenScope):
