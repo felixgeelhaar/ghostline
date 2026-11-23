@@ -57,6 +57,9 @@ describe('a pull request without Qodo review or checks', () => {
     expect(empty.textContent).toContain('No Qodo review found on this PR')
     const source = empty.querySelector<HTMLAnchorElement>(`a[href="${prURL}"]`)!
     expect(source.textContent).toContain('acme/plain#3')
+    // Only the issue-comment feed is read; Qodo output posted as PR reviews would not be seen.
+    expect(empty.textContent).toContain('issue-comment feed')
+    expect(empty.textContent).not.toMatch(/checked the comments on/)
   })
 
   it('names the revision it checked when no checks were reported', async () => {
