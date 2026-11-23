@@ -333,7 +333,7 @@ func respondGitHubError(c *gin.Context, err error) {
 	case errors.Is(err, errServerTokenRateLimit):
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "The server’s GitHub token has reached its rate limit, so repository visibility could not be checked. Try again later."})
 	case errors.Is(err, errUserTokenScope):
-		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub reported that your sign-in grants more than public read access, so Ghostline did not use the reply. Sign out and sign in again."})
+		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub reported that your sign-in grants more than public read access, so Ghostline did not use the reply and now reads GitHub without it. Try again."})
 	case errors.Is(err, errRateLimit):
 		message, wait := githubRateLimitMessage(err, "GitHub’s public API rate limit has been reached. Try again later.")
 		if wait > 0 {

@@ -378,7 +378,8 @@ func (m *authManager) middleware() gin.HandlerFunc {
 			return
 		}
 		if token := m.userTokenFor(session.ID); token != "" {
-			c.Request = c.Request.WithContext(withGitHubUserToken(c.Request.Context(), token))
+			sessionID := session.ID
+			c.Request = c.Request.WithContext(withGitHubUserToken(c.Request.Context(), token, func() { m.dropUserToken(sessionID) }))
 		}
 		c.Set(githubIdentityKey, session.Identity)
 		c.Next()

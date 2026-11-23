@@ -222,7 +222,7 @@ func checksUnavailableReason(err error) string {
 	case errors.Is(err, errCheckRunWithoutID):
 		return "GitHub returned a check run without an ID, so its checks are not shown."
 	case errors.Is(err, errUserTokenScope):
-		return "GitHub reported that your sign-in grants more than public read access, so checks were not loaded. Sign out and sign in again."
+		return "GitHub reported that your sign-in grants more than public read access, so checks were not loaded. Ghostline now reads GitHub without it; import the pull request again."
 	case errors.Is(err, errRateLimit):
 		message, _ := githubRateLimitMessage(err, "GitHub’s public API rate limit was reached before checks could be loaded. Try again later.")
 		return message

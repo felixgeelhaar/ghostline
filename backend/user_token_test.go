@@ -228,11 +228,45 @@ func TestGitHubReportingBroaderScopesForAUserTokenStopsTheRequest(t *testing.T) 
 	router := newRouterWithAuth(github.client(), nil, newRateLimiter(10, time.Minute, time.Now), clientIdentity{}, nil, auth)
 	session := signInThroughOAuth(t, router)
 	response := importWithSession(router, session, "")
-	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "Sign out and sign in again") {
+	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "more than public read access") {
 		t.Fatalf("broader-scope response = %d %s", response.Code, response.Body.String())
 	}
 	if len(github.seen()) != 1 {
 		t.Fatalf("GitHub calls after the scope mismatch = %d, want 1", len(github.seen()))
+	}
+	if auth.storedUserTokens() != 0 {
+		t.Fatal("the token GitHub reported with broader scopes is still stored")
+	}
+	importWithSession(router, session, "")
+	if seen := github.seen(); len(seen) < 2 || seen[1] != "" {
+		t.Fatalf("the next GitHub read after the mismatch carried %q, want an anonymous read", seen)
+	}
+}
+
+func TestRateLimitResetPrefersRetryAfter(t *testing.T) {
+	primaryReset := time.Now().Add(50 * time.Minute)
+	tests := []struct {
+		name   string
+		header http.Header
+		want   time.Duration
+	}{
+		{name: "secondary limit with both headers", header: http.Header{"Retry-After": {"60"}, "X-Ratelimit-Reset": {strconv.FormatInt(primaryReset.Unix(), 10)}, "X-Ratelimit-Remaining": {"12"}}, want: time.Minute},
+		{name: "primary limit", header: http.Header{"X-Ratelimit-Reset": {strconv.FormatInt(primaryReset.Unix(), 10)}, "X-Ratelimit-Remaining": {"0"}}, want: 50 * time.Minute},
+		{name: "reset header without exhausted quota", header: http.Header{"X-Ratelimit-Reset": {strconv.FormatInt(primaryReset.Unix(), 10)}, "X-Ratelimit-Remaining": {"12"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reset := rateLimitReset(tc.header)
+			if tc.want == 0 {
+				if !reset.IsZero() {
+					t.Fatalf("reset = %s, want none", reset)
+				}
+				return
+			}
+			if got := time.Until(reset); got < tc.want-5*time.Second || got > tc.want+5*time.Second {
+				t.Fatalf("reset in %s, want about %s", got, tc.want)
+			}
+		})
 	}
 }
 

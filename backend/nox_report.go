@@ -885,7 +885,7 @@ func noxUnavailableReason(err error) string {
 		return "GitHub did not return the pull request or its workflow evidence."
 	}
 	if errors.Is(err, errUserTokenScope) {
-		return "GitHub reported that your sign-in grants more than public read access, so the Nox report was not loaded. Sign out and sign in again."
+		return "GitHub reported that your sign-in grants more than public read access, so the Nox report was not loaded. Ghostline now reads GitHub without it; try again."
 	}
 	if errors.Is(err, errRateLimit) {
 		message, _ := githubRateLimitMessage(err, "GitHub’s API rate limit was reached before the Nox report could be loaded. Try again later or configure GITHUB_TOKEN.")
