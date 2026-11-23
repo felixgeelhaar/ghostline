@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -122,13 +123,19 @@ type authManager struct {
 // storedUserToken is a user's GitHub OAuth token, held in memory for the session
 // that obtained it. It never leaves the server.
 type storedUserToken struct {
+	accountID int64
 	token     string
 	expiresAt time.Time
 }
 
-// maxStoredUserTokens bounds the token store. Beyond it, new sessions read GitHub
-// anonymously instead of evicting someone else's token.
+// maxStoredUserTokens bounds the token store. Beyond it, sign-in is refused
+// instead of evicting someone else's token.
 const maxStoredUserTokens = 10000
+
+// maxUserTokensPerAccount bounds the sessions one GitHub account keeps tokens
+// for. A further sign-in drops that account's oldest token (its session must
+// sign in again), so no single account can fill the shared store.
+const maxUserTokensPerAccount = 5
 
 type pendingOAuth struct {
 	expiresAt  time.Time
@@ -268,7 +275,7 @@ func (m *authManager) callback(c *gin.Context) {
 		return
 	}
 	// Every session reads GitHub with its own token, so keep the token first.
-	if !m.storeUserToken(sessionID, token, expiresAt) {
+	if !m.storeUserToken(sessionID, identity.ID, token, expiresAt) {
 		c.String(http.StatusServiceUnavailable, "Ghostline has reached its limit of signed-in users. Try again later.")
 		return
 	}
@@ -532,9 +539,10 @@ func (m *authManager) identityAllowed(id int64) bool {
 }
 
 // storeUserToken keeps the session's GitHub token and reports whether it did.
-func (m *authManager) storeUserToken(sessionID, token string, expiresAt time.Time) bool {
+func (m *authManager) storeUserToken(sessionID string, accountID int64, token string, expiresAt time.Time) bool {
 	m.tokenMu.Lock()
 	defer m.tokenMu.Unlock()
+	m.keepAccountBelowLimitLocked(accountID)
 	if len(m.userTokens) >= maxStoredUserTokens {
 		m.sweepUserTokensLocked()
 	}
@@ -542,8 +550,35 @@ func (m *authManager) storeUserToken(sessionID, token string, expiresAt time.Tim
 		m.logger.Warn("GitHub OAuth token not kept", "reason", "token_store_full")
 		return false
 	}
-	m.userTokens[sessionID] = storedUserToken{token: token, expiresAt: expiresAt}
+	m.userTokens[sessionID] = storedUserToken{accountID: accountID, token: token, expiresAt: expiresAt}
 	return true
+}
+
+// keepAccountBelowLimitLocked drops the account's expired tokens, then its
+// oldest ones until a new token fits within maxUserTokensPerAccount.
+func (m *authManager) keepAccountBelowLimitLocked(accountID int64) {
+	now := m.now()
+	var held []string
+	for id, stored := range m.userTokens {
+		if stored.accountID != accountID {
+			continue
+		}
+		if !stored.expiresAt.After(now) {
+			delete(m.userTokens, id)
+			continue
+		}
+		held = append(held, id)
+	}
+	if len(held) < maxUserTokensPerAccount {
+		return
+	}
+	// Sessions share one lifetime, so the earliest expiry is the oldest sign-in.
+	sort.Slice(held, func(i, j int) bool {
+		return m.userTokens[held[i]].expiresAt.Before(m.userTokens[held[j]].expiresAt)
+	})
+	for _, id := range held[:len(held)-maxUserTokensPerAccount+1] {
+		delete(m.userTokens, id)
+	}
 }
 
 // userTokenFor returns the session's GitHub token, or "" when none is held.
