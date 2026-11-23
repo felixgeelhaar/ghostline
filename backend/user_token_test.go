@@ -60,10 +60,7 @@ func TestOpenSigninAcceptsAnyGitHubAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cookie, err := auth.newSessionCookie(stranger, time.Now().Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cookie := signedInSessionCookie(t, auth, stranger)
 	router := newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(10, time.Minute, time.Now), clientIdentity{}, nil, auth)
 
 	session := httptest.NewRecorder()
@@ -84,9 +81,9 @@ func TestOpenSigninAcceptsAnyGitHubAccount(t *testing.T) {
 	}
 }
 
-// signInThroughOAuth runs the login and callback against a fake GitHub and returns
-// the Ghostline session cookie.
-func signInThroughOAuth(t *testing.T, router http.Handler) *http.Cookie {
+// runOAuthCallback runs the login and a callback against a fake GitHub and returns
+// the callback response.
+func runOAuthCallback(t *testing.T, router http.Handler) *httptest.ResponseRecorder {
 	t.Helper()
 	login := httptest.NewRecorder()
 	loginRequest := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
@@ -103,6 +100,23 @@ func signInThroughOAuth(t *testing.T, router http.Handler) *http.Cookie {
 	callback.AddCookie(login.Result().Cookies()[0])
 	completed := httptest.NewRecorder()
 	router.ServeHTTP(completed, callback)
+	return completed
+}
+
+func assertNoSessionCookie(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+	for _, cookie := range response.Result().Cookies() {
+		if cookie.Name == sessionCookieName && cookie.MaxAge >= 0 && cookie.Value != "" {
+			t.Fatal("a refused sign-in set a session cookie")
+		}
+	}
+}
+
+// signInThroughOAuth runs the login and callback against a fake GitHub and returns
+// the Ghostline session cookie.
+func signInThroughOAuth(t *testing.T, router http.Handler) *http.Cookie {
+	t.Helper()
+	completed := runOAuthCallback(t, router)
 	if completed.Code != http.StatusSeeOther {
 		t.Fatalf("callback status = %d body=%s", completed.Code, completed.Body.String())
 	}
@@ -208,24 +222,24 @@ func TestDataRequestsStayAnonymousWithoutAUserToken(t *testing.T) {
 	}
 }
 
-func TestTokenWithBroaderScopeIsNotKept(t *testing.T) {
+func TestSignInWithAnyBroaderScopeIsRefused(t *testing.T) {
 	for name, tokenResponse := range map[string]string{
 		"repo":            `{"access_token":"broad-token","token_type":"bearer","scope":"repo,read:user"}`,
 		"read:org":        `{"access_token":"broad-token","token_type":"bearer","scope":"read:user, read:org"}`,
 		"public_repo":     `{"access_token":"broad-token","token_type":"bearer","scope":"public_repo"}`,
 		"scope not given": `{"access_token":"broad-token","token_type":"bearer"}`,
 	} {
-		scope := name
 		t.Run(name, func(t *testing.T) {
 			github := &recordingGitHub{}
 			auth := newAuthManager(testAuthConfig(), oauthClientGranting(t, tokenResponse))
 			router := newRouterWithAuth(github.client(), nil, newRateLimiter(10, time.Minute, time.Now), clientIdentity{}, nil, auth)
-			session := signInThroughOAuth(t, router)
-			importWithSession(router, session, "")
-			for _, authorization := range github.seen() {
-				if authorization != "" {
-					t.Fatalf("a token granted %q was used for GitHub data: %q", scope, authorization)
-				}
+			completed := runOAuthCallback(t, router)
+			if completed.Code != http.StatusForbidden {
+				t.Fatalf("callback = %d %s, want 403", completed.Code, completed.Body.String())
+			}
+			assertNoSessionCookie(t, completed)
+			if auth.storedUserTokens() != 0 || len(github.seen()) != 0 {
+				t.Fatal("a token with broader scope was stored or used")
 			}
 		})
 	}
@@ -250,9 +264,12 @@ func TestGitHubReportingBroaderScopesForAUserTokenStopsTheRequest(t *testing.T) 
 	if auth.storedUserTokens() != 0 {
 		t.Fatal("the token GitHub reported with broader scopes is still stored")
 	}
-	importWithSession(router, session, "")
-	if seen := github.seen(); len(seen) < 2 || seen[1] != "" {
-		t.Fatalf("the next GitHub read after the mismatch carried %q, want an anonymous read", seen)
+	// The session lost its token: it must sign in again, not read anonymously.
+	if next := importWithSession(router, session, ""); next.Code != http.StatusUnauthorized {
+		t.Fatalf("the next request after the mismatch = %d %s, want 401", next.Code, next.Body.String())
+	}
+	if seen := github.seen(); len(seen) != 1 {
+		t.Fatalf("GitHub calls after the mismatch = %q, want none", seen)
 	}
 }
 
@@ -313,10 +330,7 @@ func TestSignOutAndExpiryDropTheStoredUserToken(t *testing.T) {
 
 func TestAPIRequestsAreLimitedPerGitHubAccount(t *testing.T) {
 	auth := newAuthManager(testAuthConfig(), nil)
-	cookie, err := auth.newSessionCookie(testIdentity(), time.Now().Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
+	cookie := signedInSessionCookie(t, auth, testIdentity())
 	router := newRouterWithAuth((&recordingGitHub{}).client(), nil, newRateLimiter(1, time.Minute, time.Now), clientIdentity{}, nil, auth)
 	if first := importWithSession(router, cookie, "192.0.2.1:1000"); first.Code == http.StatusTooManyRequests {
 		t.Fatalf("first request was limited: %s", first.Body.String())

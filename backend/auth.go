@@ -254,30 +254,36 @@ func (m *authManager) callback(c *gin.Context) {
 		c.String(http.StatusForbidden, "This GitHub account is not on the Ghostline access list.")
 		return
 	}
+	if !publicReadScopes(scope) {
+		// A broader grant could read private repositories, and a session without
+		// its own token would spend the shared anonymous quota. Refuse it.
+		requestLogger(c.Request.Context(), m.logger).Warn("GitHub OAuth token not kept", "reason", "scope_broader_than_read_user")
+		c.String(http.StatusForbidden, "GitHub granted Ghostline more than read access to your public profile, so Ghostline did not sign you in. Remove Ghostline under GitHub Settings > Applications > Authorized OAuth Apps, then sign in again.")
+		return
+	}
 	expiresAt := m.now().Add(defaultSessionLifetime)
 	session, sessionID, err := m.newSession(identity, expiresAt)
 	if err != nil {
 		c.String(http.StatusInternalServerError, "Ghostline could not create a sign-in session.")
 		return
 	}
+	// Every session reads GitHub with its own token, so keep the token first.
+	if !m.storeUserToken(sessionID, token, expiresAt) {
+		c.String(http.StatusServiceUnavailable, "Ghostline has reached its limit of signed-in users. Try again later.")
+		return
+	}
 	if !m.completeOAuthCallback(pending.State, c, session) {
+		m.dropUserToken(sessionID)
 		c.String(http.StatusUnauthorized, "GitHub sign-in was canceled. Return to Ghostline and try again.")
 		return
 	}
-	if !publicReadScopes(scope) {
-		// A broader grant could read private repositories. Keep this session's
-		// GitHub reads anonymous rather than proxy data the user did not mean to share.
-		requestLogger(c.Request.Context(), m.logger).Warn("GitHub OAuth token not kept", "reason", "scope_broader_than_read_user")
-		return
-	}
-	m.storeUserToken(sessionID, token, expiresAt)
 }
 
 func (m *authManager) session(c *gin.Context) {
 	result := gin.H{"authRequired": m.cfg.Required, "authenticated": !m.cfg.Required}
 	if m.cfg.Required {
 		if cookie, err := c.Request.Cookie(sessionCookieName); err == nil {
-			if session, ok := m.sessionFromCookie(cookie.Value); ok && m.identityAllowed(session.Identity.ID) {
+			if session, ok := m.sessionFromCookie(cookie.Value); ok && m.identityAllowed(session.Identity.ID) && m.userTokenFor(session.ID) != "" {
 				result["authenticated"] = true
 				result["login"] = session.Identity.Login
 			}
@@ -377,10 +383,15 @@ func (m *authManager) middleware() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": "AUTH_REQUIRED", "error": "Your Ghostline session expired. Sign in with GitHub again."})
 			return
 		}
-		if token := m.userTokenFor(session.ID); token != "" {
-			sessionID := session.ID
-			c.Request = c.Request.WithContext(withGitHubUserToken(c.Request.Context(), token, func() { m.dropUserToken(sessionID) }))
+		// The token is gone after a restart, a rejection or a scope change. Reading
+		// anonymously instead would spend the quota every user shares.
+		token := m.userTokenFor(session.ID)
+		if token == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": "AUTH_REQUIRED", "error": "Ghostline no longer holds your GitHub sign-in, for example after a restart. Sign in with GitHub again."})
+			return
 		}
+		sessionID := session.ID
+		c.Request = c.Request.WithContext(withGitHubUserToken(c.Request.Context(), token, func() { m.dropUserToken(sessionID) }))
 		c.Set(githubIdentityKey, session.Identity)
 		c.Next()
 	}
@@ -520,7 +531,8 @@ func (m *authManager) identityAllowed(id int64) bool {
 	return m.cfg.OpenSignin || domain.GitHubIdentityAllowed(id, m.cfg.AllowedIDs)
 }
 
-func (m *authManager) storeUserToken(sessionID, token string, expiresAt time.Time) {
+// storeUserToken keeps the session's GitHub token and reports whether it did.
+func (m *authManager) storeUserToken(sessionID, token string, expiresAt time.Time) bool {
 	m.tokenMu.Lock()
 	defer m.tokenMu.Unlock()
 	if len(m.userTokens) >= maxStoredUserTokens {
@@ -528,9 +540,10 @@ func (m *authManager) storeUserToken(sessionID, token string, expiresAt time.Tim
 	}
 	if len(m.userTokens) >= maxStoredUserTokens {
 		m.logger.Warn("GitHub OAuth token not kept", "reason", "token_store_full")
-		return
+		return false
 	}
 	m.userTokens[sessionID] = storedUserToken{token: token, expiresAt: expiresAt}
+	return true
 }
 
 // userTokenFor returns the session's GitHub token, or "" when none is held.

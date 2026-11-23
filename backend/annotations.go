@@ -59,7 +59,7 @@ type githubCheckAnnotation struct {
 
 func loadCheckAnnotations(ctx context.Context, gh *githubClient, owner, repo string, sha string, runID int64, page int) (checkAnnotationPage, error) {
 	result := checkAnnotationPage{RevisionSHA: sha, CheckRunID: runID, Page: page, PageSize: annotationPageSize, Items: []checkAnnotation{}}
-	if err := ensurePublicRepository(ctx, gh, owner, repo); err != nil {
+	if err := ensurePublicBeforeDataReads(ctx, gh, owner, repo); err != nil {
 		return result, err
 	}
 	runPath := fmt.Sprintf("/repos/%s/%s/check-runs/%d", url.PathEscape(owner), url.PathEscape(repo), runID)
