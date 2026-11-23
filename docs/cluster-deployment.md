@@ -8,7 +8,7 @@ The general production rules in [hosted-deployment.md](hosted-deployment.md) app
 
 | Concern | Setting |
 |---|---|
-| Image | A release digest, such as `ghcr.io/felixgeelhaar/ghostline:v0.1.0-rc.1@sha256:1bde…`. rollopsd opens a pull request for each newer release (`imagePolicy: minor`, `writeback: pull-request`) that rewrites the tracked `image:` line in `.rollops/deploy-ghostline.yaml`, and a person merges it. rollopsd renders that image over the manifest's. The break-glass copy can lag, so after a break-glass apply, set the tracked image: `kubectl -n ghostline set image deployment/ghostline ghostline=<tracked image>`. |
+| Image | A release digest, such as `ghcr.io/felixgeelhaar/ghostline:v0.1.0-rc.1@sha256:1bde…`. rollopsd opens a pull request for each newer release (`imagePolicy: minor`, `writeback: pull-request`) that rewrites the tracked `image:` line in `.rollops/deploy-ghostline.yaml`, and a person merges it. rollops skips pre-release tags such as `v0.1.0-rc.2`, so a release candidate is deployed by a hand-written pull request that sets the tag and its digest in both manifests; until a final release is pinned, rollopsd logs `no semver tag for digest` on each reconcile, which is harmless. rollopsd renders that image over the manifest's. The break-glass copy can lag, so after a break-glass apply, set the tracked image: `kubectl -n ghostline set image deployment/ghostline ghostline=<tracked image>`. |
 | Instances | `replicas: 1` with a `Recreate` rollout. Sessions, OAuth state and rate windows live in memory, so two pods must never run at once. |
 | Shutdown | `GHOSTLINE_SHUTDOWN_GRACE=25s` within `terminationGracePeriodSeconds: 30`. |
 | TLS | cert-manager `letsencrypt-prod`; HTTP redirects to HTTPS; Traefik adds HSTS and a referrer policy. |
