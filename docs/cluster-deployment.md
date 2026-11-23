@@ -57,3 +57,13 @@ curl -sI http://ghostline.felixgeelhaar.de | grep -i location    # https redirec
 ```
 
 Sign in with an allowed GitHub account and import a public pull request. The screenshot of that working page is the AGENTS.md rule 6 evidence for the release.
+
+## Open sign-in
+
+`GHOSTLINE_OPEN_SIGNIN` is `"false"` in both manifests, so only the IDs in `GHOSTLINE_ALLOWED_GITHUB_IDS` can sign in. Turning it on is a separate pull request that the engineer approves: change the value to `"true"` in `.rollops/deploy-ghostline.yaml` and `deploy/kubernetes/ghostline.yaml`. The allowlist stays in the secret, so switching back is the same one-line change.
+
+With open sign-in on:
+
+- each user's GitHub reads use their own OAuth token (scope `read:user`, public data only), held in memory and dropped on sign-out, expiry or a restart, when users sign in again;
+- API requests are limited per client address and per GitHub account (`RATE_LIMIT_REQUESTS` per `RATE_LIMIT_WINDOW` each);
+- the namespace ResourceQuota still bounds the pod, so heavy use slows Ghostline down rather than spreading to the cluster.

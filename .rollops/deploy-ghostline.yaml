@@ -74,6 +74,10 @@ spec:
                           name: ghostline-env
                           key: GITHUB_TOKEN
                           optional: true
+                    # Open sign-in admits every GitHub account; the allowlist is then ignored.
+                    # Turning it on is a separate, approved change (docs/cluster-deployment.md).
+                    - name: GHOSTLINE_OPEN_SIGNIN
+                      value: "false"
                     - name: GITHUB_OAUTH_CALLBACK_URL
                       value: https://ghostline.felixgeelhaar.de/auth/callback
                     - name: RATE_LIMIT_CLIENT_IP_HEADER
