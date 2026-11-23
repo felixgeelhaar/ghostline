@@ -159,7 +159,9 @@ func plainSearchTerms(query string) string {
 }
 
 func respondSearchError(c *gin.Context, err error) {
-	if errors.Is(err, errSearchSignInRequired) {
+	// errUserTokenScope: the token was dropped because GitHub reported other scopes,
+	// or none (as on a rejected token); a fresh sign-in grants read:user again.
+	if errors.Is(err, errSearchSignInRequired) || errors.Is(err, errUserTokenScope) {
 		c.JSON(http.StatusUnauthorized, gin.H{"code": "SEARCH_SIGNIN_REQUIRED", "error": "Sign in with GitHub again to search your pull requests, or paste a pull request URL."})
 		return
 	}

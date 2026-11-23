@@ -349,3 +349,21 @@ func TestSearchRejectsAnOversizedRequestBody(t *testing.T) {
 		t.Fatalf("oversized search = %d, GitHub calls %d -> %d", response.Code, before, len(github.seen()))
 	}
 }
+
+func TestSearchAsksToSignInAgainWhenTheTokenIsDroppedForItsScopes(t *testing.T) {
+	for name, omit := range map[string]bool{"rejected without scopes": true, "scopes not reported": false} {
+		t.Run(name, func(t *testing.T) {
+			github := &recordingGitHub{omitScopes: true, respond: func(*http.Request) *http.Response {
+				if omit {
+					return oauthResponse(http.StatusUnauthorized, `{"message":"Bad credentials"}`)
+				}
+				return oauthResponse(http.StatusOK, searchReply)
+			}}
+			router, session := searchRouter(t, github)
+			response := searchWith(router, session, "widgets")
+			if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), `"code":"SEARCH_SIGNIN_REQUIRED"`) {
+				t.Fatalf("search = %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
