@@ -234,7 +234,7 @@ func (a api) loadNoxReport(c *gin.Context) {
 		URL string `json:"url"`
 		SHA string `json:"sha"`
 	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16*1024)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxAPIRequestBytes)
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Provide a GitHub pull request URL and a full commit SHA."})
 		return
@@ -382,7 +382,7 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 	r.GET("/auth/callback", rateLimitMiddleware(oauthCallbackLimiter, identity), auth.callback)
 	r.POST("/auth/logout", auth.logout)
 	accountLimiter := newRateLimiter(limiter.limit, limiter.window, limiter.now)
-	limited := r.Group("/api", rateLimitMiddleware(limiter, identity), auth.middleware(), accountRateLimitMiddleware(accountLimiter))
+	limited := r.Group("/api", limitRequestBody(maxAPIRequestBytes), rateLimitMiddleware(limiter, identity), auth.middleware(), accountRateLimitMiddleware(accountLimiter))
 	client := api{gh: gh, qodo: qodo, logger: logger}
 	limited.POST("/import", client.importPR)
 	limited.POST("/checks", client.loadRevisionChecks)

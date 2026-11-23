@@ -574,7 +574,8 @@ func TestQodoReviewEndpointRejectsOversizedRequestBody(t *testing.T) {
 	req.Header.Set("X-Qodo-API-Key", "qodo-secret")
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
-	if res.Code != http.StatusBadRequest {
+	// The /api body limit refuses it before the handler's own, tighter limit is reached.
+	if res.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, body = %s; want oversized request rejection", res.Code, res.Body.String())
 	}
 	if fetched {
