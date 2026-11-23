@@ -118,7 +118,7 @@ func (a api) importPR(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Enter a GitHub pull request URL."})
 		return
 	}
-	owner, repo, number, err := parsePRURL(body.URL)
+	owner, repo, number, err := parsePullRequestReference(body.URL)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -390,6 +390,8 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 	limited.POST("/qodo-review", client.loadQodoReview)
 	limited.POST("/check-annotations", client.loadCheckAnnotations)
 	limited.POST("/readiness", client.loadReadiness)
+	searchLimiter := newRateLimiter(githubSearchesPerMinute, time.Minute, limiter.now)
+	limited.POST("/pr-search", client.searchPullRequests(searchLimiter))
 	return r
 }
 
