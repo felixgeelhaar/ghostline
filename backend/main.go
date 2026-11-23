@@ -382,7 +382,8 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 	r.GET("/auth/callback", rateLimitMiddleware(oauthCallbackLimiter, identity), auth.callback)
 	r.POST("/auth/logout", auth.logout)
 	accountLimiter := newRateLimiter(limiter.limit, limiter.window, limiter.now)
-	limited := r.Group("/api", limitRequestBody(maxAPIRequestBytes), rateLimitMiddleware(limiter, identity), auth.middleware(), accountRateLimitMiddleware(accountLimiter))
+	// The body limit runs after both rate limits, so a refused oversized request still uses up allowance.
+	limited := r.Group("/api", rateLimitMiddleware(limiter, identity), auth.middleware(), accountRateLimitMiddleware(accountLimiter), limitRequestBody(maxAPIRequestBytes))
 	client := api{gh: gh, qodo: qodo, logger: logger}
 	limited.POST("/import", client.importPR)
 	limited.POST("/checks", client.loadRevisionChecks)

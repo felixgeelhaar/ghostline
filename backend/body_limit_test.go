@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // countingReader records how many bytes a handler pulled from a request body.
@@ -106,5 +107,30 @@ func TestAPIStillAcceptsAnOrdinaryRequest(t *testing.T) {
 
 	if rec.Code == http.StatusRequestEntityTooLarge || rec.Code == http.StatusBadRequest {
 		t.Fatalf("an ordinary import was refused before reaching GitHub: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRefusedOversizedRequestsStillCountTowardTheRateLimit(t *testing.T) {
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	}))
+	defer github.Close()
+	limiter := newRateLimiter(1, time.Minute, time.Now)
+	router := newRouterWithLimiter(&githubClient{baseURL: github.URL, http: github.Client()}, limiter, clientIdentity{})
+
+	oversized := httptest.NewRequest(http.MethodPost, "/api/import", bytes.NewReader(oversizedJSON()))
+	oversized.Header.Set("Content-Type", "application/json")
+	first := httptest.NewRecorder()
+	router.ServeHTTP(first, oversized)
+	if first.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("first status = %d, want 413", first.Code)
+	}
+
+	ordinary := httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(`{"url":"https://github.com/o/r/pull/1"}`))
+	ordinary.Header.Set("Content-Type", "application/json")
+	second := httptest.NewRecorder()
+	router.ServeHTTP(second, ordinary)
+	if second.Code != http.StatusTooManyRequests {
+		t.Fatalf("second status = %d, want 429: the refused oversized request must use up the allowance", second.Code)
 	}
 }
