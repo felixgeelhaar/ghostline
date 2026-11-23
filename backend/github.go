@@ -268,6 +268,12 @@ func ensurePublicRepository(ctx context.Context, gh *githubClient, owner, repo s
 	if gh.token == "" {
 		return nil
 	}
+	// The data reads carry the user's read:user token, whose scopes are checked on
+	// every reply; it cannot read private repositories. Leave the shared server
+	// quota to requests without one.
+	if githubUserToken(ctx).token != "" {
+		return nil
+	}
 	path := fmt.Sprintf("/repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo))
 	var metadata struct {
 		Private *bool `json:"private"`

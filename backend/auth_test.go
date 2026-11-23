@@ -177,10 +177,7 @@ func TestProtectedAPIRequiresGitHubSession(t *testing.T) {
 		t.Fatalf("anonymous API status = %d, want 401; body=%s", response.Code, response.Body.String())
 	}
 
-	session, err := auth.newSessionCookie(testIdentity(), time.Now().Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
+	session := signedInSessionCookie(t, auth, testIdentity())
 	request = httptest.NewRequest(http.MethodPost, "/api/import", strings.NewReader(`{"url":"invalid"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.AddCookie(session)
@@ -219,7 +216,7 @@ func TestGitHubOAuthCallbackIssuesAllowlistedSessionWithoutTheTokenInTheCookie(t
 			if request.Form.Get("client_secret") != "client-secret" || request.Form.Get("code_verifier") == "" {
 				t.Fatalf("token request omitted secret or PKCE verifier: %v", request.Form)
 			}
-			return oauthResponse(http.StatusOK, `{"access_token":"temporary-oauth-token","token_type":"bearer"}`), nil
+			return oauthResponse(http.StatusOK, `{"access_token":"temporary-oauth-token","token_type":"bearer","scope":"read:user"}`), nil
 		case "https://api.github.com/user":
 			if request.Header.Get("Authorization") != "Bearer temporary-oauth-token" {
 				t.Fatalf("GitHub identity request authorization = %q", request.Header.Get("Authorization"))
@@ -285,7 +282,7 @@ func TestGitHubOAuthCallbackIssuesAllowlistedSessionWithoutTheTokenInTheCookie(t
 func TestSignInCanCompleteFromTwoTabs(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.Host == "github.com" {
-			return oauthResponse(http.StatusOK, `{"access_token":"temporary-token","token_type":"bearer"}`), nil
+			return oauthResponse(http.StatusOK, `{"access_token":"temporary-token","token_type":"bearer","scope":"read:user"}`), nil
 		}
 		return oauthResponse(http.StatusOK, `{"id":42,"login":"Felix-Dev"}`), nil
 	})}
@@ -354,7 +351,7 @@ func TestGitHubOAuthRejectsStateMismatchAndNonAllowlistedUser(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 				if request.URL.Host == "github.com" {
-					return oauthResponse(http.StatusOK, `{"access_token":"temporary-token","token_type":"bearer"}`), nil
+					return oauthResponse(http.StatusOK, `{"access_token":"temporary-token","token_type":"bearer","scope":"read:user"}`), nil
 				}
 				return oauthResponse(http.StatusOK, `{"id":43,"login":"`+tc.login+`"}`), nil
 			})}
@@ -489,10 +486,7 @@ func TestLogoutExpiresSessionAndPendingOAuthState(t *testing.T) {
 func TestLogoutRevokesCopiedSignedSession(t *testing.T) {
 	auth := newAuthManager(testAuthConfig(), nil)
 	router := newRouterWithAuth(&githubClient{baseURL: "https://api.github.com", http: http.DefaultClient}, nil, newRateLimiter(20, time.Minute, time.Now), clientIdentity{}, nil, auth)
-	session, err := auth.newSessionCookie(testIdentity(), time.Now().Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
+	session := signedInSessionCookie(t, auth, testIdentity())
 	logout := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
 	logout.Header.Set("Origin", "https://ghostline.example")
 	logout.AddCookie(session)
@@ -567,7 +561,7 @@ func TestLogoutCancelsOAuthCallbackAlreadyInFlight(t *testing.T) {
 		if request.URL.Host == "github.com" {
 			close(tokenRequestStarted)
 			<-allowTokenResponse
-			return oauthResponse(http.StatusOK, `{"access_token":"temporary-token","token_type":"bearer"}`), nil
+			return oauthResponse(http.StatusOK, `{"access_token":"temporary-token","token_type":"bearer","scope":"read:user"}`), nil
 		}
 		return oauthResponse(http.StatusOK, `{"id":42,"login":"Felix-Dev"}`), nil
 	})}

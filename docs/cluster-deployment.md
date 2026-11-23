@@ -64,6 +64,6 @@ Sign in with an allowed GitHub account and import a public pull request. The scr
 
 With open sign-in on:
 
-- each user's GitHub reads use their own OAuth token (scope `read:user`, public data only), held in memory and dropped on sign-out, expiry or a restart, when users sign in again;
+- each user's GitHub reads use their own OAuth token (scope `read:user`, public data only), held in memory and dropped on sign-out, expiry or a restart; a session without its token gets `AUTH_REQUIRED` and signs in again rather than reading with the shared anonymous quota;
 - API requests are limited per client address and per GitHub account (`RATE_LIMIT_REQUESTS` per `RATE_LIMIT_WINDOW` each);
 - the namespace ResourceQuota still bounds the pod, so heavy use slows Ghostline down rather than spreading to the cluster.
