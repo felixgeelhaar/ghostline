@@ -171,6 +171,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The version step above has validated the tag; the footer names it.
+          build-args: GHOSTLINE_VERSION=${{ github.ref_name }}
           # Attestations come from the GitHub attestation steps below, which
           # `gh attestation verify` checks; keep the image index free of BuildKit's.
           provenance: false

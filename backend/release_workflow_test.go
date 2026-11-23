@@ -144,3 +144,24 @@ func permissionsOf(job string) string {
 	sort.Strings(pairs)
 	return strings.Join(pairs, ",")
 }
+
+// The footer names the release; the image build must receive the validated tag, and
+// builds without one (compose, local) must fall back to "dev".
+func TestReleaseImagesCarryTheirVersionIntoTheFrontend(t *testing.T) {
+	workflow, err := os.ReadFile("../.github/workflows/release.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(workflow), "build-args: GHOSTLINE_VERSION=${{ github.ref_name }}") {
+		t.Error("release image build must pass GHOSTLINE_VERSION=${{ github.ref_name }}")
+	}
+	dockerfile, err := os.ReadFile("../Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"ARG GHOSTLINE_VERSION=dev", "VITE_GHOSTLINE_VERSION=$GHOSTLINE_VERSION npm run build"} {
+		if !strings.Contains(string(dockerfile), want) {
+			t.Errorf("Dockerfile lacks %q", want)
+		}
+	}
+}

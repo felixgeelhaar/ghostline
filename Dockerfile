@@ -5,7 +5,10 @@ WORKDIR /src/frontend
 COPY --chown=65532:65532 frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY --chown=65532:65532 frontend/ ./
-RUN npm run build
+# The release tag shown in the footer; release.yml passes the validated tag, and any
+# other build is labelled dev.
+ARG GHOSTLINE_VERSION=dev
+RUN VITE_GHOSTLINE_VERSION=$GHOSTLINE_VERSION npm run build
 
 FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS backend-build
 ARG TARGETOS TARGETARCH

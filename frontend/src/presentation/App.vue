@@ -24,6 +24,10 @@ import DeepTrace from './DeepTrace.vue'
 import StructuredQodoReview from './StructuredQodoReview.vue'
 import ReadinessPanel from './ReadinessPanel.vue'
 import { useGhostlineSession } from './useGhostlineSession'
+import { releaseLabel } from '../domain/release'
+
+// The release tag the build was made from (Dockerfile GHOSTLINE_VERSION), or dev.
+const buildRelease = releaseLabel(import.meta.env.VITE_GHOSTLINE_VERSION)
 
 const url = ref('')
 const pr = ref<PullRequest>()
@@ -611,7 +615,7 @@ function optionalDate(value?: string) { return value ? date(value) : 'not report
     </section>
     </div>
     </main>
-    <footer><span>GHOSTLINE // DAY 01</span><span>EVERY SIGNAL HAS A SOURCE.</span></footer>
+    <footer><span>GHOSTLINE // {{ buildRelease }}</span><span>EVERY SIGNAL HAS A SOURCE.</span></footer>
   </div>
 </template>
 
