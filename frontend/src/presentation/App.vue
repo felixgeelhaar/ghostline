@@ -18,11 +18,13 @@ import type { NoxReport } from '../domain/noxReport'
 import { noxReportCanShowZeroFindingNote, noxReportHeadline, noxReportNeedsAttention } from '../domain/noxReport'
 import { buildFindingTrace } from '../domain/trace'
 import { isSamePullRequest, validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
+import { classifyImportInput } from '../domain/pullRequestSearch'
 import { GhostlineApiError } from '../application/apiError'
 import ReviewCard from './ReviewCard.vue'
 import DeepTrace from './DeepTrace.vue'
 import StructuredQodoReview from './StructuredQodoReview.vue'
 import ReadinessPanel from './ReadinessPanel.vue'
+import ImportCombobox from './ImportCombobox.vue'
 import { useGhostlineSession } from './useGhostlineSession'
 import { releaseLabel } from '../domain/release'
 
@@ -197,10 +199,17 @@ async function checkReadiness() {
   }
 }
 
-async function loadPR() {
+// Searching needs a signed-in GitHub account; the server searches with its token.
+const canSearchPullRequests = computed(() => ghostlineSession.value?.authRequired === true && ghostlineSession.value.authenticated)
+
+// target is a picked suggestion's URL or the field's text when the user submits it.
+async function loadPR(target: string) {
   const request = ++importRequest
-  const requestedURL = url.value
-  error.value = validatePullRequestURL(requestedURL) ?? ''
+  const input = classifyImportInput(target)
+  const requestedURL = input.kind === 'pull-request' ? input.url : target
+  error.value = input.kind === 'search' && canSearchPullRequests.value
+    ? 'Pick one of your pull requests from the list, or paste a pull request URL or owner/repo#123.'
+    : validatePullRequestURL(requestedURL) ?? ''
   if (error.value) {
     loading.value = false
     return
@@ -479,11 +488,11 @@ function optionalDate(value?: string) { return value ? date(value) : 'not report
     <main id="main-content" tabindex="-1">
     <section v-if="sessionLoading && !ghostlineSession" class="auth-message" role="status"><p class="eyebrow">ACCESS CHECK</p><h1>Checking sign-in…</h1></section>
     <section v-else-if="sessionError && !ghostlineSession" class="auth-message" role="alert"><p class="eyebrow">CONNECTION REQUIRED</p><h1>Can’t verify access.</h1><p>{{ sessionError }}</p><button type="button" @click="refreshGhostlineSession">TRY AGAIN</button></section>
-    <section v-else-if="ghostlineSession?.authRequired && !ghostlineSession.authenticated" class="auth-message"><p class="eyebrow">GHOSTLINE ACCESS</p><h1>Sign in to your control room.</h1><p>Use the GitHub account invited to this Ghostline instance. Only your account name is kept in the session; the OAuth access token is discarded after sign-in.</p><form action="/auth/login" method="post"><button class="github-sign-in" type="submit">SIGN IN WITH GITHUB <span aria-hidden="true">↗</span></button></form></section>
+    <section v-else-if="ghostlineSession?.authRequired && !ghostlineSession.authenticated" class="auth-message"><p class="eyebrow">GHOSTLINE ACCESS</p><h1>Sign in to your control room.</h1><p>Use the GitHub account invited to this Ghostline instance. Your session cookie holds only your account name. Your read-only GitHub token stays on the server, is used to read public GitHub data and search your pull requests, and is dropped when you sign out.</p><form action="/auth/login" method="post"><button class="github-sign-in" type="submit">SIGN IN WITH GITHUB <span aria-hidden="true">↗</span></button></form></section>
     <div v-else-if="ghostlineSession && (!ghostlineSession.authRequired || ghostlineSession.authenticated)" class="workspace-content">
     <p v-if="sessionError && ghostlineSession.authenticated" class="session-error" role="alert">{{ sessionError }}</p>
     <section class="hero"><p class="eyebrow">CHANGE INTELLIGENCE / 001</p><h1>See the work.<br><em>Trace the decisions.</em></h1><p class="lede">Import a pull request to inspect its revision history. Commit timestamps show when commits were authored, not when they were pushed.</p></section>
-    <section class="import-panel"><label for="pr-url">GITHUB PULL REQUEST</label><div class="input-row"><span class="prefix">↗</span><input id="pr-url" v-model="url" placeholder="https://github.com/owner/repo/pull/123" @keyup.enter="loadPR"><button :disabled="loading" @click="loadPR">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button></div><p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="showingPreviousSnapshot && pr" class="checks-note warn" role="status">GitHub refresh failed. Showing the last imported snapshot for {{ pr.owner }}/{{ pr.repo }}#{{ pr.number }}.</p></section>
+    <section class="import-panel"><ImportCombobox v-model="url" :loading="loading" :can-search="canSearchPullRequests" @import="loadPR" /><p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="showingPreviousSnapshot && pr" class="checks-note warn" role="status">GitHub refresh failed. Showing the last imported snapshot for {{ pr.owner }}/{{ pr.repo }}#{{ pr.number }}.</p></section>
     <section v-if="pr" class="change-card">
       <div class="change-heading"><div><span class="eyebrow">{{ pr.repository }} / PULL REQUEST #{{ pr.number }}</span><h2>{{ pr.title }}</h2></div><span class="state" :class="pr.state">{{ pr.state }}</span></div>
       <div class="meta"><span>{{ pr.commits.length }} COMMITS</span><span>OPENED {{ date(pr.createdAt) }}</span><a :href="pr.url" target="_blank" rel="noreferrer">VIEW ON GITHUB ↗</a></div>

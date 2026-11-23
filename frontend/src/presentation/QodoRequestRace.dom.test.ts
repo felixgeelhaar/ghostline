@@ -241,7 +241,7 @@ describe('structured Qodo review request binding', () => {
     expect(host?.textContent).toContain('Showing the last imported snapshot for acme/app#7.')
 
     await setValue('#pr-url', 'not a GitHub pull request URL')
-    host!.querySelector<HTMLInputElement>('#pr-url')!.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }))
+    host!.querySelector<HTMLInputElement>('#pr-url')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     await settle()
 
     expect(host?.textContent).toContain('Enter a valid GitHub pull request URL.')

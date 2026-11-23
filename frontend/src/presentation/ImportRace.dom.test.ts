@@ -39,7 +39,7 @@ async function submitURL(value: string) {
   input.value = value
   input.dispatchEvent(new Event('input', { bubbles: true }))
   await nextTick()
-  input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }))
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
   await settle()
 }
 
