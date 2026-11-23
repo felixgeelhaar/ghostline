@@ -196,6 +196,42 @@ describe('searching your pull requests from the import field', () => {
     expect(host!.querySelector('.import-panel > [role="alert"]')?.textContent).toContain('Pick one of your pull requests')
   })
 
+  it('hides earlier results as soon as the search text changes', async () => {
+    vi.mocked(searchPullRequests).mockResolvedValue({ items: [suggestion('widgets', 7, 'Add widgets')], partial: false })
+    await mount(true)
+    await typeAndWait('widgets')
+    expect(options()).toHaveLength(1)
+
+    await type('gears')
+    expect(options()).toHaveLength(0)
+    expect(input().getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('stops a search that is still waiting for typing to pause when Escape is pressed', async () => {
+    await mount(true)
+    await type('widgets')
+    await key('Escape')
+    vi.advanceTimersByTime(300)
+    await settle()
+    expect(searchPullRequests).not.toHaveBeenCalled()
+    expect(input().getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('imports the highlighted suggestion when the import button is clicked', async () => {
+    vi.mocked(searchPullRequests).mockResolvedValue({ items: [suggestion('widgets', 7, 'Add widgets')], partial: false })
+    await mount(true)
+    await typeAndWait('widgets')
+    await key('ArrowDown')
+    const button = host!.querySelector<HTMLButtonElement>('.input-row button')!
+    const pressed = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    button.dispatchEvent(pressed)
+    // Pressing the button must not move focus off the field, which would close the list.
+    expect(pressed.defaultPrevented).toBe(true)
+    button.click()
+    await settle()
+    expect(importPullRequest).toHaveBeenCalledWith('https://github.com/acme/widgets/pull/7')
+  })
+
   it('imports owner/repo#number directly', async () => {
     await mount(true)
     await type('acme/app#7')

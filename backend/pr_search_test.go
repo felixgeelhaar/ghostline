@@ -48,7 +48,7 @@ func TestSearchFindsTheSignedInUsersPublicPullRequests(t *testing.T) {
 	if searched == nil || searched.Path != "/search/issues" {
 		t.Fatalf("searched %v, want /search/issues", searched)
 	}
-	if got := searched.Query().Get("q"); got != "is:pr is:public involves:@me widgets" {
+	if got := searched.Query().Get("q"); got != `is:pr is:public involves:@me "widgets"` {
 		t.Fatalf("search query = %q", got)
 	}
 	if seen := github.seen(); seen[len(seen)-1] != "Bearer user-oauth-token" {
@@ -241,5 +241,39 @@ func TestImportAcceptsOwnerRepoNumberShorthand(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusNotFound || len(paths) == 0 || paths[len(paths)-1] != "/repos/acme/widgets/pulls/7" {
 		t.Fatalf("shorthand import = %d %s, GitHub paths %v", response.Code, response.Body.String(), paths)
+	}
+}
+
+func TestSearchTreatsTheUsersTextAsPlainTerms(t *testing.T) {
+	for input, want := range map[string]string{
+		"fix OR author:someone":   `is:pr is:public involves:@me "fix" "OR" "author:someone"`,
+		`"quoted" -is:public x\\`: `is:pr is:public involves:@me "quoted" "-is:public" "x"`,
+		"NOT involves:@me repo:a": `is:pr is:public involves:@me "NOT" "involves:@me" "repo:a"`,
+	} {
+		t.Run(input, func(t *testing.T) {
+			var searched *url.URL
+			router, session := searchRouter(t, &recordingGitHub{respond: func(request *http.Request) *http.Response {
+				searched = request.URL
+				return oauthResponse(http.StatusOK, `{"total_count":0,"incomplete_results":false,"items":[]}`)
+			}})
+			if response := searchWith(router, session, input); response.Code != http.StatusOK {
+				t.Fatalf("search = %d %s", response.Code, response.Body.String())
+			}
+			if got := searched.Query().Get("q"); got != want {
+				t.Fatalf("q = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestSearchRejectsTextWithNothingToSearch(t *testing.T) {
+	github := &recordingGitHub{}
+	router, session := searchRouter(t, github)
+	before := len(github.seen())
+	if response := searchWith(router, session, `""" \\\\ "`); response.Code != http.StatusBadRequest {
+		t.Fatalf("search = %d", response.Code)
+	}
+	if len(github.seen()) != before {
+		t.Fatal("an empty search reached GitHub")
 	}
 }

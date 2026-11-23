@@ -97,6 +97,11 @@ func (a api) searchPullRequests(limiter *rateLimiter) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Search with %d to %d characters.", minSearchQueryLength, maxSearchQueryLength)})
 			return
 		}
+		terms := plainSearchTerms(query)
+		if terms == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Enter words to search your pull requests."})
+			return
+		}
 		value, _ := c.Get(githubIdentityKey)
 		identity, signedIn := value.(domain.GitHubIdentity)
 		if !signedIn || githubUserToken(c.Request.Context()).token == "" {
@@ -112,7 +117,7 @@ func (a api) searchPullRequests(limiter *rateLimiter) gin.HandlerFunc {
 		}
 		// A read:user token cannot see private repositories, and is:public keeps the
 		// search to public ones even if the token ever could.
-		q := "is:pr is:public involves:@me " + query
+		q := "is:pr is:public involves:@me " + terms
 		path := fmt.Sprintf("/search/issues?q=%s&sort=updated&order=desc&per_page=%d", url.QueryEscape(q), searchResultLimit)
 		var reply githubSearchReply
 		if err := a.gh.get(c.Request.Context(), path, &reply); err != nil {
@@ -130,6 +135,20 @@ func (a api) searchPullRequests(limiter *rateLimiter) gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, gin.H{"items": items, "partial": reply.IncompleteResults})
 	}
+}
+
+// plainSearchTerms quotes each word so GitHub reads it as text: operators such as
+// OR or NOT, and qualifiers such as author: or -is:public, cannot widen the fixed
+// filters to pull requests that do not involve the user.
+func plainSearchTerms(query string) string {
+	strip := strings.NewReplacer(`"`, "", `\`, "")
+	var terms []string
+	for _, word := range strings.Fields(query) {
+		if word = strip.Replace(word); word != "" {
+			terms = append(terms, `"`+word+`"`)
+		}
+	}
+	return strings.Join(terms, " ")
 }
 
 func respondSearchError(c *gin.Context, err error) {

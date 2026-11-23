@@ -59,14 +59,12 @@ function close() {
 function onInput(event: Event) {
   const value = (event.target as HTMLInputElement).value
   emit('update:modelValue', value)
+  // Results for the earlier text must not stay clickable while the new search waits.
   cancelSearch()
-  activeIndex.value = -1
+  state.value = { status: 'idle' }
+  close()
   const input = classifyImportInput(value)
-  if (!props.canSearch || input.kind !== 'search') {
-    state.value = { status: 'idle' }
-    close()
-    return
-  }
+  if (!props.canSearch || input.kind !== 'search') return
   const request = searchRequest
   timer = setTimeout(() => { void runSearch(input.query, request) }, SEARCH_DELAY_MS)
 }
@@ -121,12 +119,11 @@ function onKeydown(event: KeyboardEvent) {
     case 'ArrowUp': event.preventDefault(); move(-1); break
     case 'Enter': event.preventDefault(); submit(); break
     case 'Escape':
-      if (open.value || state.value.status === 'searching') {
-        event.preventDefault()
-        cancelSearch()
-        if (state.value.status === 'searching') state.value = { status: 'idle' }
-        close()
-      }
+      // Also stops a search still waiting for typing to pause.
+      if (open.value) event.preventDefault()
+      cancelSearch()
+      if (state.value.status === 'searching') state.value = { status: 'idle' }
+      close()
       break
   }
 }
@@ -158,7 +155,7 @@ onBeforeUnmount(cancelSearch)
       @keydown="onKeydown"
       @blur="close"
     >
-    <button :disabled="loading" @click="submit">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button>
+    <button :disabled="loading" @mousedown.prevent @click="submit">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button>
     <div v-show="open" class="pr-search-popup">
       <ul :id="listboxId" role="listbox" aria-label="Your pull requests">
         <li
