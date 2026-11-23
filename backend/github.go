@@ -35,6 +35,54 @@ const maxGitHubResponseBytes = 64 << 20
 
 var errGitHubResponseTooLarge = errors.New("GitHub API response exceeded the size limit")
 
+// errUserTokenScope means GitHub reported that the signed-in user's token grants more
+// than read:user, so it might read private data. The response is discarded.
+var errUserTokenScope = errors.New("user token grants more than read:user")
+
+// githubRateLimitError is a GitHub rate-limit reply. It matches errRateLimit with
+// errors.Is, and records whose quota ran out and when GitHub says it resets.
+type githubRateLimitError struct {
+	userToken bool
+	resetAt   time.Time
+}
+
+func (e githubRateLimitError) Error() string     { return "GitHub API rate limit reached" }
+func (e githubRateLimitError) Is(err error) bool { return err == errRateLimit }
+
+// githubRateLimitMessage describes a rate limit for the person who hit it, naming
+// GitHub's reset time when the reply carried one.
+func githubRateLimitMessage(err error, fallback string) (string, time.Duration) {
+	var limit githubRateLimitError
+	if !errors.As(err, &limit) || !limit.userToken {
+		return fallback, 0
+	}
+	if limit.resetAt.IsZero() {
+		return "GitHub’s API rate limit for your GitHub account has been reached. Try again later.", 0
+	}
+	return fmt.Sprintf("GitHub’s API rate limit for your GitHub account has been reached. GitHub resets it at %s.", limit.resetAt.UTC().Format("15:04 UTC")), time.Until(limit.resetAt)
+}
+
+type githubUserTokenKey struct{}
+
+// githubUserCredential is the signed-in user's GitHub token for one request, with
+// a way to stop using it for the rest of the session.
+type githubUserCredential struct {
+	token  string
+	revoke func()
+}
+
+// withGitHubUserToken attaches the signed-in user's GitHub token to a request
+// context. Public data reads made with that context use it instead of reading
+// anonymously. revoke drops the token from the session.
+func withGitHubUserToken(ctx context.Context, token string, revoke func()) context.Context {
+	return context.WithValue(ctx, githubUserTokenKey{}, githubUserCredential{token: token, revoke: revoke})
+}
+
+func githubUserToken(ctx context.Context) githubUserCredential {
+	credential, _ := ctx.Value(githubUserTokenKey{}).(githubUserCredential)
+	return credential
+}
+
 type statusError struct{ code int }
 
 func (e statusError) Error() string { return fmt.Sprintf("GitHub API returned status %d", e.code) }
@@ -59,8 +107,9 @@ func (g *githubClient) getWithNext(ctx context.Context, path string, target any)
 }
 
 // getWithServerToken is reserved for repository visibility metadata. Public PR
-// data is fetched without credentials so a visibility change after this check
-// cannot turn the unauthenticated API into a private-data proxy.
+// data is fetched without the server credential, either anonymously or with the
+// signed-in user's read:user token, so a visibility change after this check cannot
+// turn Ghostline into a private-data proxy.
 func (g *githubClient) getWithServerToken(ctx context.Context, path string, target any) error {
 	_, err := g.getWithNextUsingToken(ctx, path, target, true)
 	return err
@@ -74,22 +123,36 @@ func (g *githubClient) getWithNextUsingToken(ctx context.Context, path string, t
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "Ghostline-Day1")
-	if useToken && g.token != "" {
-		req.Header.Set("Authorization", "Bearer "+g.token)
+	var user githubUserCredential
+	if useToken {
+		if g.token != "" {
+			req.Header.Set("Authorization", "Bearer "+g.token)
+		}
+	} else if user = githubUserToken(ctx); user.token != "" {
+		req.Header.Set("Authorization", "Bearer "+user.token)
 	}
+	userToken := user.token
 	resp, err := g.http.Do(req)
 	if err != nil {
 		logUpstreamFailure(ctx, "github", path, 0, transportFailure(ctx, err))
 		return false, err
 	}
 	defer resp.Body.Close()
+	if userToken != "" && !publicReadScopes(reportedScopes(resp.Header)) {
+		// Stop using this token for the session; later reads fall back to anonymous.
+		logUpstreamFailure(ctx, "github", path, resp.StatusCode, "user_token_scope")
+		if user.revoke != nil {
+			user.revoke()
+		}
+		return false, errUserTokenScope
+	}
 	if resp.StatusCode != http.StatusOK {
 		logUpstreamFailure(ctx, "github", path, resp.StatusCode, "status")
 		if resp.StatusCode == http.StatusNotFound {
 			return false, errNotFound
 		}
 		if resp.StatusCode == http.StatusTooManyRequests || (resp.StatusCode == http.StatusForbidden && (resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.Header.Get("Retry-After") != "")) {
-			return false, errRateLimit
+			return false, githubRateLimitError{userToken: userToken != "", resetAt: rateLimitReset(resp.Header)}
 		}
 		return false, statusError{code: resp.StatusCode}
 	}
@@ -110,6 +173,32 @@ func (g *githubClient) getWithNextUsingToken(ctx context.Context, path string, t
 		return false, err
 	}
 	return hasNextLink(resp.Header.Values("Link")), nil
+}
+
+// reportedScopes returns the scopes GitHub says a token has, or missingScope when
+// the reply does not say.
+func reportedScopes(header http.Header) string {
+	values := header.Values("X-OAuth-Scopes")
+	if len(values) == 0 {
+		return missingScope
+	}
+	return strings.Join(values, ",")
+}
+
+// rateLimitReset reads when GitHub says the request may be retried. Retry-After
+// (seconds) answers a secondary limit and wins when present; X-RateLimit-Reset
+// (epoch seconds) applies only when the primary quota is exhausted.
+func rateLimitReset(header http.Header) time.Time {
+	if seconds, err := strconv.Atoi(header.Get("Retry-After")); err == nil && seconds > 0 {
+		return time.Now().Add(time.Duration(seconds) * time.Second)
+	}
+	if header.Get("X-RateLimit-Remaining") != "0" {
+		return time.Time{}
+	}
+	if epoch, err := strconv.ParseInt(header.Get("X-RateLimit-Reset"), 10, 64); err == nil && epoch > 0 {
+		return time.Unix(epoch, 0)
+	}
+	return time.Time{}
 }
 
 func hasNextLink(headers []string) bool {

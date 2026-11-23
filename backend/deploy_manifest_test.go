@@ -248,3 +248,12 @@ func TestSecretSetupKeepsValuesOutOfArguments(t *testing.T) {
 		}
 	}
 }
+
+// Open sign-in exposes Ghostline to every GitHub account. Turning it on must be its
+// own reviewed change, which updates this test along with the manifests.
+func TestDeploymentKeepsOpenSigninOff(t *testing.T) {
+	deployment := breakGlassDocs(t)["Deployment/ghostline"]
+	if !regexp.MustCompile(`(?m)^\s+- name: GHOSTLINE_OPEN_SIGNIN\n\s+value: "false"$`).MatchString(deployment) {
+		t.Error(`Deployment does not set GHOSTLINE_OPEN_SIGNIN to "false" explicitly`)
+	}
+}

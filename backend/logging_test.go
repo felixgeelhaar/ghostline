@@ -352,7 +352,7 @@ func TestOAuthUpstreamFailuresAreLogged(t *testing.T) {
 		want    map[string]any
 	}{
 		{name: "token exchange status", call: func(ctx context.Context, m *authManager) error {
-			_, err := m.exchangeCode(ctx, "code-secret", "verifier-secret")
+			_, _, err := m.exchangeCode(ctx, "code-secret", "verifier-secret")
 			return err
 		}, respond: func(r *http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}, Request: r}, nil
@@ -493,7 +493,7 @@ func TestOAuthBodyFailuresAreClassified(t *testing.T) {
 		return err
 	}
 	token := func(ctx context.Context, m *authManager) error {
-		_, err := m.exchangeCode(ctx, "code-secret", "verifier-secret")
+		_, _, err := m.exchangeCode(ctx, "code-secret", "verifier-secret")
 		return err
 	}
 	tests := []struct {

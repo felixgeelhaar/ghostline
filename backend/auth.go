@@ -37,6 +37,9 @@ type authConfig struct {
 	CallbackURL  string
 	SessionKey   []byte
 	AllowedIDs   map[int64]struct{}
+	// OpenSignin admits every GitHub account. AllowedIDs is then ignored, and is
+	// kept only so the deployment can switch back without a secret change.
+	OpenSignin bool
 }
 
 func loadAuthConfig(getenv func(string) string) (authConfig, error) {
@@ -65,6 +68,13 @@ func loadAuthConfig(getenv func(string) string) (authConfig, error) {
 	if len(cfg.SessionKey) < 32 {
 		return authConfig{}, errors.New("GHOSTLINE_SESSION_SECRET must contain at least 32 bytes")
 	}
+	switch strings.ToLower(strings.TrimSpace(getenv("GHOSTLINE_OPEN_SIGNIN"))) {
+	case "", "false":
+	case "true":
+		cfg.OpenSignin = true
+	default:
+		return authConfig{}, errors.New("GHOSTLINE_OPEN_SIGNIN must be 'true' or 'false'")
+	}
 	cfg.AllowedIDs = make(map[int64]struct{})
 	for _, rawID := range strings.Split(getenv("GHOSTLINE_ALLOWED_GITHUB_IDS"), ",") {
 		rawID = strings.TrimSpace(rawID)
@@ -77,7 +87,7 @@ func loadAuthConfig(getenv func(string) string) (authConfig, error) {
 		}
 		cfg.AllowedIDs[id] = struct{}{}
 	}
-	if len(cfg.AllowedIDs) == 0 {
+	if len(cfg.AllowedIDs) == 0 && !cfg.OpenSignin {
 		return authConfig{}, errors.New("GHOSTLINE_ALLOWED_GITHUB_IDS must include at least one numeric GitHub user ID when sign-in is required")
 	}
 	return cfg, nil
@@ -105,7 +115,20 @@ type authManager struct {
 	pendingOAuth map[string]*pendingOAuth
 	sessionMu    sync.Mutex
 	revoked      map[[32]byte]time.Time
+	tokenMu      sync.Mutex
+	userTokens   map[string]storedUserToken
 }
+
+// storedUserToken is a user's GitHub OAuth token, held in memory for the session
+// that obtained it. It never leaves the server.
+type storedUserToken struct {
+	token     string
+	expiresAt time.Time
+}
+
+// maxStoredUserTokens bounds the token store. Beyond it, new sessions read GitHub
+// anonymously instead of evicting someone else's token.
+const maxStoredUserTokens = 10000
 
 type pendingOAuth struct {
 	expiresAt  time.Time
@@ -117,7 +140,7 @@ func newAuthManager(cfg authConfig, client *http.Client) *authManager {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
-	return &authManager{cfg: cfg, client: client, now: time.Now, random: rand.Reader, logger: slog.Default(), pendingOAuth: make(map[string]*pendingOAuth), revoked: make(map[[32]byte]time.Time)}
+	return &authManager{cfg: cfg, client: client, now: time.Now, random: rand.Reader, logger: slog.Default(), pendingOAuth: make(map[string]*pendingOAuth), revoked: make(map[[32]byte]time.Time), userTokens: make(map[string]storedUserToken)}
 }
 
 func (m *authManager) authorizationURL(state, verifier string) (string, error) {
@@ -215,7 +238,7 @@ func (m *authManager) callback(c *gin.Context) {
 		c.String(http.StatusBadRequest, "GitHub did not provide a valid sign-in code.")
 		return
 	}
-	token, err := m.exchangeCode(c.Request.Context(), code, pending.Verifier)
+	token, scope, err := m.exchangeCode(c.Request.Context(), code, pending.Verifier)
 	if err != nil {
 		requestLogger(c.Request.Context(), m.logger).Error("GitHub OAuth callback failed", "stage", "token_exchange", "error", err)
 		c.String(http.StatusBadGateway, "Ghostline could not complete GitHub sign-in. Try again shortly.")
@@ -227,11 +250,12 @@ func (m *authManager) callback(c *gin.Context) {
 		c.String(http.StatusBadGateway, "Ghostline could not verify the GitHub account. Try again shortly.")
 		return
 	}
-	if !domain.GitHubIdentityAllowed(identity.ID, m.cfg.AllowedIDs) {
+	if !m.identityAllowed(identity.ID) {
 		c.String(http.StatusForbidden, "This GitHub account is not on the Ghostline access list.")
 		return
 	}
-	session, err := m.newSessionValue(identity, m.now().Add(defaultSessionLifetime))
+	expiresAt := m.now().Add(defaultSessionLifetime)
+	session, sessionID, err := m.newSession(identity, expiresAt)
 	if err != nil {
 		c.String(http.StatusInternalServerError, "Ghostline could not create a sign-in session.")
 		return
@@ -240,14 +264,20 @@ func (m *authManager) callback(c *gin.Context) {
 		c.String(http.StatusUnauthorized, "GitHub sign-in was canceled. Return to Ghostline and try again.")
 		return
 	}
-	return
+	if !publicReadScopes(scope) {
+		// A broader grant could read private repositories. Keep this session's
+		// GitHub reads anonymous rather than proxy data the user did not mean to share.
+		requestLogger(c.Request.Context(), m.logger).Warn("GitHub OAuth token not kept", "reason", "scope_broader_than_read_user")
+		return
+	}
+	m.storeUserToken(sessionID, token, expiresAt)
 }
 
 func (m *authManager) session(c *gin.Context) {
 	result := gin.H{"authRequired": m.cfg.Required, "authenticated": !m.cfg.Required}
 	if m.cfg.Required {
 		if cookie, err := c.Request.Cookie(sessionCookieName); err == nil {
-			if session, ok := m.sessionFromCookie(cookie.Value); ok && domain.GitHubIdentityAllowed(session.Identity.ID, m.cfg.AllowedIDs) {
+			if session, ok := m.sessionFromCookie(cookie.Value); ok && m.identityAllowed(session.Identity.ID) {
 				result["authenticated"] = true
 				result["login"] = session.Identity.Login
 			}
@@ -343,16 +373,21 @@ func (m *authManager) middleware() gin.HandlerFunc {
 			return
 		}
 		session, ok := m.sessionFromCookie(cookie.Value)
-		if !ok || !domain.GitHubIdentityAllowed(session.Identity.ID, m.cfg.AllowedIDs) {
+		if !ok || !m.identityAllowed(session.Identity.ID) {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": "AUTH_REQUIRED", "error": "Your Ghostline session expired. Sign in with GitHub again."})
 			return
 		}
-		c.Set("ghostline.github_identity", session.Identity)
+		if token := m.userTokenFor(session.ID); token != "" {
+			sessionID := session.ID
+			c.Request = c.Request.WithContext(withGitHubUserToken(c.Request.Context(), token, func() { m.dropUserToken(sessionID) }))
+		}
+		c.Set(githubIdentityKey, session.Identity)
 		c.Next()
 	}
 }
 
-func (m *authManager) exchangeCode(ctx context.Context, code, verifier string) (string, error) {
+// exchangeCode returns the access token and the scopes GitHub reports it granted.
+func (m *authManager) exchangeCode(ctx context.Context, code, verifier string) (string, string, error) {
 	form := url.Values{
 		"client_id":     {m.cfg.ClientID},
 		"client_secret": {m.cfg.ClientSecret},
@@ -362,34 +397,40 @@ func (m *authManager) exchangeCode(ctx context.Context, code, verifier string) (
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://github.com/login/oauth/access_token", strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := m.client.Do(req)
 	if err != nil {
 		logUpstreamFailure(ctx, "github", req.URL.Path, 0, transportFailure(ctx, err))
-		return "", err
+		return "", "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, "status")
-		return "", fmt.Errorf("OAuth token endpoint returned HTTP %d", resp.StatusCode)
+		return "", "", fmt.Errorf("OAuth token endpoint returned HTTP %d", resp.StatusCode)
 	}
 	var result struct {
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
-		Error       string `json:"error"`
+		AccessToken string  `json:"access_token"`
+		TokenType   string  `json:"token_type"`
+		Scope       *string `json:"scope"`
+		Error       string  `json:"error"`
 	}
 	if err := decodeLimitedJSON(resp.Body, &result); err != nil {
 		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, oauthBodyFailure(ctx, err))
-		return "", errors.New("OAuth token response was incomplete")
+		return "", "", errors.New("OAuth token response was incomplete")
 	}
 	if result.Error != "" || result.AccessToken == "" || !strings.EqualFold(result.TokenType, "bearer") {
 		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, "invalid_response")
-		return "", errors.New("OAuth token response was incomplete")
+		return "", "", errors.New("OAuth token response was incomplete")
 	}
-	return result.AccessToken, nil
+	if result.Scope == nil {
+		// Without GitHub's statement of the granted scopes the token cannot be
+		// shown to be public-only. missingScope is never a valid scope list.
+		return result.AccessToken, missingScope, nil
+	}
+	return result.AccessToken, *result.Scope, nil
 }
 
 func (m *authManager) fetchIdentity(ctx context.Context, token string) (domain.GitHubIdentity, error) {
@@ -461,11 +502,86 @@ func (m *authManager) newSessionCookie(identity domain.GitHubIdentity, expiry ti
 }
 
 func (m *authManager) newSessionValue(identity domain.GitHubIdentity, expiry time.Time) (string, error) {
+	value, _, err := m.newSession(identity, expiry)
+	return value, err
+}
+
+// newSession returns the signed cookie value and the session ID it carries.
+func (m *authManager) newSession(identity domain.GitHubIdentity, expiry time.Time) (string, string, error) {
 	id, err := randomToken(m.random, 32)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return m.sign("session", authSession{ID: id, Identity: identity, ExpiresAt: expiry.Unix()})
+	value, err := m.sign("session", authSession{ID: id, Identity: identity, ExpiresAt: expiry.Unix()})
+	return value, id, err
+}
+
+func (m *authManager) identityAllowed(id int64) bool {
+	return m.cfg.OpenSignin || domain.GitHubIdentityAllowed(id, m.cfg.AllowedIDs)
+}
+
+func (m *authManager) storeUserToken(sessionID, token string, expiresAt time.Time) {
+	m.tokenMu.Lock()
+	defer m.tokenMu.Unlock()
+	if len(m.userTokens) >= maxStoredUserTokens {
+		m.sweepUserTokensLocked()
+	}
+	if len(m.userTokens) >= maxStoredUserTokens {
+		m.logger.Warn("GitHub OAuth token not kept", "reason", "token_store_full")
+		return
+	}
+	m.userTokens[sessionID] = storedUserToken{token: token, expiresAt: expiresAt}
+}
+
+// userTokenFor returns the session's GitHub token, or "" when none is held.
+func (m *authManager) userTokenFor(sessionID string) string {
+	m.tokenMu.Lock()
+	defer m.tokenMu.Unlock()
+	stored, ok := m.userTokens[sessionID]
+	if !ok {
+		return ""
+	}
+	if !stored.expiresAt.After(m.now()) {
+		delete(m.userTokens, sessionID)
+		return ""
+	}
+	return stored.token
+}
+
+func (m *authManager) dropUserToken(sessionID string) {
+	m.tokenMu.Lock()
+	delete(m.userTokens, sessionID)
+	m.tokenMu.Unlock()
+}
+
+func (m *authManager) storedUserTokens() int {
+	m.tokenMu.Lock()
+	defer m.tokenMu.Unlock()
+	m.sweepUserTokensLocked()
+	return len(m.userTokens)
+}
+
+func (m *authManager) sweepUserTokensLocked() {
+	now := m.now()
+	for id, stored := range m.userTokens {
+		if !stored.expiresAt.After(now) {
+			delete(m.userTokens, id)
+		}
+	}
+}
+
+// missingScope stands for scope metadata GitHub did not send. It fails publicReadScopes.
+const missingScope = "\x00missing"
+
+// publicReadScopes reports whether a GitHub scope list grants no more than
+// read:user. Such a token reads only public repositories.
+func publicReadScopes(raw string) bool {
+	for _, scope := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' }) {
+		if scope != "read:user" {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *authManager) sessionFromCookie(value string) (authSession, bool) {
@@ -486,7 +602,11 @@ func (m *authManager) sessionFromCookie(value string) (authSession, bool) {
 
 func (m *authManager) revokeSession(value string) {
 	var session authSession
-	if !m.verify(value, "session", &session) || session.ID == "" || session.ExpiresAt <= m.now().Unix() || !domain.GitHubIdentityAllowed(session.Identity.ID, m.cfg.AllowedIDs) {
+	if !m.verify(value, "session", &session) || session.ID == "" {
+		return
+	}
+	m.dropUserToken(session.ID)
+	if session.ExpiresAt <= m.now().Unix() || !m.identityAllowed(session.Identity.ID) {
 		return
 	}
 	digest := sha256.Sum256([]byte(value))

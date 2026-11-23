@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/felixgeelhaar/ghostline/backend/internal/domain"
 	"github.com/gin-gonic/gin"
 )
 
@@ -189,11 +190,42 @@ func rateLimitMiddleware(l *rateLimiter, identity clientIdentity) gin.HandlerFun
 			c.Next()
 			return
 		}
-		seconds := int((retryAfter + time.Second - 1) / time.Second)
-		if seconds < 1 {
-			seconds = 1
-		}
+		seconds := retryAfterSeconds(retryAfter)
 		c.Header("Retry-After", strconv.Itoa(seconds))
 		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": fmt.Sprintf("Too many requests from this client. Try again in %d seconds.", seconds)})
 	}
+}
+
+// githubIdentityKey is the gin context key the auth middleware sets to the
+// signed-in domain.GitHubIdentity.
+const githubIdentityKey = "ghostline.github_identity"
+
+// accountRateLimitMiddleware limits API requests per signed-in GitHub account, so one
+// account cannot spread its requests across many addresses. Requests without a
+// signed-in identity (sign-in disabled) are left to the per-client limit.
+func accountRateLimitMiddleware(l *rateLimiter) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		value, ok := c.Get(githubIdentityKey)
+		identity, isIdentity := value.(domain.GitHubIdentity)
+		if !ok || !isIdentity {
+			c.Next()
+			return
+		}
+		allowed, retryAfter := l.allow("github:" + strconv.FormatInt(identity.ID, 10))
+		if allowed {
+			c.Next()
+			return
+		}
+		seconds := retryAfterSeconds(retryAfter)
+		c.Header("Retry-After", strconv.Itoa(seconds))
+		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": fmt.Sprintf("Too many requests from this GitHub account. Try again in %d seconds.", seconds)})
+	}
+}
+
+func retryAfterSeconds(wait time.Duration) int {
+	seconds := int((wait + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
 }

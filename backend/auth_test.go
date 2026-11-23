@@ -209,7 +209,7 @@ func TestSessionEndpointHidesAccountsRemovedFromTheAllowlist(t *testing.T) {
 	}
 }
 
-func TestGitHubOAuthCallbackIssuesAllowlistedSessionAndDiscardsToken(t *testing.T) {
+func TestGitHubOAuthCallbackIssuesAllowlistedSessionWithoutTheTokenInTheCookie(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		switch request.URL.String() {
 		case "https://github.com/login/oauth/access_token":
