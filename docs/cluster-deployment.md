@@ -56,11 +56,11 @@ curl -fsS https://ghostline.felixgeelhaar.de/api/health
 curl -sI http://ghostline.felixgeelhaar.de | grep -i location    # https redirect
 ```
 
-Sign in with an allowed GitHub account and import a public pull request. The screenshot of that working page is the AGENTS.md rule 6 evidence for the release.
+Sign in with a GitHub account (any account while open sign-in is on) and import a public pull request. The screenshot of that working page is the AGENTS.md rule 6 evidence for the release.
 
 ## Open sign-in
 
-`GHOSTLINE_OPEN_SIGNIN` is `"false"` in both manifests, so only the IDs in `GHOSTLINE_ALLOWED_GITHUB_IDS` can sign in. Turning it on is a separate pull request that the engineer approves: change the value to `"true"` in `.rollops/deploy-ghostline.yaml` and `deploy/kubernetes/ghostline.yaml`. The allowlist stays in the secret, so switching back is the same one-line change.
+`GHOSTLINE_OPEN_SIGNIN` is `"true"` in both manifests, so any GitHub account can sign in (the engineer approved this as the follow-up to #126). Switching it off is a separate pull request that the engineer approves: change the value to `"false"` in `.rollops/deploy-ghostline.yaml` and `deploy/kubernetes/ghostline.yaml`, and update `TestDeploymentTurnsOpenSigninOn`. The allowlist stays in the secret, so with the flag off only the IDs in `GHOSTLINE_ALLOWED_GITHUB_IDS` can sign in again.
 
 With open sign-in on:
 

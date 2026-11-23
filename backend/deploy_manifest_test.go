@@ -249,11 +249,16 @@ func TestSecretSetupKeepsValuesOutOfArguments(t *testing.T) {
 	}
 }
 
-// Open sign-in exposes Ghostline to every GitHub account. Turning it on must be its
-// own reviewed change, which updates this test along with the manifests.
-func TestDeploymentKeepsOpenSigninOff(t *testing.T) {
+// Open sign-in exposes Ghostline to every GitHub account. The engineer approved
+// turning it on (#126); switching it off again is its own reviewed change, which
+// updates this test along with the manifests.
+func TestDeploymentTurnsOpenSigninOn(t *testing.T) {
 	deployment := breakGlassDocs(t)["Deployment/ghostline"]
-	if !regexp.MustCompile(`(?m)^\s+- name: GHOSTLINE_OPEN_SIGNIN\n\s+value: "false"$`).MatchString(deployment) {
-		t.Error(`Deployment does not set GHOSTLINE_OPEN_SIGNIN to "false" explicitly`)
+	if !regexp.MustCompile(`(?m)^\s+- name: GHOSTLINE_OPEN_SIGNIN\n\s+value: "true"$`).MatchString(deployment) {
+		t.Error(`Deployment does not set GHOSTLINE_OPEN_SIGNIN to "true" explicitly`)
+	}
+	// The allowlist stays wired in, so switching back is a one-line change.
+	if !strings.Contains(deployment, "GHOSTLINE_ALLOWED_GITHUB_IDS") {
+		t.Error("Deployment no longer passes GHOSTLINE_ALLOWED_GITHUB_IDS for switching back")
 	}
 }
