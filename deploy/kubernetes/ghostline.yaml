@@ -180,7 +180,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: ghostline
-          image: ghcr.io/felixgeelhaar/ghostline:v0.1.0-rc.5@sha256:12be22d35f8429a95e2c63e6a391f24e30f040eb3a7771e6fcf28dece4c0a6fc
+          image: ghcr.io/felixgeelhaar/ghostline:v0.1.0-rc.6@sha256:c315418eca509034fe1cf381eb3c253aa686f9acdf8274c6da1e01f4b570453b
           ports:
             - name: http
               containerPort: 8080
