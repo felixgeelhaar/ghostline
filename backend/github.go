@@ -262,16 +262,23 @@ func linkHasRelation(link, relation string) bool {
 	return false
 }
 
+// ensurePublicBeforeDataReads guards reads that use the signed-in user's token
+// when there is one, never the server token. That read:user token, whose scopes
+// are checked on every reply, cannot read private repositories, so the shared
+// server quota is spent on the check only for requests without it. A request
+// that later sends the server token (an artifact download) must call
+// ensurePublicRepository itself.
+func ensurePublicBeforeDataReads(ctx context.Context, gh *githubClient, owner, repo string) error {
+	if githubUserToken(ctx).token != "" {
+		return nil
+	}
+	return ensurePublicRepository(ctx, gh, owner, repo)
+}
+
 func ensurePublicRepository(ctx context.Context, gh *githubClient, owner, repo string) error {
 	// Without a server credential GitHub will not return private repository
 	// data. Avoid an extra API call on the public-only unauthenticated path.
 	if gh.token == "" {
-		return nil
-	}
-	// The data reads carry the user's read:user token, whose scopes are checked on
-	// every reply; it cannot read private repositories. Leave the shared server
-	// quota to requests without one.
-	if githubUserToken(ctx).token != "" {
 		return nil
 	}
 	path := fmt.Sprintf("/repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo))

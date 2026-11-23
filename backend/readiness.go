@@ -100,7 +100,7 @@ func (a api) loadReadiness(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	if err := ensurePublicRepository(ctx, a.gh, owner, repo); err != nil {
+	if err := ensurePublicBeforeDataReads(ctx, a.gh, owner, repo); err != nil {
 		respondGitHubError(c, err)
 		return
 	}
@@ -110,7 +110,7 @@ func (a api) loadReadiness(c *gin.Context) {
 		return
 	}
 	if !identity.Equal(domain.RepositoryIdentity{Owner: owner, Name: repo}) {
-		if err := ensurePublicRepository(ctx, a.gh, identity.Owner, identity.Name); err != nil {
+		if err := ensurePublicBeforeDataReads(ctx, a.gh, identity.Owner, identity.Name); err != nil {
 			respondGitHubError(c, err)
 			return
 		}

@@ -123,7 +123,7 @@ func (a api) importPR(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := ensurePublicRepository(c.Request.Context(), a.gh, owner, repo); err != nil {
+	if err := ensurePublicBeforeDataReads(c.Request.Context(), a.gh, owner, repo); err != nil {
 		respondGitHubError(c, err)
 		return
 	}
@@ -141,7 +141,7 @@ func (a api) importPR(c *gin.Context) {
 			return
 		}
 		if !identity.Equal(domain.RepositoryIdentity{Owner: owner, Name: repo}) {
-			if err := ensurePublicRepository(c.Request.Context(), a.gh, identity.Owner, identity.Name); err != nil {
+			if err := ensurePublicBeforeDataReads(c.Request.Context(), a.gh, identity.Owner, identity.Name); err != nil {
 				respondGitHubError(c, err)
 				return
 			}
@@ -222,7 +222,7 @@ func (a api) loadRevisionChecks(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "The revision must be a full 40-character commit SHA."})
 		return
 	}
-	if err := ensurePublicRepository(c.Request.Context(), a.gh, owner, repo); err != nil {
+	if err := ensurePublicBeforeDataReads(c.Request.Context(), a.gh, owner, repo); err != nil {
 		respondGitHubError(c, err)
 		return
 	}

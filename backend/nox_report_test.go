@@ -29,7 +29,8 @@ type noxWorkflowTestTransport struct {
 func (transport noxWorkflowTestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	if request.URL.Path == "/repos/acme/app/contents/.github/workflows/nox.yml" {
 		return &http.Response{
-			StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"sha":"` + noxTrustedWorkflowBlobSHA + `"}`)), Request: request,
+			// GitHub reports a user token's scopes on every reply.
+			StatusCode: http.StatusOK, Header: http.Header{"X-Oauth-Scopes": {"read:user"}}, Body: io.NopCloser(strings.NewReader(`{"sha":"` + noxTrustedWorkflowBlobSHA + `"}`)), Request: request,
 		}, nil
 	}
 	response, err := transport.fallback.RoundTrip(request)
@@ -38,7 +39,7 @@ func (transport noxWorkflowTestTransport) RoundTrip(request *http.Request) (*htt
 	if err == nil && response.StatusCode == http.StatusNotFound && strings.Contains(request.URL.Path, "/compare/") {
 		_ = response.Body.Close()
 		return &http.Response{
-			StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"files":[]}`)), Request: request,
+			StatusCode: http.StatusOK, Header: http.Header{"X-Oauth-Scopes": {"read:user"}}, Body: io.NopCloser(strings.NewReader(`{"files":[]}`)), Request: request,
 		}, nil
 	}
 	return response, err
@@ -944,20 +945,26 @@ func TestLoadNoxReportDownloadsWithTokenOnlyAfterConfirmingPublicRepository(t *t
 	const sha = "cccccccccccccccccccccccccccccccccccccccc"
 	archive := makeNoxArchiveFor(t, sha, `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Nox"}},"results":[]}]}`)
 	digest := sha256.Sum256(archive)
+	// A signed-in user's token cannot download artifacts, so the server token
+	// still does, and the visibility check must run even when the user has a token.
 	for _, tc := range []struct {
 		name          string
 		visibility    string
+		userToken     string
 		wantAvailable bool
 		wantDownloads int
 	}{
-		{"public repository", `{"private":false}`, true, 1},
-		{"private repository", `{"private":true}`, false, 0},
-		{"visibility unknown", `{}`, false, 0},
+		{"public repository", `{"private":false}`, "", true, 1},
+		{"private repository", `{"private":true}`, "", false, 0},
+		{"visibility unknown", `{}`, "", false, 0},
+		{"signed in, public repository", `{"private":false}`, "user-token", true, 1},
+		{"signed in, private repository", `{"private":true}`, "user-token", false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var downloads int
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				authorized := r.Header.Get("Authorization") != ""
+				authorized := r.Header.Get("Authorization") == "Bearer server-token"
+				w.Header().Set("X-OAuth-Scopes", "read:user")
 				switch r.URL.Path {
 				case "/repos/acme/app":
 					if !authorized {
@@ -997,7 +1004,11 @@ func TestLoadNoxReportDownloadsWithTokenOnlyAfterConfirmingPublicRepository(t *t
 			defer srv.Close()
 			gh := noxTestGitHubClient(srv)
 			gh.token = "server-token"
-			report := loadNoxReport(context.Background(), gh, "acme", "app", 7, sha)
+			ctx := context.Background()
+			if tc.userToken != "" {
+				ctx = withGitHubUserToken(ctx, tc.userToken, nil)
+			}
+			report := loadNoxReport(ctx, gh, "acme", "app", 7, sha)
 			if (report.Availability == noxReportAvailable) != tc.wantAvailable || downloads != tc.wantDownloads {
 				t.Fatalf("availability=%s reason=%q downloads=%d, want available=%v downloads=%d", report.Availability, report.Reason, downloads, tc.wantAvailable, tc.wantDownloads)
 			}
