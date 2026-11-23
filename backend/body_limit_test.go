@@ -153,6 +153,25 @@ func TestUnlimitedAPIRoutesAlsoRefuseAnOversizedBody(t *testing.T) {
 	}
 }
 
+func TestBodylessRoutesNeverReadAnUndeclaredBody(t *testing.T) {
+	router := newRouter(&githubClient{baseURL: "http://127.0.0.1:1", http: http.DefaultClient})
+	for _, path := range []string{"/api/health", "/api/session"} {
+		t.Run(path, func(t *testing.T) {
+			body := &countingReader{r: bytes.NewReader(oversizedJSON())}
+			req := httptest.NewRequest(http.MethodGet, path, body)
+			req.ContentLength = -1 // a slow chunked upload must not hold the handler
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body %s", rec.Code, rec.Body.String())
+			}
+			if body.read != 0 {
+				t.Fatalf("route read %d bytes of a body it never uses", body.read)
+			}
+		})
+	}
+}
+
 func TestAPIPassesAnAllowedBodyThroughIntact(t *testing.T) {
 	var got string
 	router := gin.New()

@@ -371,11 +371,11 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 	}
 	r := gin.New()
 	r.Use(requestLogging(logger, identity), gin.Recovery())
-	r.GET("/api/health", limitRequestBody(maxAPIRequestBytes), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
+	r.GET("/api/health", refuseDeclaredOversizedBody(maxAPIRequestBytes), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	if auth == nil {
 		auth = newAuthManager(authConfig{}, nil)
 	}
-	r.GET("/api/session", limitRequestBody(maxAPIRequestBytes), auth.session)
+	r.GET("/api/session", refuseDeclaredOversizedBody(maxAPIRequestBytes), auth.session)
 	oauthLoginLimiter := newRateLimiter(limiter.limit, limiter.window, limiter.now)
 	oauthCallbackLimiter := newRateLimiter(limiter.limit, limiter.window, limiter.now)
 	r.POST("/auth/login", rateLimitMiddleware(oauthLoginLimiter, identity), auth.login)
