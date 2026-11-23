@@ -12,7 +12,7 @@ spec:
     spec:
       namespace: ghostline
       resource: deployment/ghostline
-      image: ghcr.io/felixgeelhaar/ghostline:v0.1.0-rc.3@sha256:abb5d16ead3d8e0ff2013f9cdbbb7cf290515c15576fa39704baab13ba6fe9c3
+      image: ghcr.io/felixgeelhaar/ghostline:v0.1.0-rc.4@sha256:805a2dc534a7a181a3e764dbddaea65d1d2ee65d3f99f62bc44cad37a2a1d48f
       manifest: |
         apiVersion: apps/v1
         kind: Deployment
@@ -43,7 +43,7 @@ spec:
                   type: RuntimeDefault
               containers:
                 - name: ghostline
-                  image: ghcr.io/felixgeelhaar/ghostline:v0.1.0-rc.3@sha256:abb5d16ead3d8e0ff2013f9cdbbb7cf290515c15576fa39704baab13ba6fe9c3
+                  image: ghcr.io/felixgeelhaar/ghostline:v0.1.0-rc.4@sha256:805a2dc534a7a181a3e764dbddaea65d1d2ee65d3f99f62bc44cad37a2a1d48f
                   ports:
                     - name: http
                       containerPort: 8080
