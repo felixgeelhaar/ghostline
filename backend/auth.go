@@ -118,6 +118,7 @@ type authManager struct {
 	revoked      map[[32]byte]time.Time
 	tokenMu      sync.Mutex
 	userTokens   map[string]storedUserToken
+	tokenSeq     uint64
 }
 
 // storedUserToken is a user's GitHub OAuth token, held in memory for the session
@@ -126,6 +127,9 @@ type storedUserToken struct {
 	accountID int64
 	token     string
 	expiresAt time.Time
+	// seq orders sign-ins; committed is set once the session is issued.
+	seq       uint64
+	committed bool
 }
 
 // maxStoredUserTokens bounds the token store. Beyond it, sign-in is refused
@@ -136,6 +140,10 @@ const maxStoredUserTokens = 10000
 // for. A further sign-in drops that account's oldest token (its session must
 // sign in again), so no single account can fill the shared store.
 const maxUserTokensPerAccount = 5
+
+// maxPendingSignInsPerAccount bounds one account's sign-ins whose token is
+// kept but whose session is not issued yet.
+const maxPendingSignInsPerAccount = 5
 
 type pendingOAuth struct {
 	expiresAt  time.Time
@@ -275,7 +283,11 @@ func (m *authManager) callback(c *gin.Context) {
 		return
 	}
 	// Every session reads GitHub with its own token, so keep the token first.
-	if !m.storeUserToken(sessionID, identity.ID, token, expiresAt) {
+	if err := m.storeUserToken(sessionID, identity.ID, token, expiresAt); err != nil {
+		if errors.Is(err, errSignInInProgress) {
+			c.String(http.StatusTooManyRequests, "Several sign-ins for your GitHub account are still in progress. Wait a moment, then sign in again.")
+			return
+		}
 		c.String(http.StatusServiceUnavailable, "Ghostline has reached its limit of signed-in users. Try again later.")
 		return
 	}
@@ -284,7 +296,7 @@ func (m *authManager) callback(c *gin.Context) {
 		c.String(http.StatusUnauthorized, "GitHub sign-in was canceled. Return to Ghostline and try again.")
 		return
 	}
-	m.trimAccountTokens(identity.ID)
+	m.commitUserToken(sessionID, identity.ID)
 }
 
 func (m *authManager) session(c *gin.Context) {
@@ -539,8 +551,16 @@ func (m *authManager) identityAllowed(id int64) bool {
 	return m.cfg.OpenSignin || domain.GitHubIdentityAllowed(id, m.cfg.AllowedIDs)
 }
 
-// storeUserToken keeps the session's GitHub token and reports whether it did.
-func (m *authManager) storeUserToken(sessionID string, accountID int64, token string, expiresAt time.Time) bool {
+var (
+	errTokenStoreFull   = errors.New("the token store is full")
+	errSignInInProgress = errors.New("too many sign-ins of this account are in progress")
+)
+
+// storeUserToken keeps the session's GitHub token as pending: its session is
+// not issued yet. It refuses when the store is full, or when the account
+// already has maxPendingSignInsPerAccount sign-ins in progress, so overlapping
+// callbacks of one account cannot fill the store before any is committed.
+func (m *authManager) storeUserToken(sessionID string, accountID int64, token string, expiresAt time.Time) error {
 	m.tokenMu.Lock()
 	defer m.tokenMu.Unlock()
 	if len(m.userTokens) >= maxStoredUserTokens {
@@ -548,20 +568,37 @@ func (m *authManager) storeUserToken(sessionID string, accountID int64, token st
 	}
 	if len(m.userTokens) >= maxStoredUserTokens {
 		m.logger.Warn("GitHub OAuth token not kept", "reason", "token_store_full")
-		return false
+		return errTokenStoreFull
 	}
-	m.userTokens[sessionID] = storedUserToken{accountID: accountID, token: token, expiresAt: expiresAt}
-	return true
+	now := m.now()
+	pending := 0
+	for _, stored := range m.userTokens {
+		if stored.accountID == accountID && !stored.committed && stored.expiresAt.After(now) {
+			pending++
+		}
+	}
+	if pending >= maxPendingSignInsPerAccount {
+		m.logger.Warn("GitHub OAuth token not kept", "reason", "sign_ins_in_progress")
+		return errSignInInProgress
+	}
+	m.tokenSeq++
+	m.userTokens[sessionID] = storedUserToken{accountID: accountID, token: token, expiresAt: expiresAt, seq: m.tokenSeq}
+	return nil
 }
 
-// trimAccountTokens drops the account's expired tokens, then its oldest ones
-// beyond maxUserTokensPerAccount. The callback calls it only once the new
-// session is issued, so a canceled sign-in never costs an existing session.
-func (m *authManager) trimAccountTokens(accountID int64) {
+// commitUserToken marks the token of an issued session as committed, then
+// drops the account's expired tokens and its oldest committed ones beyond
+// maxUserTokensPerAccount. Pending tokens are never dropped here: their
+// sessions are still being issued, and a canceled sign-in drops only its own.
+func (m *authManager) commitUserToken(sessionID string, accountID int64) {
 	m.tokenMu.Lock()
 	defer m.tokenMu.Unlock()
+	if stored, ok := m.userTokens[sessionID]; ok && stored.accountID == accountID {
+		stored.committed = true
+		m.userTokens[sessionID] = stored
+	}
 	now := m.now()
-	var held []string
+	var committed []string
 	for id, stored := range m.userTokens {
 		if stored.accountID != accountID {
 			continue
@@ -570,16 +607,18 @@ func (m *authManager) trimAccountTokens(accountID int64) {
 			delete(m.userTokens, id)
 			continue
 		}
-		held = append(held, id)
+		if stored.committed {
+			committed = append(committed, id)
+		}
 	}
-	if len(held) <= maxUserTokensPerAccount {
+	if len(committed) <= maxUserTokensPerAccount {
 		return
 	}
-	// Sessions share one lifetime, so the earliest expiry is the oldest sign-in.
-	sort.Slice(held, func(i, j int) bool {
-		return m.userTokens[held[i]].expiresAt.Before(m.userTokens[held[j]].expiresAt)
+	// The sequence number orders sign-ins exactly, even within one clock tick.
+	sort.Slice(committed, func(i, j int) bool {
+		return m.userTokens[committed[i]].seq < m.userTokens[committed[j]].seq
 	})
-	for _, id := range held[:len(held)-maxUserTokensPerAccount] {
+	for _, id := range committed[:len(committed)-maxUserTokensPerAccount] {
 		delete(m.userTokens, id)
 	}
 }

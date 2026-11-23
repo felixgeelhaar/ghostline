@@ -19,9 +19,10 @@ func signedInSessionCookie(t *testing.T, m *authManager, identity domain.GitHubI
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !m.storeUserToken(id, identity.ID, "user-oauth-token", expiry) {
-		t.Fatal("token store refused the test token")
+	if err := m.storeUserToken(id, identity.ID, "user-oauth-token", expiry); err != nil {
+		t.Fatalf("token store refused the test token: %v", err)
 	}
+	m.commitUserToken(id, identity.ID)
 	return &http.Cookie{Name: sessionCookieName, Value: value}
 }
 
