@@ -277,3 +277,15 @@ func TestSearchRejectsTextWithNothingToSearch(t *testing.T) {
 		t.Fatal("an empty search reached GitHub")
 	}
 }
+
+func TestSearchLengthCountsCharactersNotBytes(t *testing.T) {
+	router, session := searchRouter(t, &recordingGitHub{respond: func(*http.Request) *http.Response {
+		return oauthResponse(http.StatusOK, `{"total_count":0,"incomplete_results":false,"items":[]}`)
+	}})
+	if response := searchWith(router, session, strings.Repeat("修", 256)); response.Code != http.StatusOK {
+		t.Fatalf("256 characters = %d %s", response.Code, response.Body.String())
+	}
+	if response := searchWith(router, session, strings.Repeat("修", 257)); response.Code != http.StatusBadRequest {
+		t.Fatalf("257 characters = %d", response.Code)
+	}
+}

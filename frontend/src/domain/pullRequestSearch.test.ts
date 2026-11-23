@@ -18,6 +18,12 @@ describe('classifyImportInput', () => {
     expect(classifyImportInput(input)).toEqual(expected)
   })
 
+  it('caps the search text by characters, not UTF-16 code units', () => {
+    const query = classifyImportInput('😀'.repeat(300))
+    expect(query.kind).toBe('search')
+    expect(query.kind === 'search' && Array.from(query.query)).toHaveLength(256)
+  })
+
   it('caps the search text at the server limit', () => {
     expect(classifyImportInput('x'.repeat(300))).toEqual({ kind: 'search', query: 'x'.repeat(256) })
   })

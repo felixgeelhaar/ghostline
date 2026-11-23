@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/felixgeelhaar/ghostline/backend/internal/domain"
 	"github.com/gin-gonic/gin"
@@ -93,7 +94,8 @@ func (a api) searchPullRequests(limiter *rateLimiter) gin.HandlerFunc {
 			return
 		}
 		query := strings.Join(strings.Fields(body.Query), " ")
-		if len(query) < minSearchQueryLength || len(query) > maxSearchQueryLength {
+		// Count characters, as the browser does, not UTF-8 bytes.
+		if n := utf8.RuneCountInString(query); n < minSearchQueryLength || n > maxSearchQueryLength {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Search with %d to %d characters.", minSearchQueryLength, maxSearchQueryLength)})
 			return
 		}

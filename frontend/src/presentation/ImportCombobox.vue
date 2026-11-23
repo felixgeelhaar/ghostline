@@ -6,7 +6,7 @@ import { classifyImportInput, suggestionStateLabel, type PullRequestSuggestion }
 // One field for a pull request URL, owner/repo#number, or, when signed in, text that
 // searches the user's own public pull requests (ARIA APG combobox with a list popup).
 const props = defineProps<{ modelValue: string; loading: boolean; canSearch: boolean }>()
-const emit = defineEmits<{ 'update:modelValue': [value: string]; import: [target: string] }>()
+const emit = defineEmits<{ 'update:modelValue': [value: string]; import: [target: string]; 'search-failed': [error: unknown] }>()
 
 const SEARCH_DELAY_MS = 300
 const listboxId = 'pr-search-results'
@@ -80,6 +80,7 @@ async function runSearch(query: string, request: number) {
     state.value = { status: 'done', items: result.items, partial: result.partial }
   } catch (error) {
     if (request !== searchRequest) return
+    emit('search-failed', error)
     state.value = { status: 'failed', message: error instanceof Error ? error.message : 'Could not search your pull requests.' }
   }
 }
@@ -98,10 +99,29 @@ function submit() {
     choose(items.value[activeIndex.value]!)
     return
   }
+  // Read the field itself: the bound value can lag a same-tick edit by one render.
+  const text = field.value?.value ?? props.modelValue
+  const input = classifyImportInput(text)
+  if (props.canSearch && input.kind === 'search') {
+    // Search text is not an import target: show (or fetch now) the matches to pick from.
+    if (timer !== undefined || state.value.status === 'idle') {
+      cancelSearch()
+      void runSearch(input.query, searchRequest)
+    } else {
+      open.value = true
+    }
+    return
+  }
   cancelSearch()
   close()
-  // Read the field itself: the bound value can lag a same-tick edit by one render.
-  emit('import', field.value?.value ?? props.modelValue)
+  emit('import', text)
+}
+
+// Leaving the field drops the list and any search still waiting for typing to pause.
+function onBlur() {
+  cancelSearch()
+  if (state.value.status === 'searching') state.value = { status: 'idle' }
+  close()
 }
 
 function move(step: 1 | -1) {
@@ -153,7 +173,7 @@ onBeforeUnmount(cancelSearch)
       spellcheck="false"
       @input="onInput"
       @keydown="onKeydown"
-      @blur="close"
+      @blur="onBlur"
     >
     <button :disabled="loading" @mousedown.prevent @click="submit">{{ loading ? 'FETCHING…' : 'IMPORT CHANGE' }} <span>↗</span></button>
     <div v-show="open" class="pr-search-popup">

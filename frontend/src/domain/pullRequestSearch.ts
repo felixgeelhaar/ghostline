@@ -21,8 +21,10 @@ export function classifyImportInput(raw: string): ImportInput {
     return { kind: 'pull-request', url: `https://github.com/${shorthand[1]}/${shorthand[2]}/pull/${shorthand[3]}` }
   }
   if (/^https?:\/\//i.test(text) || /^(www\.)?github\.com\//i.test(text)) return { kind: 'pull-request', url: text }
-  const query = text.split(/\s+/).join(' ').slice(0, MAX_SEARCH_LENGTH)
-  if (query.length < MIN_SEARCH_LENGTH) return { kind: 'too-short' }
+  // Count characters (code points) as the server does, so emoji and CJK text fit.
+  const characters = Array.from(text.split(/\s+/).join(' ')).slice(0, MAX_SEARCH_LENGTH)
+  if (characters.length < MIN_SEARCH_LENGTH) return { kind: 'too-short' }
+  const query = characters.join('')
   return { kind: 'search', query }
 }
 

@@ -187,13 +187,46 @@ describe('searching your pull requests from the import field', () => {
     expect(host!.textContent).not.toContain('Late match')
   })
 
-  it('asks the user to pick a suggestion when Enter is pressed on search text', async () => {
+  it('keeps the results open when Enter is pressed on search text with nothing highlighted', async () => {
     vi.mocked(searchPullRequests).mockResolvedValue({ items: [suggestion('widgets', 7, 'Add widgets')], partial: false })
     await mount(true)
     await typeAndWait('widgets')
     await key('Enter')
     expect(importPullRequest).not.toHaveBeenCalled()
-    expect(host!.querySelector('.import-panel > [role="alert"]')?.textContent).toContain('Pick one of your pull requests')
+    expect(input().getAttribute('aria-expanded')).toBe('true')
+    expect(options()).toHaveLength(1)
+  })
+
+  it('searches straight away when Enter is pressed before typing pauses', async () => {
+    vi.mocked(searchPullRequests).mockResolvedValue({ items: [suggestion('widgets', 7, 'Add widgets')], partial: false })
+    await mount(true)
+    await type('widgets')
+    await key('Enter')
+    expect(searchPullRequests).toHaveBeenCalledTimes(1)
+    expect(options()).toHaveLength(1)
+    vi.advanceTimersByTime(300)
+    await settle()
+    expect(searchPullRequests).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not search after focus leaves the field', async () => {
+    await mount(true)
+    await type('widgets')
+    input().dispatchEvent(new FocusEvent('blur'))
+    vi.advanceTimersByTime(300)
+    await settle()
+    expect(searchPullRequests).not.toHaveBeenCalled()
+    expect(input().getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('returns to sign-in when a search reports an expired session', async () => {
+    vi.mocked(searchPullRequests).mockRejectedValue(new GhostlineApiError(401, 'Your Ghostline session expired. Sign in with GitHub again.', 'AUTH_REQUIRED'))
+    await mount(true)
+    vi.mocked(fetchGhostlineSession).mockResolvedValue({ authRequired: true, authenticated: false })
+    await typeAndWait('widgets')
+    vi.useRealTimers()
+    await vi.waitFor(() => expect(host?.querySelector('#pr-url')).toBeNull())
+    expect(host!.textContent).toContain('Sign in to your control room.')
   })
 
   it('hides earlier results as soon as the search text changes', async () => {
