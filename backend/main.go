@@ -234,7 +234,7 @@ func (a api) loadNoxReport(c *gin.Context) {
 		URL string `json:"url"`
 		SHA string `json:"sha"`
 	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16*1024)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxAPIRequestBytes)
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Provide a GitHub pull request URL and a full commit SHA."})
 		return
@@ -371,18 +371,19 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 	}
 	r := gin.New()
 	r.Use(requestLogging(logger, identity), gin.Recovery())
-	r.GET("/api/health", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
+	r.GET("/api/health", refuseDeclaredOversizedBody(maxAPIRequestBytes), func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	if auth == nil {
 		auth = newAuthManager(authConfig{}, nil)
 	}
-	r.GET("/api/session", auth.session)
+	r.GET("/api/session", refuseDeclaredOversizedBody(maxAPIRequestBytes), auth.session)
 	oauthLoginLimiter := newRateLimiter(limiter.limit, limiter.window, limiter.now)
 	oauthCallbackLimiter := newRateLimiter(limiter.limit, limiter.window, limiter.now)
 	r.POST("/auth/login", rateLimitMiddleware(oauthLoginLimiter, identity), auth.login)
 	r.GET("/auth/callback", rateLimitMiddleware(oauthCallbackLimiter, identity), auth.callback)
 	r.POST("/auth/logout", auth.logout)
 	accountLimiter := newRateLimiter(limiter.limit, limiter.window, limiter.now)
-	limited := r.Group("/api", rateLimitMiddleware(limiter, identity), auth.middleware(), accountRateLimitMiddleware(accountLimiter))
+	// The body limit runs after both rate limits, so a refused oversized request still uses up allowance.
+	limited := r.Group("/api", rateLimitMiddleware(limiter, identity), auth.middleware(), accountRateLimitMiddleware(accountLimiter), limitRequestBody(maxAPIRequestBytes))
 	client := api{gh: gh, qodo: qodo, logger: logger}
 	limited.POST("/import", client.importPR)
 	limited.POST("/checks", client.loadRevisionChecks)
