@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // countingReader records how many bytes a handler pulled from a request body.
@@ -79,11 +81,11 @@ func TestAPIStopsReadingAnUndeclaredOversizedBody(t *testing.T) {
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, req)
 
-			if rec.Code < 400 || rec.Code >= 500 {
-				t.Fatalf("status = %d, want a 4xx refusal; body %s", rec.Code, rec.Body.String())
+			if rec.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status = %d, want 413 as for a declared size; body %s", rec.Code, rec.Body.String())
 			}
-			// MaxBytesReader may read one buffer past the limit before it reports the overflow.
-			if body.read > 2*maxAPIRequestBytes {
+			// One byte past the limit is enough to know the body is too large.
+			if body.read > maxAPIRequestBytes+1 {
 				t.Fatalf("handler read %d bytes; the limit is %d", body.read, maxAPIRequestBytes)
 			}
 			if githubCalls.Load() != 0 {
@@ -132,5 +134,42 @@ func TestRefusedOversizedRequestsStillCountTowardTheRateLimit(t *testing.T) {
 	router.ServeHTTP(second, ordinary)
 	if second.Code != http.StatusTooManyRequests {
 		t.Fatalf("second status = %d, want 429: the refused oversized request must use up the allowance", second.Code)
+	}
+}
+
+func TestUnlimitedAPIRoutesAlsoRefuseAnOversizedBody(t *testing.T) {
+	router := newRouter(&githubClient{baseURL: "http://127.0.0.1:1", http: http.DefaultClient})
+	for _, path := range []string{"/api/health", "/api/session"} {
+		t.Run(path, func(t *testing.T) {
+			body := &countingReader{r: bytes.NewReader(oversizedJSON())}
+			req := httptest.NewRequest(http.MethodGet, path, body)
+			req.ContentLength = int64(len(oversizedJSON()))
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			if rec.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status = %d, want 413; body %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestAPIPassesAnAllowedBodyThroughIntact(t *testing.T) {
+	var got string
+	router := gin.New()
+	router.POST("/echo", limitRequestBody(64), func(c *gin.Context) {
+		raw, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		got = string(raw)
+		c.Status(http.StatusNoContent)
+	})
+	want := strings.Repeat("b", 64) // exactly at the limit
+	req := httptest.NewRequest(http.MethodPost, "/echo", strings.NewReader(want))
+	req.ContentLength = -1
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || got != want {
+		t.Fatalf("status = %d, body seen by handler = %q; want 204 and the full body", rec.Code, got)
 	}
 }

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -11,16 +13,32 @@ import (
 // under 1 KiB; handlers that need less apply their own, tighter limit.
 const maxAPIRequestBytes = 16 << 10
 
-// limitRequestBody refuses a body that declares a size above max before any
-// handler reads it, and caps a body of undeclared size (chunked upload) so a
-// handler's JSON decoding fails once it passes max instead of allocating it.
+var errRequestTooLarge = gin.H{"error": "The request is too large."}
+
+// limitRequestBody refuses a body larger than max with 413 before any handler
+// sees it. A declared size is checked without reading; a body of undeclared
+// size (chunked upload) is read up to max+1 bytes, which is enough to tell,
+// and an allowed body is handed on from memory unchanged.
 func limitRequestBody(max int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.ContentLength > max {
-			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{"error": "The request is too large."})
+			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, errRequestTooLarge)
 			return
 		}
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, max)
+		if c.Request.Body == nil || c.Request.Body == http.NoBody {
+			c.Next()
+			return
+		}
+		raw, err := io.ReadAll(io.LimitReader(c.Request.Body, max+1))
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "The request body could not be read."})
+			return
+		}
+		if int64(len(raw)) > max {
+			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, errRequestTooLarge)
+			return
+		}
+		c.Request.Body = io.NopCloser(bytes.NewReader(raw))
 		c.Next()
 	}
 }
