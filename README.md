@@ -71,7 +71,8 @@ Compose defaults to an unauthenticated local demo. Protected-mode sign-in requir
 | `GITHUB_OAUTH_CLIENT_ID` / `GITHUB_OAUTH_CLIENT_SECRET` | GitHub OAuth App credentials. |
 | `GITHUB_OAUTH_CALLBACK_URL` | Exact HTTPS callback, for example `https://ghostline.example/auth/callback`. |
 | `GHOSTLINE_SESSION_SECRET` | Random secret of at least 32 bytes used to sign state and sessions. |
-| `GHOSTLINE_ALLOWED_GITHUB_IDS` | Comma-separated numeric GitHub user IDs allowed to sign in. |
+| `GHOSTLINE_ALLOWED_GITHUB_IDS` | Comma-separated numeric GitHub user IDs allowed to sign in. Required unless open sign-in is on. |
+| `GHOSTLINE_OPEN_SIGNIN` | `true` lets any GitHub account sign in and ignores the allowlist. Default `false`. |
 | `GHOSTLINE_TRUSTED_PROXY_CIDRS` | Vite development proxy only: optional CIDRs for ingress peers trusted to supply `X-Real-IP`. The production Go service uses `RATE_LIMIT_CLIENT_IP_HEADER` and `RATE_LIMIT_TRUSTED_PROXIES`, documented in the hosted deployment guide. |
 
 The callback exchanges the temporary OAuth code, reads the account identity, and discards the GitHub token. Sessions last 12 hours. Use a secret manager for deployment credentials. This two-container Compose stack remains a Vite development environment for trusted demos. For the production-built single-container setup, see the [hosted deployment guide](docs/hosted-deployment.md). See the [threat model](docs/threat-model.md) for limits that still apply to either deployment.

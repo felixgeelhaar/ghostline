@@ -221,8 +221,11 @@ func checksUnavailableReason(err error) string {
 		return "GitHub returned checks for a different commit than the pull request's head, so they are not shown."
 	case errors.Is(err, errCheckRunWithoutID):
 		return "GitHub returned a check run without an ID, so its checks are not shown."
+	case errors.Is(err, errUserTokenScope):
+		return "GitHub reported that your sign-in grants more than public read access, so checks were not loaded. Sign out and sign in again."
 	case errors.Is(err, errRateLimit):
-		return "GitHub’s public API rate limit was reached before checks could be loaded. Try again later."
+		message, _ := githubRateLimitMessage(err, "GitHub’s public API rate limit was reached before checks could be loaded. Try again later.")
+		return message
 	case errors.Is(err, errNotFound):
 		return "GitHub did not return checks for the head commit."
 	case errors.As(err, &statusErr) && statusErr.code == http.StatusForbidden:

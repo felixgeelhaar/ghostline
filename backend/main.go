@@ -332,8 +332,14 @@ func respondGitHubError(c *gin.Context, err error) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "The server’s GitHub token was rejected, so repository visibility could not be checked. Replace the configured token."})
 	case errors.Is(err, errServerTokenRateLimit):
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "The server’s GitHub token has reached its rate limit, so repository visibility could not be checked. Try again later."})
+	case errors.Is(err, errUserTokenScope):
+		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub reported that your sign-in grants more than public read access, so Ghostline did not use the reply. Sign out and sign in again."})
 	case errors.Is(err, errRateLimit):
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "GitHub’s public API rate limit has been reached. Try again later."})
+		message, wait := githubRateLimitMessage(err, "GitHub’s public API rate limit has been reached. Try again later.")
+		if wait > 0 {
+			c.Header("Retry-After", strconv.Itoa(retryAfterSeconds(wait)))
+		}
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": message})
 	case errors.As(err, &statusErr) && statusErr.code >= 500:
 		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub is having trouble right now. Try again shortly."})
 	default:
@@ -375,7 +381,8 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 	r.POST("/auth/login", rateLimitMiddleware(oauthLoginLimiter, identity), auth.login)
 	r.GET("/auth/callback", rateLimitMiddleware(oauthCallbackLimiter, identity), auth.callback)
 	r.POST("/auth/logout", auth.logout)
-	limited := r.Group("/api", rateLimitMiddleware(limiter, identity), auth.middleware())
+	accountLimiter := newRateLimiter(limiter.limit, limiter.window, limiter.now)
+	limited := r.Group("/api", rateLimitMiddleware(limiter, identity), auth.middleware(), accountRateLimitMiddleware(accountLimiter))
 	client := api{gh: gh, qodo: qodo, logger: logger}
 	limited.POST("/import", client.importPR)
 	limited.POST("/checks", client.loadRevisionChecks)

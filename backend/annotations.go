@@ -144,8 +144,8 @@ func (a api) loadCheckAnnotations(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "The server’s GitHub token was rejected, so repository visibility could not be checked. Replace the configured token."})
 	case errors.Is(err, errServerTokenRateLimit):
 		c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "The server’s GitHub token has reached its rate limit, so repository visibility could not be checked. Try again later."})
-	case err == errRateLimit:
-		c.JSON(http.StatusTooManyRequests, map[string]string{"error": "GitHub’s public API rate limit has been reached. Try again later."})
+	case errors.Is(err, errRateLimit), errors.Is(err, errUserTokenScope):
+		respondGitHubError(c, err)
 	case err == errRevisionMismatch:
 		c.JSON(http.StatusConflict, map[string]string{"error": "That check run does not belong to the selected revision. Re-import the pull request before viewing its annotations."})
 	case errors.As(err, &statusErr) && statusErr.code == http.StatusForbidden:
