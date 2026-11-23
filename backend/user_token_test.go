@@ -135,6 +135,7 @@ type recordingGitHub struct {
 	mu             sync.Mutex
 	authorizations []string
 	respond        func(*http.Request) *http.Response
+	omitScopes     bool
 }
 
 func (r *recordingGitHub) client() *githubClient {
@@ -142,10 +143,16 @@ func (r *recordingGitHub) client() *githubClient {
 		r.mu.Lock()
 		r.authorizations = append(r.authorizations, request.Header.Get("Authorization"))
 		r.mu.Unlock()
+		response := oauthResponse(http.StatusNotFound, `{"message":"Not Found"}`)
 		if r.respond != nil {
-			return r.respond(request), nil
+			response = r.respond(request)
 		}
-		return oauthResponse(http.StatusNotFound, `{"message":"Not Found"}`), nil
+		// GitHub reports a user token's scopes on every reply; a test that wants
+		// otherwise sets or deletes the header itself.
+		if _, set := response.Header["X-Oauth-Scopes"]; !set && request.Header.Get("Authorization") != "" && !r.omitScopes {
+			response.Header.Set("X-OAuth-Scopes", "read:user")
+		}
+		return response, nil
 	})}}
 }
 
@@ -202,10 +209,16 @@ func TestDataRequestsStayAnonymousWithoutAUserToken(t *testing.T) {
 }
 
 func TestTokenWithBroaderScopeIsNotKept(t *testing.T) {
-	for _, scope := range []string{"repo,read:user", "read:user, read:org", "public_repo"} {
-		t.Run(scope, func(t *testing.T) {
+	for name, tokenResponse := range map[string]string{
+		"repo":            `{"access_token":"broad-token","token_type":"bearer","scope":"repo,read:user"}`,
+		"read:org":        `{"access_token":"broad-token","token_type":"bearer","scope":"read:user, read:org"}`,
+		"public_repo":     `{"access_token":"broad-token","token_type":"bearer","scope":"public_repo"}`,
+		"scope not given": `{"access_token":"broad-token","token_type":"bearer"}`,
+	} {
+		scope := name
+		t.Run(name, func(t *testing.T) {
 			github := &recordingGitHub{}
-			auth := newAuthManager(testAuthConfig(), oauthClientGranting(t, `{"access_token":"broad-token","token_type":"bearer","scope":"`+scope+`"}`))
+			auth := newAuthManager(testAuthConfig(), oauthClientGranting(t, tokenResponse))
 			router := newRouterWithAuth(github.client(), nil, newRateLimiter(10, time.Minute, time.Now), clientIdentity{}, nil, auth)
 			session := signInThroughOAuth(t, router)
 			importWithSession(router, session, "")
@@ -335,5 +348,16 @@ func TestUserTokenRateLimitNamesGitHubsResetTime(t *testing.T) {
 	}
 	if len(github.seen()) != 1 {
 		t.Fatalf("GitHub calls = %d, want 1 (no retry with another token)", len(github.seen()))
+	}
+}
+
+func TestGitHubReplyWithoutScopesForAUserTokenStopsUsingIt(t *testing.T) {
+	github := &recordingGitHub{omitScopes: true}
+	auth := newAuthManager(testAuthConfig(), oauthClientGranting(t, `{"access_token":"user-oauth-token","token_type":"bearer","scope":"read:user"}`))
+	router := newRouterWithAuth(github.client(), nil, newRateLimiter(10, time.Minute, time.Now), clientIdentity{}, nil, auth)
+	session := signInThroughOAuth(t, router)
+	response := importWithSession(router, session, "")
+	if response.Code != http.StatusBadGateway || auth.storedUserTokens() != 0 {
+		t.Fatalf("reply without X-OAuth-Scopes: status %d, stored tokens %d", response.Code, auth.storedUserTokens())
 	}
 }

@@ -412,10 +412,10 @@ func (m *authManager) exchangeCode(ctx context.Context, code, verifier string) (
 		return "", "", fmt.Errorf("OAuth token endpoint returned HTTP %d", resp.StatusCode)
 	}
 	var result struct {
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
-		Scope       string `json:"scope"`
-		Error       string `json:"error"`
+		AccessToken string  `json:"access_token"`
+		TokenType   string  `json:"token_type"`
+		Scope       *string `json:"scope"`
+		Error       string  `json:"error"`
 	}
 	if err := decodeLimitedJSON(resp.Body, &result); err != nil {
 		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, oauthBodyFailure(ctx, err))
@@ -425,7 +425,12 @@ func (m *authManager) exchangeCode(ctx context.Context, code, verifier string) (
 		logUpstreamFailure(ctx, "github", req.URL.Path, resp.StatusCode, "invalid_response")
 		return "", "", errors.New("OAuth token response was incomplete")
 	}
-	return result.AccessToken, result.Scope, nil
+	if result.Scope == nil {
+		// Without GitHub's statement of the granted scopes the token cannot be
+		// shown to be public-only. missingScope is never a valid scope list.
+		return result.AccessToken, missingScope, nil
+	}
+	return result.AccessToken, *result.Scope, nil
 }
 
 func (m *authManager) fetchIdentity(ctx context.Context, token string) (domain.GitHubIdentity, error) {
@@ -564,6 +569,9 @@ func (m *authManager) sweepUserTokensLocked() {
 		}
 	}
 }
+
+// missingScope stands for scope metadata GitHub did not send. It fails publicReadScopes.
+const missingScope = "\x00missing"
 
 // publicReadScopes reports whether a GitHub scope list grants no more than
 // read:user. Such a token reads only public repositories.

@@ -138,7 +138,7 @@ func (g *githubClient) getWithNextUsingToken(ctx context.Context, path string, t
 		return false, err
 	}
 	defer resp.Body.Close()
-	if userToken != "" && !publicReadScopes(resp.Header.Get("X-OAuth-Scopes")) {
+	if userToken != "" && !publicReadScopes(reportedScopes(resp.Header)) {
 		// Stop using this token for the session; later reads fall back to anonymous.
 		logUpstreamFailure(ctx, "github", path, resp.StatusCode, "user_token_scope")
 		if user.revoke != nil {
@@ -173,6 +173,16 @@ func (g *githubClient) getWithNextUsingToken(ctx context.Context, path string, t
 		return false, err
 	}
 	return hasNextLink(resp.Header.Values("Link")), nil
+}
+
+// reportedScopes returns the scopes GitHub says a token has, or missingScope when
+// the reply does not say.
+func reportedScopes(header http.Header) string {
+	values := header.Values("X-OAuth-Scopes")
+	if len(values) == 0 {
+		return missingScope
+	}
+	return strings.Join(values, ",")
 }
 
 // rateLimitReset reads when GitHub says the request may be retried. Retry-After
