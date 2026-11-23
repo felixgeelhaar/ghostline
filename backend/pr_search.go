@@ -24,6 +24,8 @@ const (
 	minSearchQueryLength = 3
 	maxSearchQueryLength = 256
 	searchResultLimit    = 10
+	// maxSearchRequestBytes fits a 256-character query of 4-byte characters in JSON.
+	maxSearchRequestBytes = 4 << 10
 )
 
 var errSearchSignInRequired = errors.New("search needs the signed-in user's GitHub token")
@@ -87,6 +89,8 @@ type githubSearchReply struct {
 // GitHub stays the source: nothing is stored between searches.
 func (a api) searchPullRequests(limiter *rateLimiter) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// A search is a few words; refuse a large body before decoding it.
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxSearchRequestBytes)
 		var body struct {
 			Query string `json:"query"`
 		}

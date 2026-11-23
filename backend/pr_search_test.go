@@ -334,3 +334,18 @@ func TestSearchLengthCountsCharactersNotBytes(t *testing.T) {
 		t.Fatalf("257 characters = %d", response.Code)
 	}
 }
+
+func TestSearchRejectsAnOversizedRequestBody(t *testing.T) {
+	github := &recordingGitHub{}
+	router, session := searchRouter(t, github)
+	before := len(github.seen())
+	body := `{"query":"widgets","padding":"` + strings.Repeat("x", maxSearchRequestBytes) + `"}`
+	request := httptest.NewRequest(http.MethodPost, "/api/pr-search", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(session)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || len(github.seen()) != before {
+		t.Fatalf("oversized search = %d, GitHub calls %d -> %d", response.Code, before, len(github.seen()))
+	}
+}
