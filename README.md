@@ -32,7 +32,7 @@ Open the URL printed by Vite. Public GitHub API requests work without a token. I
 
 ## Request rate limit
 
-`POST /api/import`, `POST /api/checks`, `POST /api/check-annotations`, `POST /api/nox-report`, and `POST /api/qodo-review` share one per-client budget so a single caller cannot use up the GitHub API quota for everyone else. The limiter is in-memory and fixed-window: the window starts at a client's first request, and the count and any recorded clients are lost when the backend restarts or if you run more than one instance. `POST /api/pr-search` also counts against this budget and is further limited to 30 searches a minute per GitHub account, matching GitHub's search limit. A request over the limit receives HTTP 429, a `Retry-After` header in seconds, and a JSON `{"error": "..."}` body; the UI shows when to retry. `GET /api/health` is not limited.
+`POST /api/import`, `POST /api/checks`, `POST /api/check-annotations`, `POST /api/nox-report`, and `POST /api/qodo-review` share one per-client budget so a single caller cannot use up the GitHub API quota for everyone else. The limiter is in-memory and fixed-window: the window starts at a client's first request, and the count and any recorded clients are lost when the backend restarts or if you run more than one instance. `POST /api/pr-search` also counts against this budget and is further limited to 14 searches per one-minute window per GitHub account, so even bursts on either side of a window boundary stay below GitHub's search limit of 30 a minute. A request over the limit receives HTTP 429, a `Retry-After` header in seconds, and a JSON `{"error": "..."}` body; the UI shows when to retry. `GET /api/health` is not limited.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

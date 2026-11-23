@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { searchPullRequests } from '../application/searchPullRequests'
+import { GhostlineApiError } from '../application/apiError'
 import { classifyImportInput, suggestionStateLabel, type PullRequestSuggestion } from '../domain/pullRequestSearch'
 
 // One field for a pull request URL, owner/repo#number, or, when signed in, text that
@@ -15,7 +16,7 @@ type SearchState =
   | { status: 'idle' }
   | { status: 'searching' }
   | { status: 'done'; items: PullRequestSuggestion[]; partial: boolean }
-  | { status: 'failed'; message: string }
+  | { status: 'failed'; message: string; signInAgain: boolean }
 
 const field = ref<HTMLInputElement>()
 const state = ref<SearchState>({ status: 'idle' })
@@ -81,7 +82,12 @@ async function runSearch(query: string, request: number) {
   } catch (error) {
     if (request !== searchRequest) return
     emit('search-failed', error)
-    state.value = { status: 'failed', message: error instanceof Error ? error.message : 'Could not search your pull requests.' }
+    state.value = {
+      status: 'failed',
+      message: error instanceof Error ? error.message : 'Could not search your pull requests.',
+      // The session is valid but the server holds no GitHub token for it (for example after a restart).
+      signInAgain: error instanceof GhostlineApiError && error.code === 'SEARCH_SIGNIN_REQUIRED',
+    }
   }
 }
 
@@ -104,7 +110,7 @@ function submit() {
   const input = classifyImportInput(text)
   if (props.canSearch && input.kind === 'search') {
     // Search text is not an import target: show (or fetch now) the matches to pick from.
-    if (timer !== undefined || state.value.status === 'idle') {
+    if (timer !== undefined || state.value.status === 'idle' || state.value.status === 'failed') {
       cancelSearch()
       void runSearch(input.query, searchRequest)
     } else {
@@ -196,6 +202,7 @@ onBeforeUnmount(cancelSearch)
       <p v-else-if="state.status === 'done' && items.length === 0" class="pr-search-note">No matching pull requests — paste a PR URL</p>
       <p v-else-if="state.status === 'done' && state.partial" class="pr-search-note warn">GitHub returned a partial result; some of your pull requests may be missing.</p>
       <p v-if="state.status === 'failed'" class="pr-search-note error" role="alert">{{ state.message }}</p>
+      <form v-if="state.status === 'failed' && state.signInAgain" class="pr-search-signin" action="/auth/login" method="post"><button type="submit" @mousedown.prevent>SIGN IN AGAIN <span aria-hidden="true">↗</span></button></form>
     </div>
   </div>
   <p class="sr-only" role="status" aria-live="polite">{{ announcement }}</p>

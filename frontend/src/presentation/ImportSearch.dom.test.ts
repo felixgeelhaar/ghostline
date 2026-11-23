@@ -265,6 +265,33 @@ describe('searching your pull requests from the import field', () => {
     expect(importPullRequest).toHaveBeenCalledWith('https://github.com/acme/widgets/pull/7')
   })
 
+  it('retries an unchanged search after it failed', async () => {
+    vi.mocked(searchPullRequests)
+      .mockRejectedValueOnce(new GhostlineApiError(502, 'GitHub is having trouble right now. Try again shortly.'))
+      .mockResolvedValueOnce({ items: [suggestion('widgets', 7, 'Add widgets')], partial: false })
+    await mount(true)
+    await typeAndWait('widgets')
+    expect(host!.textContent).toContain('GitHub is having trouble')
+    await key('Enter')
+    expect(searchPullRequests).toHaveBeenCalledTimes(2)
+    expect(options()).toHaveLength(1)
+  })
+
+  it('offers to sign in again when the server no longer holds a GitHub token for the session', async () => {
+    vi.mocked(searchPullRequests).mockRejectedValue(new GhostlineApiError(401, 'Sign in with GitHub again to search your pull requests, or paste a pull request URL.', 'SEARCH_SIGNIN_REQUIRED'))
+    await mount(true)
+    await typeAndWait('widgets')
+    const form = host!.querySelector<HTMLFormElement>('.pr-search-popup form')
+    expect(form?.getAttribute('action')).toBe('/auth/login')
+    expect(form?.getAttribute('method')).toBe('post')
+    const button = form!.querySelector<HTMLButtonElement>('button[type="submit"]')!
+    expect(button.textContent).toContain('SIGN IN AGAIN')
+    const pressed = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    button.dispatchEvent(pressed)
+    // Pressing it must not blur the field, which would hide the list before the click lands.
+    expect(pressed.defaultPrevented).toBe(true)
+  })
+
   it('imports owner/repo#number directly', async () => {
     await mount(true)
     await type('acme/app#7')

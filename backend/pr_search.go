@@ -15,9 +15,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// githubSearchesPerMinute stays within GitHub's search API limit of 30 requests
-// per minute for an authenticated user.
-const githubSearchesPerMinute = 30
+// githubSearchesPerWindow keeps a user below GitHub's search API limit of 30
+// requests a minute. The limiter's window is fixed, so a burst at the end of one
+// window and another as the next opens can land within one minute: 2 × 14 = 28.
+const githubSearchesPerWindow = 14
 
 const (
 	minSearchQueryLength = 3
@@ -158,9 +159,20 @@ func respondSearchError(c *gin.Context, err error) {
 		c.JSON(http.StatusUnauthorized, gin.H{"code": "SEARCH_SIGNIN_REQUIRED", "error": "Sign in with GitHub again to search your pull requests, or paste a pull request URL."})
 		return
 	}
-	if errors.Is(err, errNotFound) {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub could not run this search. Try different words or paste a pull request URL."})
-		return
+	var status statusError
+	if errors.As(err, &status) {
+		switch status.code {
+		case http.StatusUnauthorized:
+			// GitHub no longer accepts the stored token (revoked or expired): stop using it.
+			if credential := githubUserToken(c.Request.Context()); credential.revoke != nil {
+				credential.revoke()
+			}
+			respondSearchError(c, errSearchSignInRequired)
+			return
+		case http.StatusUnprocessableEntity:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "GitHub could not run this search. Try fewer or shorter words, or paste a pull request URL."})
+			return
+		}
 	}
 	respondGitHubError(c, err)
 }

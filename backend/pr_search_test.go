@@ -183,20 +183,65 @@ func TestSearchReportsGitHubRateLimitsAsErrors(t *testing.T) {
 }
 
 func TestSearchesStayUnderGitHubsSearchLimitPerAccount(t *testing.T) {
+	now := time.Date(2026, 11, 23, 10, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
 	github := &recordingGitHub{respond: func(*http.Request) *http.Response { return oauthResponse(http.StatusOK, searchReply) }}
-	router, session := searchRouter(t, github)
-	for i := 0; i < githubSearchesPerMinute; i++ {
-		if response := searchWith(router, session, "widgets"); response.Code != http.StatusOK {
-			t.Fatalf("search %d = %d %s", i+1, response.Code, response.Body.String())
+	auth := newAuthManager(testAuthConfig(), oauthClientGranting(t, `{"access_token":"user-oauth-token","token_type":"bearer","scope":"read:user"}`))
+	router := newRouterWithAuth(github.client(), nil, newRateLimiter(1000, time.Minute, clock), clientIdentity{}, nil, auth)
+	session := signInThroughOAuth(t, router)
+
+	searchUntilLimited := func() int {
+		for allowed := 0; ; allowed++ {
+			before := len(github.seen())
+			response := searchWith(router, session, "widgets")
+			if response.Code == http.StatusTooManyRequests {
+				if response.Header().Get("Retry-After") == "" {
+					t.Fatal("a limited search names no Retry-After")
+				}
+				if len(github.seen()) != before {
+					t.Fatal("a search over the limit reached GitHub")
+				}
+				return allowed
+			}
+			if response.Code != http.StatusOK || allowed > 100 {
+				t.Fatalf("search %d = %d %s", allowed+1, response.Code, response.Body.String())
+			}
 		}
 	}
-	before := len(github.seen())
-	response := searchWith(router, session, "widgets")
-	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") == "" {
-		t.Fatalf("search over the limit = %d %s", response.Code, response.Body.String())
+	// A burst at the start of one window and another as the next one opens both fall
+	// within a single minute; together they must stay below GitHub's 30.
+	first := searchUntilLimited()
+	now = now.Add(time.Minute)
+	second := searchUntilLimited()
+	if first < 1 || first+second >= 30 {
+		t.Fatalf("searches in one minute = %d + %d, want fewer than 30", first, second)
 	}
-	if len(github.seen()) != before {
-		t.Fatal("a search over the limit reached GitHub")
+}
+
+func TestSearchWithARejectedTokenAsksToSignInAgainAndDropsIt(t *testing.T) {
+	calls := 0
+	github := &recordingGitHub{respond: func(*http.Request) *http.Response {
+		calls++
+		return oauthResponse(http.StatusUnauthorized, `{"message":"Bad credentials"}`)
+	}}
+	router, session := searchRouter(t, github)
+	response := searchWith(router, session, "widgets")
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), `"code":"SEARCH_SIGNIN_REQUIRED"`) {
+		t.Fatalf("search = %d %s", response.Code, response.Body.String())
+	}
+	before := calls
+	if response := searchWith(router, session, "widgets"); response.Code != http.StatusUnauthorized || calls != before {
+		t.Fatalf("second search = %d, GitHub calls %d -> %d; the rejected token must be dropped", response.Code, before, calls)
+	}
+}
+
+func TestSearchGitHubCannotRunAsksForFewerWords(t *testing.T) {
+	router, session := searchRouter(t, &recordingGitHub{respond: func(*http.Request) *http.Response {
+		return oauthResponse(http.StatusUnprocessableEntity, `{"message":"Validation Failed"}`)
+	}})
+	response := searchWith(router, session, "widgets")
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "fewer or shorter words") {
+		t.Fatalf("search = %d %s", response.Code, response.Body.String())
 	}
 }
 

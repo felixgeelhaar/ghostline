@@ -390,7 +390,7 @@ func newRouterWithAuth(gh *githubClient, qodo qodoReviewSource, limiter *rateLim
 	limited.POST("/qodo-review", client.loadQodoReview)
 	limited.POST("/check-annotations", client.loadCheckAnnotations)
 	limited.POST("/readiness", client.loadReadiness)
-	searchLimiter := newRateLimiter(githubSearchesPerMinute, time.Minute, limiter.now)
+	searchLimiter := newRateLimiter(githubSearchesPerWindow, time.Minute, limiter.now)
 	limited.POST("/pr-search", client.searchPullRequests(searchLimiter))
 	return r
 }
