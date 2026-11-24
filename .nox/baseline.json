@@ -304,6 +304,14 @@
       "severity": "high",
       "reason": "Temporary release exception through 2026-12-01, approved by the maintainer on 2026-11-24, extending the OpenSSL 3.5.9 exception for the pinned Node image to CVE-2026-107494, which Nox reported on 2026-11-24. Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. No supported Node release (22.23.5, 24.22.3, 26.13.1) ships OpenSSL 3.5.10 as of 2026-11-24. In the production Dockerfile, Node runs only in the frontend-build stage and the runtime image is FROM scratch; frontend/Dockerfile is the local Compose development image. Vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the finding is fixed; remove it when the base image ships OpenSSL 3.5.10+.",
       "created_at": "2026-11-24T00:00:00Z"
+    },
+    {
+      "fingerprint": "1ffe1dd3fb73e19929b154bd31d668c919dbf61848f01bbfb6e987b6915dbe83",
+      "rule_id": "VULN-001",
+      "file_path": "frontend/Dockerfile",
+      "severity": "medium",
+      "reason": "Temporary release exception through 2026-12-01, approved by the maintainer on 2026-11-24, extending the OpenSSL 3.5.9 exception for the pinned Node image to CVE-2026-84785, which Nox reported on 2026-11-24 (https://github.com/felixgeelhaar/ghostline/issues/145). Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. No supported Node release (22.23.5, 24.22.3, 26.13.1) ships OpenSSL 3.5.10 as of 2026-11-24. In the production Dockerfile, Node runs only in the frontend-build stage and the runtime image is FROM scratch; frontend/Dockerfile is the local Compose development image. Vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the finding is fixed; remove it when the base image ships OpenSSL 3.5.10+.",
+      "created_at": "2026-11-24T00:00:00Z"
     }
   ]
 }
