@@ -75,9 +75,9 @@ spec:
                           key: GITHUB_TOKEN
                           optional: true
                     # Open sign-in admits every GitHub account; the allowlist is then ignored.
-                    # Turning it on is a separate, approved change (docs/cluster-deployment.md).
+                    # On by the engineer's approval; switching it off is a separate, approved change (docs/cluster-deployment.md).
                     - name: GHOSTLINE_OPEN_SIGNIN
-                      value: "false"
+                      value: "true"
                     - name: GITHUB_OAUTH_CALLBACK_URL
                       value: https://ghostline.felixgeelhaar.de/auth/callback
                     - name: RATE_LIMIT_CLIENT_IP_HEADER
