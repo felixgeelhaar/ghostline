@@ -312,6 +312,12 @@ func loadNoxReport(ctx context.Context, gh *githubClient, owner, repo string, nu
 		workflowName := strings.TrimPrefix(domain.NoxSecurityWorkflowPath, ".github/workflows/")
 		runsPath := fmt.Sprintf("/repos/%s/%s/actions/workflows/%s/runs?head_sha=%s&event=pull_request&per_page=%d&page=%d", url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(workflowName), url.QueryEscape(sha), noxPageSize, page)
 		hasNext, err := budget.getWithNext(ctx, runsPath, &runs)
+		if err != nil && page == 1 && errors.Is(err, errNotFound) {
+			// The pull request was found above, so this 404 is about the workflow
+			// path. Say what GitHub reported rather than claiming the file is absent.
+			result.Reason = fmt.Sprintf("GitHub reports no workflow at %s in %s/%s, so Ghostline found no security report for this revision.", domain.NoxSecurityWorkflowPath, owner, repo)
+			return result
+		}
 		if err != nil {
 			result.Reason = noxRequestFailureReason(err)
 			return result
