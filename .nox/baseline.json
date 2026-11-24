@@ -134,7 +134,7 @@
       "rule_id": "VULN-001",
       "file_path": "frontend/package-lock.json",
       "severity": "high",
-      "reason": "Exception approved by the maintainer on 2026-11-17 (https://github.com/felixgeelhaar/ghostline/issues/45#issuecomment-6960376515); review by 2026-11-20. GHSA-fc5q-39xc-vjpf (ReDoS through repeated extglobs) affects picomatch <= 4.0.7 and no patched release exists. picomatch is a build- and dev-time dependency of vite, vitest, tinyglobby, fdir and @vue/language-core; it matches glob patterns from repository configuration, not request input, and is not part of the built frontend bundle. Reachability with attacker-controlled patterns is not established. This baseline records accepted interim risk and is not evidence the finding is fixed; remove it when a patched picomatch is available and the lockfile is updated.",
+      "reason": "Exception approved by the maintainer on 2026-11-17 (https://github.com/felixgeelhaar/ghostline/issues/45#issuecomment-6960376515); review by 2026-11-20. GHSA-fc5q-39xc-vjpf (ReDoS through repeated extglobs) affects picomatch <= 4.0.7 and no patched release exists. picomatch is a build- and dev-time dependency of vite, vitest, tinyglobby, fdir and @vue/language-core; it matches glob patterns from repository configuration, not request input, and is not part of the built frontend bundle. Reachability with attacker-controlled patterns is not established. This baseline records accepted interim risk and is not evidence the finding is fixed; remove it when a patched picomatch is available and the lockfile is updated. Renewed through 2026-12-01 by the maintainer on 2026-11-24: npm still lists 4.0.7 as the newest picomatch release.",
       "created_at": "2026-11-17T20:22:48.485532Z"
     },
     {
