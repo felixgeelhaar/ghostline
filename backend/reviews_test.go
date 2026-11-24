@@ -146,7 +146,8 @@ func TestFetchQodoReviewsStopsAtCommentBudgetAndReportsUnavailable(t *testing.T)
 	defer srv.Close()
 
 	result := fetchQodoReviews(t.Context(), &githubClient{baseURL: srv.URL, http: srv.Client()}, acmeApp, 7)
-	if requests != maxQodoCommentPages || result.Availability != reviewsUnavailable || len(result.Items) != 0 {
+	// The full budget, plus one page to confirm the list goes on.
+	if requests != maxQodoCommentPages+1 || result.Availability != reviewsUnavailable || len(result.Items) != 0 {
 		t.Fatalf("requests=%d result=%+v", requests, result)
 	}
 }

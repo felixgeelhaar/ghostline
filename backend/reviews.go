@@ -402,5 +402,14 @@ func fetchQodoReviews(ctx context.Context, gh *githubClient, repo domain.Reposit
 			return qodoReviewSet{Availability: reviewsAvailable, UnrecognizedCommentCount: unrecognized, Items: reviews}
 		}
 	}
+	// Every page was full. One more page tells whether the list really goes on.
+	var next []githubIssueComment
+	nextPath := fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=100&page=%d", url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number, maxQodoCommentPages+1)
+	if err := gh.get(ctx, nextPath, &next); err != nil {
+		return qodoReviewSet{Availability: reviewsUnavailable, Reason: "Qodo review comments could not be loaded from GitHub.", Items: []qodoReview{}}
+	}
+	if len(next) == 0 {
+		return qodoReviewSet{Availability: reviewsAvailable, UnrecognizedCommentCount: unrecognized, Items: reviews}
+	}
 	return qodoReviewSet{Availability: reviewsUnavailable, Reason: fmt.Sprintf("This pull request has more than %[1]d comments, and Ghostline reads only the first %[1]d, so no Qodo reviews are shown rather than a partial list. Open the pull request on GitHub for its reviews.", maxQodoCommentPages*100), Items: []qodoReview{}}
 }
