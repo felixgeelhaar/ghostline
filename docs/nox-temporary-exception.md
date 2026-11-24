@@ -38,25 +38,26 @@ The maintainer decided to baseline the 8 fingerprints in `.nox/baseline.json`, t
 
 ## Amendment: 2026-11-24, Node OpenSSL renewed
 
-The review date of 2026-11-20 passed with the exit criteria unmet: `node:22-bookworm-slim` (22.23.5), `node:24-bookworm-slim` (24.22.3) and `node:26-bookworm-slim` (26.13.1) all still report `process.versions.openssl` = 3.5.9 on 2026-11-24. The same day Nox reported two more OpenSSL 3.5.9 advisories for `frontend/Dockerfile`. The maintainer renewed the Node OpenSSL exception through **2026-12-01** and extended it to them ([record](https://github.com/felixgeelhaar/ghostline/issues/45#issuecomment-7140671045)):
+The review date of 2026-11-20 passed with the exit criteria unmet: `node:22-bookworm-slim` (22.23.5), `node:24-bookworm-slim` (24.22.3) and `node:26-bookworm-slim` (26.13.1) all still report `process.versions.openssl` = 3.5.9 on 2026-11-24. The same day Nox reported three more OpenSSL 3.5.9 advisories for `frontend/Dockerfile`. The maintainer renewed the Node OpenSSL exception through **2026-12-01** and extended it to them ([record](https://github.com/felixgeelhaar/ghostline/issues/45#issuecomment-7140671045)):
 
 | Fingerprint | Advisory | Location |
 |---|---|---|
 | `40dc13192ffa4feaa2b86d279ea3f4b468fe018fd88adbdbb1220ead3eca5ce6` | CVE-2026-121482 (high), OpenSSL 3.5.9 | `frontend/Dockerfile` |
 | `e939dc4b185eb989a8d591dc046b0d26101984fecfcba91f2b832cd7e1b295d1` | CVE-2026-107494 (high), OpenSSL 3.5.9 | `frontend/Dockerfile` |
+| `1ffe1dd3fb73e19929b154bd31d668c919dbf61848f01bbfb6e987b6915dbe83` | CVE-2026-84785 (medium), OpenSSL 3.5.9, added later the same day ([#145](https://github.com/felixgeelhaar/ghostline/issues/145)) | `frontend/Dockerfile` |
 
 The six earlier Node OpenSSL entries carry the renewal in their baseline reasons. In the production `Dockerfile`, Node runs only in the `frontend-build` stage and the runtime image is `FROM scratch`; `frontend/Dockerfile` is the local Compose development image. Reachability is undetermined. This renewal does not cover the picomatch entry from 2026-11-17, whose review date also passed; that needs its own decision.
 
 ## Exception boundary
 
-The original four OpenSSL fingerprints and the three added on 2026-11-17 are baselined in `.nox/baseline.json`; the OpenSSL entries, with the two added on 2026-11-24, are renewed through 2026-12-01. Nox baselines do not expire automatically. The maintainer must review this record and issue #45 by the review date, remove the eight Node OpenSSL baseline entries as soon as a supported runtime with OpenSSL 3.5.10 or later is available, and seek a new explicit decision before extending the exception. OpenSSL findings in the production builder are not baselined.
+The original four OpenSSL fingerprints and the three added on 2026-11-17 are baselined in `.nox/baseline.json`; the OpenSSL entries, with the three added on 2026-11-24, are renewed through 2026-12-01. Nox baselines do not expire automatically. The maintainer must review this record and issue #45 by the review date, remove the nine Node OpenSSL baseline entries as soon as a supported runtime with OpenSSL 3.5.10 or later is available, and seek a new explicit decision before extending the exception. OpenSSL findings in the production builder are not baselined.
 
-The exception does not cover findings other than the nine listed above (eight OpenSSL, one picomatch); the two zlib entries and the eight Alpine OpenSSL entries are recorded in their own sections. Keep Nox and Warden enabled and preserve the scan output with the release evidence.
+The exception does not cover findings other than the ten listed above (nine OpenSSL, one picomatch); the two zlib entries and the eight Alpine OpenSSL entries are recorded in their own sections. Keep Nox and Warden enabled and preserve the scan output with the release evidence.
 
 ## Exit criteria
 
 - A frontend-compatible, supported Node runtime includes OpenSSL 3.5.10 or later, or no longer includes the affected bundled OpenSSL.
 - The image digest is pinned and verified.
-- A fresh tracked Nox scan no longer reports the eight OpenSSL advisories.
-- The eight OpenSSL entries are removed from `.nox/baseline.json`.
+- A fresh tracked Nox scan no longer reports the nine OpenSSL advisories.
+- The nine OpenSSL entries are removed from `.nox/baseline.json`.
 - For picomatch: a patched release is available, the lockfile is updated, a fresh tracked Nox scan no longer reports GHSA-fc5q-39xc-vjpf, and its baseline entry is removed.
