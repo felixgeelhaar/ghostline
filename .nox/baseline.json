@@ -86,7 +86,7 @@
       "rule_id": "VULN-001",
       "file_path": "frontend/Dockerfile",
       "severity": "medium",
-      "reason": "Temporary maintainer-approved release exception through 2026-11-20; review by this date, and remove the baseline as soon as a supported Node runtime ships OpenSSL 3.5.10+. Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. Nox confirmed four OpenSSL 3.5.9 advisories in the pinned Node image; vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed.",
+      "reason": "Temporary maintainer-approved release exception through 2026-11-20; review by this date, and remove the baseline as soon as a supported Node runtime ships OpenSSL 3.5.10+. Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. Nox confirmed four OpenSSL 3.5.9 advisories in the pinned Node image; vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed. Renewed through 2026-12-01 by the maintainer on 2026-11-24 (no Node 22.23.5, 24.22.3 or 26.13.1 image ships OpenSSL 3.5.10 yet); remove when the base image ships OpenSSL 3.5.10+.",
       "created_at": "2026-11-13T20:14:12.127752Z"
     },
     {
@@ -94,7 +94,7 @@
       "rule_id": "VULN-001",
       "file_path": "frontend/Dockerfile",
       "severity": "medium",
-      "reason": "Temporary maintainer-approved release exception through 2026-11-20; review by this date, and remove the baseline as soon as a supported Node runtime ships OpenSSL 3.5.10+. Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. Nox confirmed four OpenSSL 3.5.9 advisories in the pinned Node image; vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed.",
+      "reason": "Temporary maintainer-approved release exception through 2026-11-20; review by this date, and remove the baseline as soon as a supported Node runtime ships OpenSSL 3.5.10+. Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. Nox confirmed four OpenSSL 3.5.9 advisories in the pinned Node image; vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed. Renewed through 2026-12-01 by the maintainer on 2026-11-24 (no Node 22.23.5, 24.22.3 or 26.13.1 image ships OpenSSL 3.5.10 yet); remove when the base image ships OpenSSL 3.5.10+.",
       "created_at": "2026-11-13T20:14:12.127752Z"
     },
     {
@@ -102,7 +102,7 @@
       "rule_id": "VULN-001",
       "file_path": "frontend/Dockerfile",
       "severity": "medium",
-      "reason": "Temporary maintainer-approved release exception through 2026-11-20; review by this date, and remove the baseline as soon as a supported Node runtime ships OpenSSL 3.5.10+. Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. Nox confirmed four OpenSSL 3.5.9 advisories in the pinned Node image; vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed.",
+      "reason": "Temporary maintainer-approved release exception through 2026-11-20; review by this date, and remove the baseline as soon as a supported Node runtime ships OpenSSL 3.5.10+. Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. Nox confirmed four OpenSSL 3.5.9 advisories in the pinned Node image; vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed. Renewed through 2026-12-01 by the maintainer on 2026-11-24 (no Node 22.23.5, 24.22.3 or 26.13.1 image ships OpenSSL 3.5.10 yet); remove when the base image ships OpenSSL 3.5.10+.",
       "created_at": "2026-11-13T20:14:12.127752Z"
     },
     {
@@ -110,7 +110,7 @@
       "rule_id": "VULN-001",
       "file_path": "frontend/Dockerfile",
       "severity": "medium",
-      "reason": "Temporary maintainer-approved release exception through 2026-11-20; review by this date, and remove the baseline as soon as a supported Node runtime ships OpenSSL 3.5.10+. Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. Nox confirmed four OpenSSL 3.5.9 advisories in the pinned Node image; vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed.",
+      "reason": "Temporary maintainer-approved release exception through 2026-11-20; review by this date, and remove the baseline as soon as a supported Node runtime ships OpenSSL 3.5.10+. Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. Nox confirmed four OpenSSL 3.5.9 advisories in the pinned Node image; vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed. Renewed through 2026-12-01 by the maintainer on 2026-11-24 (no Node 22.23.5, 24.22.3 or 26.13.1 image ships OpenSSL 3.5.10 yet); remove when the base image ships OpenSSL 3.5.10+.",
       "created_at": "2026-11-13T20:14:12.127752Z"
     },
     {
@@ -118,7 +118,7 @@
       "rule_id": "VULN-001",
       "file_path": "frontend/Dockerfile",
       "severity": "high",
-      "reason": "Temporary release exception through 2026-11-20, approved by the maintainer on 2026-11-17 (https://github.com/felixgeelhaar/ghostline/issues/45#issuecomment-6960376515), extending the existing exception for OpenSSL 3.5.9 in the pinned Node image to two advisories Nox reported on 2026-11-17 (CVE-2026-124709, CVE-2026-35190). Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. No supported Node release (22.23.5, 24.22.3, 26.13.1) and no Alpine v3.24 libssl3 package ships OpenSSL 3.5.10 as of 2026-11-17. Vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed; remove it when the base image ships OpenSSL 3.5.10+.",
+      "reason": "Temporary release exception through 2026-11-20, approved by the maintainer on 2026-11-17 (https://github.com/felixgeelhaar/ghostline/issues/45#issuecomment-6960376515), extending the existing exception for OpenSSL 3.5.9 in the pinned Node image to two advisories Nox reported on 2026-11-17 (CVE-2026-124709, CVE-2026-35190). Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. No supported Node release (22.23.5, 24.22.3, 26.13.1) and no Alpine v3.24 libssl3 package ships OpenSSL 3.5.10 as of 2026-11-17. Vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed; remove it when the base image ships OpenSSL 3.5.10+. Renewed through 2026-12-01 by the maintainer on 2026-11-24 (no Node 22.23.5, 24.22.3 or 26.13.1 image ships OpenSSL 3.5.10 yet); remove when the base image ships OpenSSL 3.5.10+.",
       "created_at": "2026-11-17T20:22:48.485532Z"
     },
     {
@@ -126,7 +126,7 @@
       "rule_id": "VULN-001",
       "file_path": "frontend/Dockerfile",
       "severity": "medium",
-      "reason": "Temporary release exception through 2026-11-20, approved by the maintainer on 2026-11-17 (https://github.com/felixgeelhaar/ghostline/issues/45#issuecomment-6960376515), extending the existing exception for OpenSSL 3.5.9 in the pinned Node image to two advisories Nox reported on 2026-11-17 (CVE-2026-124709, CVE-2026-35190). Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. No supported Node release (22.23.5, 24.22.3, 26.13.1) and no Alpine v3.24 libssl3 package ships OpenSSL 3.5.10 as of 2026-11-17. Vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed; remove it when the base image ships OpenSSL 3.5.10+.",
+      "reason": "Temporary release exception through 2026-11-20, approved by the maintainer on 2026-11-17 (https://github.com/felixgeelhaar/ghostline/issues/45#issuecomment-6960376515), extending the existing exception for OpenSSL 3.5.9 in the pinned Node image to two advisories Nox reported on 2026-11-17 (CVE-2026-124709, CVE-2026-35190). Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. No supported Node release (22.23.5, 24.22.3, 26.13.1) and no Alpine v3.24 libssl3 package ships OpenSSL 3.5.10 as of 2026-11-17. Vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the findings are fixed; remove it when the base image ships OpenSSL 3.5.10+. Renewed through 2026-12-01 by the maintainer on 2026-11-24 (no Node 22.23.5, 24.22.3 or 26.13.1 image ships OpenSSL 3.5.10 yet); remove when the base image ships OpenSSL 3.5.10+.",
       "created_at": "2026-11-17T20:22:48.485532Z"
     },
     {
@@ -288,6 +288,22 @@
       "severity": "medium",
       "reason": "Accepted deviation: only the draft-release job holds contents: write, which gh release create needs to create the draft release; it runs after verify and image succeed and checks out nothing it executes. Maintainer decision recorded on issue #98 (2026-11-22); backend/release_workflow_test.go pins the permissions. Tracked in https://github.com/felixgeelhaar/ghostline/issues/106.",
       "created_at": "2026-11-22T00:00:00Z"
+    },
+    {
+      "fingerprint": "40dc13192ffa4feaa2b86d279ea3f4b468fe018fd88adbdbb1220ead3eca5ce6",
+      "rule_id": "VULN-001",
+      "file_path": "frontend/Dockerfile",
+      "severity": "high",
+      "reason": "Temporary release exception through 2026-12-01, approved by the maintainer on 2026-11-24, extending the OpenSSL 3.5.9 exception for the pinned Node image to CVE-2026-121482, which Nox reported on 2026-11-24. Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. No supported Node release (22.23.5, 24.22.3, 26.13.1) ships OpenSSL 3.5.10 as of 2026-11-24. In the production Dockerfile, Node runs only in the frontend-build stage and the runtime image is FROM scratch; frontend/Dockerfile is the local Compose development image. Vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the finding is fixed; remove it when the base image ships OpenSSL 3.5.10+.",
+      "created_at": "2026-11-24T00:00:00Z"
+    },
+    {
+      "fingerprint": "e939dc4b185eb989a8d591dc046b0d26101984fecfcba91f2b832cd7e1b295d1",
+      "rule_id": "VULN-001",
+      "file_path": "frontend/Dockerfile",
+      "severity": "high",
+      "reason": "Temporary release exception through 2026-12-01, approved by the maintainer on 2026-11-24, extending the OpenSSL 3.5.9 exception for the pinned Node image to CVE-2026-107494, which Nox reported on 2026-11-24. Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. No supported Node release (22.23.5, 24.22.3, 26.13.1) ships OpenSSL 3.5.10 as of 2026-11-24. In the production Dockerfile, Node runs only in the frontend-build stage and the runtime image is FROM scratch; frontend/Dockerfile is the local Compose development image. Vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the finding is fixed; remove it when the base image ships OpenSSL 3.5.10+.",
+      "created_at": "2026-11-24T00:00:00Z"
     }
   ]
 }
