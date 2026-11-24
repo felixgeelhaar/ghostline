@@ -90,7 +90,7 @@ A failed GitHub or Qodo call writes an `upstream request failed` line with the s
 
 ## Operating limits
 
-This deployment is intentionally a single instance. OAuth state, sessions, logout revocations, and request-rate windows are held in process memory; do not scale replicas or restart during an OAuth callback. Restarting clears revocations, so a copied session cookie can remain valid until its 12-hour expiry. Shared session and rate-limit storage are future work.
+This deployment is intentionally a single instance. OAuth state, session tokens, and request-rate windows are held in process memory; do not scale replicas or restart during an OAuth callback. A restart drops every session token, so every user signs in again; a signed-out cookie stays refused. Shared session and rate-limit storage are future work.
 
 Ghostline currently imports public pull requests. Do not configure a GitHub token with private-repository access, and do not put a shared Qodo key into the server. Users provide a Qodo key for the request that needs it. Configure ingress-level abuse controls, TLS, secret rotation, backups for deployment configuration, and monitoring appropriate to your environment. A successful `/api/health` response confirms the HTTP process responds; it does not establish application correctness or validate imported revisions.
 

@@ -114,8 +114,6 @@ type authManager struct {
 	logger       *slog.Logger
 	pendingMu    sync.Mutex
 	pendingOAuth map[string]*pendingOAuth
-	sessionMu    sync.Mutex
-	revoked      map[[32]byte]time.Time
 	tokenMu      sync.Mutex
 	userTokens   map[string]storedUserToken
 	tokenSeq     uint64
@@ -155,7 +153,7 @@ func newAuthManager(cfg authConfig, client *http.Client) *authManager {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
-	return &authManager{cfg: cfg, client: client, now: time.Now, random: rand.Reader, logger: slog.Default(), pendingOAuth: make(map[string]*pendingOAuth), revoked: make(map[[32]byte]time.Time), userTokens: make(map[string]storedUserToken)}
+	return &authManager{cfg: cfg, client: client, now: time.Now, random: rand.Reader, logger: slog.Default(), pendingOAuth: make(map[string]*pendingOAuth), userTokens: make(map[string]storedUserToken)}
 }
 
 func (m *authManager) authorizationURL(state, verifier string) (string, error) {
@@ -328,7 +326,7 @@ func (m *authManager) logout(c *gin.Context) {
 		http.SetCookie(c.Writer, expiredCookie(cookie.Name))
 	}
 	if cookie, err := c.Request.Cookie(sessionCookieName); err == nil {
-		m.revokeSession(cookie.Value)
+		m.endSession(cookie.Value)
 	}
 	http.SetCookie(c.Writer, expiredCookie(sessionCookieName))
 	c.Status(http.StatusNoContent)
@@ -679,9 +677,6 @@ func (m *authManager) sessionFromCookie(value string) (authSession, bool) {
 	if !m.verify(value, "session", &session) || session.ID == "" || session.ExpiresAt <= m.now().Unix() {
 		return authSession{}, false
 	}
-	if m.isSessionRevoked(value) {
-		return authSession{}, false
-	}
 	identity, err := domain.NewGitHubIdentity(session.Identity.ID, session.Identity.Login)
 	if err != nil {
 		return authSession{}, false
@@ -690,38 +685,15 @@ func (m *authManager) sessionFromCookie(value string) (authSession, bool) {
 	return session, true
 }
 
-func (m *authManager) revokeSession(value string) {
+// endSession signs a session out by dropping its GitHub token. Every request
+// that accepts a session also requires its token, so a copied cookie stops
+// working at once and nothing is kept per signed-out session.
+func (m *authManager) endSession(value string) {
 	var session authSession
 	if !m.verify(value, "session", &session) || session.ID == "" {
 		return
 	}
 	m.dropUserToken(session.ID)
-	if session.ExpiresAt <= m.now().Unix() || !m.identityAllowed(session.Identity.ID) {
-		return
-	}
-	digest := sha256.Sum256([]byte(value))
-	expiresAt := time.Unix(session.ExpiresAt, 0)
-	m.sessionMu.Lock()
-	defer m.sessionMu.Unlock()
-	now := m.now()
-	for token, expiry := range m.revoked {
-		if !expiry.After(now) {
-			delete(m.revoked, token)
-		}
-	}
-	m.revoked[digest] = expiresAt
-}
-
-func (m *authManager) isSessionRevoked(value string) bool {
-	digest := sha256.Sum256([]byte(value))
-	m.sessionMu.Lock()
-	defer m.sessionMu.Unlock()
-	expiresAt, ok := m.revoked[digest]
-	if ok && !expiresAt.After(m.now()) {
-		delete(m.revoked, digest)
-		return false
-	}
-	return ok
 }
 
 func (m *authManager) sign(purpose string, value any) (string, error) {
