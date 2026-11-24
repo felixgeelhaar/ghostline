@@ -19,9 +19,10 @@ func signedInSessionCookie(t *testing.T, m *authManager, identity domain.GitHubI
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !m.storeUserToken(id, "user-oauth-token", expiry) {
-		t.Fatal("token store refused the test token")
+	if err := m.storeUserToken(id, identity.ID, "user-oauth-token", expiry); err != nil {
+		t.Fatalf("token store refused the test token: %v", err)
 	}
+	m.commitUserToken(id, identity.ID)
 	return &http.Cookie{Name: sessionCookieName, Value: value}
 }
 
@@ -75,7 +76,7 @@ func TestSignInIsRefusedWhenTheTokenStoreIsFull(t *testing.T) {
 	auth := newAuthManager(testAuthConfig(), oauthClientGranting(t, `{"access_token":"user-oauth-token","token_type":"bearer","scope":"read:user"}`))
 	later := auth.now().Add(time.Hour)
 	for i := 0; i < maxStoredUserTokens; i++ {
-		auth.userTokens[strings.Repeat("x", 8)+string(rune('a'+i%26))+time.Duration(i).String()] = storedUserToken{token: "t", expiresAt: later}
+		auth.userTokens[strings.Repeat("x", 8)+string(rune('a'+i%26))+time.Duration(i).String()] = storedUserToken{accountID: int64(1000 + i), token: "t", expiresAt: later}
 	}
 	router := newRouterWithAuth((&recordingGitHub{}).client(), nil, newRateLimiter(10, time.Minute, time.Now), clientIdentity{}, nil, auth)
 	completed := runOAuthCallback(t, router)
