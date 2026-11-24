@@ -402,5 +402,5 @@ func fetchQodoReviews(ctx context.Context, gh *githubClient, repo domain.Reposit
 			return qodoReviewSet{Availability: reviewsAvailable, UnrecognizedCommentCount: unrecognized, Items: reviews}
 		}
 	}
-	return qodoReviewSet{Availability: reviewsUnavailable, Reason: "GitHub returned more comments than Ghostline scans for Qodo reviews; re-import after the comment history is reduced or use a supported Qodo review source.", Items: []qodoReview{}}
+	return qodoReviewSet{Availability: reviewsUnavailable, Reason: fmt.Sprintf("This pull request has more than %[1]d comments, and Ghostline reads only the first %[1]d, so no Qodo reviews are shown rather than a partial list. Open the pull request on GitHub for its reviews.", maxQodoCommentPages*100), Items: []qodoReview{}}
 }
