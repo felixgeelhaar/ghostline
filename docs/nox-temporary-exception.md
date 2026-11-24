@@ -46,7 +46,7 @@ The review date of 2026-11-20 passed with the exit criteria unmet: `node:22-book
 | `e939dc4b185eb989a8d591dc046b0d26101984fecfcba91f2b832cd7e1b295d1` | CVE-2026-107494 (high), OpenSSL 3.5.9 | `frontend/Dockerfile` |
 | `1ffe1dd3fb73e19929b154bd31d668c919dbf61848f01bbfb6e987b6915dbe83` | CVE-2026-84785 (medium), OpenSSL 3.5.9, added later the same day ([#145](https://github.com/felixgeelhaar/ghostline/issues/145)) | `frontend/Dockerfile` |
 
-The six earlier Node OpenSSL entries carry the renewal in their baseline reasons. In the production `Dockerfile`, Node runs only in the `frontend-build` stage and the runtime image is `FROM scratch`; `frontend/Dockerfile` is the local Compose development image. Reachability is undetermined. This renewal does not cover the picomatch entry from 2026-11-17, whose review date also passed; that needs its own decision.
+The six earlier Node OpenSSL entries carry the renewal in their baseline reasons. In the production `Dockerfile`, Node runs only in the `frontend-build` stage and the runtime image is `FROM scratch`; `frontend/Dockerfile` is the local Compose development image. Reachability is undetermined. The same day the maintainer also renewed the picomatch entry from 2026-11-17 (GHSA-fc5q-39xc-vjpf) through 2026-12-01, because npm still lists 4.0.7 as the newest release; its boundary is unchanged.
 
 ## Exception boundary
 
