@@ -103,7 +103,7 @@ func TestSignedSessionRejectsTamperingAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := manager.sessionFromCookie(cookie.Value); ok {
+	if _, ok := manager.parseSessionCookie(cookie.Value); ok {
 		t.Fatal("expired session was accepted")
 	}
 	cookie, err = manager.newSessionCookie(testIdentity(), manager.now().Add(timeHour))
@@ -120,7 +120,7 @@ func TestSignedSessionRejectsTamperingAndExpiry(t *testing.T) {
 	}
 	parts[1] = string(first) + parts[1][1:]
 	tampered := strings.Join(parts, ".")
-	if _, ok := manager.sessionFromCookie(tampered); ok {
+	if _, ok := manager.parseSessionCookie(tampered); ok {
 		t.Fatal("tampered session was accepted")
 	}
 }
