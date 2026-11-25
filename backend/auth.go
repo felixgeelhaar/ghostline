@@ -301,7 +301,7 @@ func (m *authManager) session(c *gin.Context) {
 	result := gin.H{"authRequired": m.cfg.Required, "authenticated": !m.cfg.Required}
 	if m.cfg.Required {
 		if cookie, err := c.Request.Cookie(sessionCookieName); err == nil {
-			if session, ok := m.sessionFromCookie(cookie.Value); ok && m.identityAllowed(session.Identity.ID) && m.userTokenFor(session.ID) != "" {
+			if session, _, ok := m.sessionFromCookie(cookie.Value); ok {
 				result["authenticated"] = true
 				result["login"] = session.Identity.Login
 			}
@@ -396,15 +396,15 @@ func (m *authManager) middleware() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": "AUTH_REQUIRED", "error": "Sign in with GitHub to use Ghostline."})
 			return
 		}
-		session, ok := m.sessionFromCookie(cookie.Value)
-		if !ok || !m.identityAllowed(session.Identity.ID) {
+		claims, ok := m.parseSessionCookie(cookie.Value)
+		if !ok || !m.identityAllowed(claims.Identity.ID) {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": "AUTH_REQUIRED", "error": "Your Ghostline session expired. Sign in with GitHub again."})
 			return
 		}
-		// The token is gone after a restart, a rejection or a scope change. Reading
-		// anonymously instead would spend the quota every user shares.
-		token := m.userTokenFor(session.ID)
-		if token == "" {
+		// The token is gone after sign-out, a restart, a rejection or a scope
+		// change. Reading anonymously instead would spend the quota every user shares.
+		session, token, ok := m.sessionFromCookie(cookie.Value)
+		if !ok {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": "AUTH_REQUIRED", "error": "Ghostline no longer holds your GitHub sign-in, for example after a restart. Sign in with GitHub again."})
 			return
 		}
@@ -672,7 +672,25 @@ func publicReadScopes(raw string) bool {
 	return true
 }
 
-func (m *authManager) sessionFromCookie(value string) (authSession, bool) {
+// sessionFromCookie is the only way to accept a session. It returns the
+// session and its GitHub token, and refuses a cookie whose account is no longer
+// allowed or whose token Ghostline no longer holds. Sign-out drops the token,
+// so a signed-out cookie is refused here for every caller.
+func (m *authManager) sessionFromCookie(value string) (authSession, string, bool) {
+	session, ok := m.parseSessionCookie(value)
+	if !ok || !m.identityAllowed(session.Identity.ID) {
+		return authSession{}, "", false
+	}
+	token := m.userTokenFor(session.ID)
+	if token == "" {
+		return authSession{}, "", false
+	}
+	return session, token, true
+}
+
+// parseSessionCookie checks a cookie's signature, expiry and identity only. It
+// does not accept a session: use sessionFromCookie for that.
+func (m *authManager) parseSessionCookie(value string) (authSession, bool) {
 	var session authSession
 	if !m.verify(value, "session", &session) || session.ID == "" || session.ExpiresAt <= m.now().Unix() {
 		return authSession{}, false
