@@ -17,7 +17,7 @@ import type { QodoStructuredReview } from '../domain/qodoReviewSession'
 import type { NoxReport } from '../domain/noxReport'
 import { noxReportCanShowZeroFindingNote, noxReportHeadline, noxReportNeedsAttention } from '../domain/noxReport'
 import { buildFindingTrace } from '../domain/trace'
-import { isSamePullRequest, validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
+import { isSamePullRequest, pullRequestStatus, validatePullRequestURL, type PullRequest } from '../domain/pullRequest'
 import { classifyImportInput } from '../domain/pullRequestSearch'
 import { GhostlineApiError } from '../application/apiError'
 import ReviewCard from './ReviewCard.vue'
@@ -57,6 +57,7 @@ const qodoReviewLoading = ref(false)
 const readiness = ref<Readiness>()
 const readinessLoading = ref(false)
 const readinessError = ref('')
+const prStatus = computed(() => pr.value ? pullRequestStatus(pr.value) : undefined)
 const qodoKeyTransportSecure = computed(() => globalThis.isSecureContext === true)
 const { ghostlineSession, sessionLoading, sessionError, refreshGhostlineSession, handleSessionRejected, endSession } = useGhostlineSession()
 let traceTrigger: HTMLButtonElement | undefined
@@ -494,7 +495,7 @@ function optionalDate(value?: string) { return value ? date(value) : 'not report
     <section class="hero"><p class="eyebrow">CHANGE INTELLIGENCE / 001</p><h1>See the work.<br><em>Trace the decisions.</em></h1><p class="lede">Import a pull request to inspect its revision history. Commit timestamps show when commits were authored, not when they were pushed.</p></section>
     <section class="import-panel"><ImportCombobox v-model="url" :loading="loading" :can-search="canSearchPullRequests" @import="loadPR" @search-failed="handleUnauthorized" /><p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="showingPreviousSnapshot && pr" class="checks-note warn" role="status">GitHub refresh failed. Showing the last imported snapshot for {{ pr.owner }}/{{ pr.repo }}#{{ pr.number }}.</p></section>
     <section v-if="pr" class="change-card">
-      <div class="change-heading"><div><span class="eyebrow">{{ pr.repository }} / PULL REQUEST #{{ pr.number }}</span><h2>{{ pr.title }}</h2></div><span class="state" :class="pr.state">{{ pr.state }}</span></div>
+      <div class="change-heading"><div><span class="eyebrow">{{ pr.repository }} / PULL REQUEST #{{ pr.number }}</span><h2>{{ pr.title }}</h2></div><span class="state" :class="prStatus">{{ prStatus }}</span></div>
       <div class="meta"><span>{{ pr.commits.length }} COMMITS</span><span>OPENED {{ date(pr.createdAt) }}</span><a :href="pr.url" target="_blank" rel="noreferrer">VIEW ON GITHUB ↗</a></div>
 
       <ReadinessPanel :readiness="readiness" :loading="readinessLoading" :error="readinessError" :imported-head-sha="pr.checks.revisionSha || undefined" @check="checkReadiness" />

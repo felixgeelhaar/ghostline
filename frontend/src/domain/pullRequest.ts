@@ -4,6 +4,15 @@ import { QodoReviewSetSchema } from './reviews'
 
 const MAX_REFERENCED_ISSUES = 20
 
+export type PullRequestStatus = 'open' | 'merged' | 'closed'
+
+// GitHub reports a merged pull request as state "closed" with merged: true, so
+// the state alone would label every merged pull request as closed.
+export function pullRequestStatus(pullRequest: { state: string; merged: boolean }): PullRequestStatus {
+  if (pullRequest.merged) return 'merged'
+  return pullRequest.state === 'open' ? 'open' : 'closed'
+}
+
 export const PullRequestSchema = z.object({
   repository: z.string(), owner: z.string(), repo: z.string(), number: z.number(),
   title: z.string(), state: z.string(), merged: z.boolean(), url: z.string().url(),

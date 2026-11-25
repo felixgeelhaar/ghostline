@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PullRequestSchema, isSamePullRequest, validatePullRequestURL } from './pullRequest'
+import { PullRequestSchema, isSamePullRequest, pullRequestStatus, validatePullRequestURL } from './pullRequest'
 
 const validPullRequest = {
   repository: 'acme/ghostline',
@@ -163,5 +163,15 @@ describe('PullRequestSchema Qodo review commit links', () => {
 
   it('rejects a commit link without the SHA it claims to name', () => {
     expect(PullRequestSchema.safeParse(withReview({ commitUrl: `https://github.com/acme/ghostline/commit/${reviewedSha}` })).success).toBe(false)
+  })
+})
+
+describe('pullRequestStatus', () => {
+  it.each([
+    [{ state: 'open', merged: false }, 'open'],
+    [{ state: 'closed', merged: true }, 'merged'],
+    [{ state: 'closed', merged: false }, 'closed'],
+  ] as const)('reads %o as %s', (pullRequest, status) => {
+    expect(pullRequestStatus(pullRequest)).toBe(status)
   })
 })
