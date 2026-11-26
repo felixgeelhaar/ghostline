@@ -291,7 +291,20 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 		return
 	}
 	if !passingConclusion(latest.Conclusion) {
-		add(subject, ReadinessFail, latest.URL, "%s: %s.", required.Context, latest.Conclusion)("fix %s (%s)", required.Context, latest.Conclusion)
+		setAction := add(subject, ReadinessFail, latest.URL, "%s: %s.", required.Context, latest.Conclusion)
+		if !noResultConclusion(latest.Conclusion) {
+			setAction("fix %s (%s)", required.Context, latest.Conclusion)
+			return
+		}
+		// A job that never started ran no code, so one rerun is allowed; after that the
+		// engineer decides (docs/factory-verification.md).
+		for _, earlier := range runs[:len(runs)-1] {
+			if earlier.Status == "completed" && noResultConclusion(earlier.Conclusion) {
+				setAction("decide on the reruns of %s", required.Context)
+				return
+			}
+		}
+		setAction("rerun %s: the job never started", required.Context)
 		return
 	}
 	// docs/factory-verification.md: a run that reported a result stays a real result even
