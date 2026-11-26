@@ -287,7 +287,15 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 
 	latest := runs[len(runs)-1]
 	if latest.Status != "completed" {
-		add(subject, ReadinessIncomplete, latest.URL, "%s: %s.", required.Context, latest.Status)("wait for %s", required.Context)
+		setAction := add(subject, ReadinessIncomplete, latest.URL, "%s: %s.", required.Context, latest.Status)
+		// A rerun cannot clear a result an earlier run reported, so waiting for it would not help.
+		for _, earlier := range runs[:len(runs)-1] {
+			if earlier.Status == "completed" && reportedResult(earlier.Conclusion) {
+				setAction("fix %s (an earlier run on this head concluded %s)", required.Context, earlier.Conclusion)
+				return
+			}
+		}
+		setAction("wait for %s", required.Context)
 		return
 	}
 	if !passingConclusion(latest.Conclusion) {

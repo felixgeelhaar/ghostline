@@ -62,6 +62,10 @@ func TestEvaluateReadinessNamesTheNextAction(t *testing.T) {
 			e.CheckRuns[0].Conclusion = "startup_failure"
 			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "cancelled"}}, e.CheckRuns...)
 		}, want: "decide on the earlier cancelled run of Go checks"},
+		{name: "a running rerun does not hide an earlier failure", change: func(e *ReadinessEvidence) {
+			e.CheckRuns = append(e.CheckRuns, CheckRunEvidence{ID: 90, Name: "Go checks", AppID: actionsID, Status: "in_progress"})
+			e.CheckRuns[0].Conclusion = "failure"
+		}, want: "fix Go checks (an earlier run on this head concluded failure)"},
 		{name: "status pending", change: func(e *ReadinessEvidence) { e.Statuses[0].State = "pending" }, want: "wait for warden/gate"},
 		{name: "status failed", change: func(e *ReadinessEvidence) { e.Statuses[0].State = "error" }, want: "fix warden/gate (error)"},
 		{name: "a failure outranks an earlier gap", change: func(e *ReadinessEvidence) { e.BehindBy = 2; e.Review.High = 1 }, want: "fix 1 High or Medium Qodo finding"},
