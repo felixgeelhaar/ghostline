@@ -42,6 +42,7 @@ type readinessResponse struct {
 type githubReadinessPR struct {
 	Number int    `json:"number"`
 	State  string `json:"state"`
+	Merged bool   `json:"merged"`
 	Draft  bool   `json:"draft"`
 	Head   struct {
 		SHA string `json:"sha"`
@@ -160,9 +161,9 @@ func (a api) loadReadiness(c *gin.Context) {
 }
 
 // sameReadinessSnapshot reports whether every pull-request fact the verdict uses is
-// unchanged: the head, whether it is open or a draft, and the branch it targets.
+// unchanged: the head, whether it is open, merged or a draft, and the branch it targets.
 func sameReadinessSnapshot(before, after githubReadinessPR) bool {
-	return before.Head.SHA == after.Head.SHA && before.State == after.State && before.Draft == after.Draft && before.Base.Ref == after.Base.Ref
+	return before.Head.SHA == after.Head.SHA && before.State == after.State && before.Merged == after.Merged && before.Draft == after.Draft && before.Base.Ref == after.Base.Ref
 }
 
 var errDefaultBranchUnknown = errors.New("GitHub did not report the repository's default branch")
@@ -197,8 +198,10 @@ func fetchReadinessPR(ctx context.Context, gh *githubClient, owner, repo string,
 func gatherReadinessEvidence(ctx context.Context, gh *githubClient, repo domain.RepositoryIdentity, pr githubReadinessPR, defaultBranch string) domain.ReadinessEvidence {
 	head := pr.Head.SHA
 	repoPath := fmt.Sprintf("/repos/%s/%s", url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
-	evidence := domain.ReadinessEvidence{HeadSHA: head, Open: pr.State == "open", Draft: pr.Draft, BaseRef: pr.Base.Ref, DefaultBranch: defaultBranch}
-	if !fullSHA.MatchString(head) {
+	evidence := domain.ReadinessEvidence{HeadSHA: head, Open: pr.State == "open", Merged: pr.Merged, Draft: pr.Draft, BaseRef: pr.Base.Ref, DefaultBranch: defaultBranch}
+	// A pull request that is not open has nothing left to merge, so no evidence
+	// could change its verdict.
+	if !fullSHA.MatchString(head) || !evidence.Open {
 		return evidence
 	}
 

@@ -40,7 +40,6 @@ func TestEvaluateReadiness(t *testing.T) {
 	}{
 		{name: "everything covers the head", change: func(*ReadinessEvidence) {}, want: ReadinessPass},
 		{name: "head is not a full SHA", change: func(e *ReadinessEvidence) { e.HeadSHA = "abc" }, want: ReadinessIncomplete, wantMessage: "GitHub did not identify the pull request's head commit"},
-		{name: "closed PR", change: func(e *ReadinessEvidence) { e.Open = false }, want: ReadinessIncomplete, wantMessage: "not open"},
 		{name: "draft PR", change: func(e *ReadinessEvidence) { e.Draft = true }, want: ReadinessIncomplete, wantMessage: "draft"},
 		{name: "targets another branch", change: func(e *ReadinessEvidence) { e.BaseRef = "release" }, want: ReadinessIncomplete, wantMessage: "targets release, not main"},
 		{name: "behind the default branch", change: func(e *ReadinessEvidence) { e.BehindBy = 3 }, want: ReadinessIncomplete, wantMessage: "behind main by 3"},
@@ -131,6 +130,39 @@ func TestEvaluateReadiness(t *testing.T) {
 			}
 			if tt.wantMessage != "" && !hasReasonContaining(got.Reasons, tt.wantMessage) {
 				t.Fatalf("no reason contains %q; reasons: %+v", tt.wantMessage, got.Reasons)
+			}
+		})
+	}
+}
+
+// A merged or closed pull request has nothing left to merge, so its readiness is not
+// applicable, whatever its evidence says. One reason says why; no other requirement
+// is reported, because none of them can make the pull request mergeable.
+func TestEvaluateReadinessDoesNotApplyToAPullRequestThatIsNotOpen(t *testing.T) {
+	tests := []struct {
+		name        string
+		change      func(*ReadinessEvidence)
+		wantMessage string
+	}{
+		{name: "merged", change: func(e *ReadinessEvidence) { e.Open, e.Merged = false, true }, wantMessage: "The pull request is already merged. Merge readiness applies only to an open pull request."},
+		{name: "closed without merging", change: func(e *ReadinessEvidence) { e.Open = false }, wantMessage: "The pull request was closed without being merged. Merge readiness applies only to an open pull request."},
+		{name: "merged with stale evidence", change: func(e *ReadinessEvidence) {
+			e.Open, e.Merged, e.BehindBy, e.Review = false, true, 3, nil
+		}, wantMessage: "already merged"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evidence := readyEvidence()
+			tt.change(&evidence)
+			got := EvaluateReadiness(evidence)
+			if got.Verdict != ReadinessNotApplicable {
+				t.Fatalf("verdict = %q, want %q; reasons: %+v", got.Verdict, ReadinessNotApplicable, got.Reasons)
+			}
+			if len(got.Reasons) != 1 || got.Reasons[0].Subject != "pull-request" || got.Reasons[0].Outcome != ReadinessNotApplicable || !strings.Contains(got.Reasons[0].Message, tt.wantMessage) {
+				t.Fatalf("reasons = %+v, want one pull-request reason containing %q", got.Reasons, tt.wantMessage)
+			}
+			if got.HeadSHA != readyHead || got.Findings != nil {
+				t.Fatalf("head = %q, findings = %+v; want the head and no findings", got.HeadSHA, got.Findings)
 			}
 		})
 	}

@@ -20,6 +20,10 @@ type readinessGitHub struct {
 	baseAfterEvaluation    string
 	defaultAfterEvaluation string
 	headSHA                string
+	state                  string
+	merged                 bool
+	mergedAfterEvaluation  bool
+	evidenceReads          atomic.Int32
 	repoReads              atomic.Int32
 	noDefaultBranch        bool
 	baseRef                string
@@ -89,28 +93,37 @@ func (f *readinessGitHub) serve(t *testing.T) *httptest.Server {
 		if later && f.baseAfterEvaluation != "" {
 			base = f.baseAfterEvaluation
 		}
-		state := "open"
+		state := or(f.state, "open")
 		if later && f.stateAfterEvaluation != "" {
 			state = f.stateAfterEvaluation
 		}
-		_, _ = w.Write([]byte(`{"number":7,"title":"Ready?","state":"` + state + `","draft":` + draft + `,"html_url":"https://github.com/acme/app/pull/7","head":{"sha":"` + head + `"},"base":{"ref":"` + base + `","repo":{"name":"app","owner":{"login":"acme"}}}}`))
+		merged := "false"
+		if f.merged || (later && f.mergedAfterEvaluation) {
+			merged = "true"
+		}
+		_, _ = w.Write([]byte(`{"number":7,"title":"Ready?","state":"` + state + `","merged":` + merged + `,"draft":` + draft + `,"html_url":"https://github.com/acme/app/pull/7","head":{"sha":"` + head + `"},"base":{"ref":"` + base + `","repo":{"name":"app","owner":{"login":"acme"}}}}`))
 	})
 	mux.HandleFunc("/repos/acme/app/compare/main..."+readinessHead, func(w http.ResponseWriter, r *http.Request) {
+		f.evidenceReads.Add(1)
 		_ = json.NewEncoder(w).Encode(map[string]any{"behind_by": f.behindBy, "html_url": "https://github.com/acme/app/compare/main..." + readinessHead})
 	})
 	mux.HandleFunc("/repos/acme/app/branches/main", func(w http.ResponseWriter, r *http.Request) {
+		f.evidenceReads.Add(1)
 		_, _ = w.Write([]byte(or(f.protection, `{"name":"main","protected":true,"protection":{"required_status_checks":{"contexts":["Go checks","warden/gate"],"checks":[{"context":"Go checks","app_id":15368},{"context":"warden/gate","app_id":null}]}}}`)))
 	})
 	mux.HandleFunc("/repos/acme/app/commits/"+readinessHead+"/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		f.evidenceReads.Add(1)
 		if r.URL.Query().Get("filter") != "all" {
 			t.Errorf("readiness must read every run on the head, got %q", r.URL.RawQuery)
 		}
 		_, _ = w.Write([]byte(or(f.checkRuns, `{"total_count":1,"check_runs":[{"id":10,"name":"Go checks","head_sha":"`+readinessHead+`","status":"completed","conclusion":"success","html_url":"https://github.com/acme/app/runs/10","app":{"id":15368,"name":"GitHub Actions"}}]}`)))
 	})
 	mux.HandleFunc("/repos/acme/app/commits/"+readinessHead+"/status", func(w http.ResponseWriter, r *http.Request) {
+		f.evidenceReads.Add(1)
 		_, _ = w.Write([]byte(or(f.statuses, `{"sha":"`+readinessHead+`","total_count":1,"statuses":[{"id":1,"context":"warden/gate","state":"success","updated_at":"2026-11-21T10:00:00Z"}]}`)))
 	})
 	mux.HandleFunc("/repos/acme/app/issues/7/comments", func(w http.ResponseWriter, r *http.Request) {
+		f.evidenceReads.Add(1)
 		if f.commentsCode != 0 {
 			w.WriteHeader(f.commentsCode)
 			return
@@ -292,6 +305,7 @@ func TestReadinessRefusesAVerdictWhenAFactChangesDuringEvaluation(t *testing.T) 
 	}{
 		{name: "head moves", fake: &readinessGitHub{headAfterEvaluation: olderSHA}},
 		{name: "pull request closes", fake: &readinessGitHub{stateAfterEvaluation: "closed"}},
+		{name: "closed pull request is merged", fake: &readinessGitHub{state: "closed", mergedAfterEvaluation: true}},
 		{name: "pull request becomes a draft", fake: &readinessGitHub{draftAfterEvaluation: true}},
 		{name: "pull request is retargeted", fake: &readinessGitHub{baseAfterEvaluation: "release"}},
 		{name: "default branch changes", fake: &readinessGitHub{defaultAfterEvaluation: "trunk"}},
@@ -317,5 +331,36 @@ func TestReadinessReportsAnUnknownDefaultBranch(t *testing.T) {
 	code, body := postReadiness(t, &readinessGitHub{noDefaultBranch: true})
 	if code != http.StatusBadGateway || body.Verdict != "" || !strings.Contains(body.Error, "default branch") {
 		t.Fatalf("got %d verdict %q error %q, want 502 naming the default branch", code, body.Verdict, body.Error)
+	}
+}
+
+// A merged or closed pull request gets a not-applicable verdict for its head, and
+// Ghostline reads none of the evidence an open pull request needs.
+func TestReadinessDoesNotApplyToAPullRequestThatIsNotOpen(t *testing.T) {
+	tests := []struct {
+		name        string
+		fake        *readinessGitHub
+		wantMessage string
+	}{
+		{name: "merged", fake: &readinessGitHub{state: "closed", merged: true, behindBy: 3}, wantMessage: "The pull request is already merged."},
+		{name: "closed without merging", fake: &readinessGitHub{state: "closed"}, wantMessage: "The pull request was closed without being merged."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, body := postReadiness(t, tt.fake)
+			if code != http.StatusOK || body.Verdict != "not-applicable" || body.HeadSHA != readinessHead {
+				t.Fatalf("got %d verdict %q head %q, want 200 not-applicable for %s", code, body.Verdict, body.HeadSHA, readinessHead)
+			}
+			outcome, message, ok := reasonFor(body, "pull-request")
+			if len(body.Reasons) != 1 || !ok || outcome != "not-applicable" || !strings.Contains(message, tt.wantMessage) {
+				t.Fatalf("reasons = %+v, want one not-applicable pull-request reason containing %q", body.Reasons, tt.wantMessage)
+			}
+			if body.Findings != nil {
+				t.Fatalf("findings = %+v, want none", body.Findings)
+			}
+			if reads := tt.fake.evidenceReads.Load(); reads != 0 {
+				t.Fatalf("read %d evidence sources, want none for a pull request that is not open", reads)
+			}
+		})
 	}
 }
