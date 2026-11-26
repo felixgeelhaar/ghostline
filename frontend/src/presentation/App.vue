@@ -25,7 +25,7 @@ import DeepTrace from './DeepTrace.vue'
 import StructuredQodoReview from './StructuredQodoReview.vue'
 import ReadinessPanel from './ReadinessPanel.vue'
 import OpenPullRequestsPanel from './OpenPullRequests.vue'
-import type { OpenPullRequest } from '../domain/openPullRequests'
+import { importedHeadFor, type OpenPullRequest } from '../domain/openPullRequests'
 import ImportCombobox from './ImportCombobox.vue'
 import { useGhostlineSession } from './useGhostlineSession'
 import { releaseLabel } from '../domain/release'
@@ -207,8 +207,7 @@ async function checkReadiness() {
 // head moved. A failed or replaced import resolves to nothing.
 async function openListedPull({ repository, row }: { repository: string; row: OpenPullRequest }): Promise<string | undefined> {
   url.value = `${repository}#${row.number}`
-  const imported = await loadPR(row.url)
-  return imported?.url === row.url && imported.checks.revisionSha ? imported.checks.revisionSha : undefined
+  return importedHeadFor(row, await loadPR(row.url))
 }
 
 // Searching needs a signed-in GitHub account; the server searches with its token.

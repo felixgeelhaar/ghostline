@@ -86,6 +86,27 @@ describe('open pull request list', () => {
     expect(rows()[1]).toContain('PASS')
   })
 
+  it('checks the remaining rows after a stop, then every row again once all have verdicts', async () => {
+    vi.mocked(listOpenPullRequests).mockResolvedValue(list([row(2), row(1)]))
+    vi.mocked(fetchReadiness)
+      .mockResolvedValueOnce(verdict(2, sha('2')))
+      .mockRejectedValueOnce(new GhostlineApiError(429, 'Too many requests. Try again in 20 seconds.'))
+      .mockResolvedValueOnce(verdict(1, sha('1')))
+      .mockResolvedValueOnce(verdict(2, sha('2'), { verdict: 'pass', nextAction: 'ready: the engineer decides whether to merge' }))
+      .mockResolvedValueOnce(verdict(1, sha('1')))
+    await mount()
+    await listRepository('acme/app')
+    checkAll().click()
+    await vi.waitFor(() => expect(checkAll().textContent).toBe('CHECK REMAINING'))
+    checkAll().click()
+    await vi.waitFor(() => expect(checkAll().textContent).toBe('CHECK AGAIN'))
+    expect(fetchReadiness).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(fetchReadiness).mock.calls[2][2]).toBe(1)
+    checkAll().click()
+    await vi.waitFor(() => expect(rows()[0]).toContain('PASS'))
+    expect(fetchReadiness).toHaveBeenCalledTimes(5)
+  })
+
   it('marks a row stale when its verdict describes a newer head', async () => {
     vi.mocked(listOpenPullRequests).mockResolvedValue(list([row(1)]))
     vi.mocked(fetchReadiness).mockResolvedValue(verdict(1, sha('9'), { verdict: 'pass', nextAction: 'ready: the engineer decides whether to merge' }))

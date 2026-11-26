@@ -58,3 +58,10 @@ export function rowNextAction(row: OpenPullRequest, check: RowCheck, openedHeadS
     case 'changed': return 'changed while being checked: list again'
   }
 }
+
+// The head an import found for this row's pull request, or nothing when the import is of
+// another pull request or named no head. Only such a head can show that the listed one moved.
+export function importedHeadFor(row: OpenPullRequest, imported?: { url: string; checks: { revisionSha?: string } }): string | undefined {
+  if (!imported || imported.url !== row.url || !imported.checks.revisionSha) return undefined
+  return imported.checks.revisionSha
+}

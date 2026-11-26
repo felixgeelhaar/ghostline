@@ -40,6 +40,12 @@ const summary = computed(() => {
     : `PARTIAL · the newest ${count} ${noun} in ${list.repository}; GitHub has more than ${list.limit}.`
 })
 
+// Once every row has a verdict, checking again refreshes them all; until then it checks
+// only the rows still without one, so a stop at the request limit can resume.
+const allChecked = computed(() => Boolean(result.value?.items.length) && result.value!.items.every((row) => checkFor(row).state === 'checked'))
+const anyChecked = computed(() => result.value?.items.some((row) => checkFor(row).state === 'checked') ?? false)
+const checkLabel = computed(() => checking.value ? 'CHECKING…' : allChecked.value ? 'CHECK AGAIN' : anyChecked.value ? 'CHECK REMAINING' : 'CHECK READINESS')
+
 function checkFor(row: OpenPullRequest): RowCheck { return checks.value[row.number] ?? { state: 'unchecked' } }
 function openedHead(row: OpenPullRequest) { return openedHeads.value[row.number] }
 async function open(row: OpenPullRequest) {
@@ -77,12 +83,13 @@ async function checkAll() {
   const list = result.value
   if (!list || checking.value) return
   const request = generation
+  const refresh = allChecked.value
   checking.value = true
   await sweepReadiness({
     repository: list.repository,
     rows: list.items,
     isCurrent: () => request === generation,
-    skip: (row) => checkFor(row).state === 'checked',
+    skip: (row) => !refresh && checkFor(row).state === 'checked',
     onUpdate: (number, check) => { checks.value = { ...checks.value, [number]: check } },
     onFailure: (error) => emit('request-failed', error),
   })
@@ -104,7 +111,7 @@ async function checkAll() {
     <template v-else-if="result">
       <div class="open-pulls-summary">
         <p role="status" :class="{ partial: !result.complete }">{{ summary }}</p>
-        <button v-if="result.items.length" type="button" class="open-pulls-check" :disabled="checking" @click="checkAll">{{ checking ? 'CHECKING…' : 'CHECK READINESS' }}</button>
+        <button v-if="result.items.length" type="button" class="open-pulls-check" :disabled="checking" @click="checkAll">{{ checkLabel }}</button>
       </div>
       <table v-if="result.items.length">
         <caption class="sr-only">Open pull requests in {{ result.repository }} with the readiness of each listed head</caption>
