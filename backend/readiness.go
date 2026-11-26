@@ -120,10 +120,16 @@ func (a api) loadReadiness(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub did not identify the pull request's head commit, so no readiness evidence can be tied to it."})
 		return
 	}
-	defaultBranch, err := fetchDefaultBranch(ctx, a.gh, identity)
-	if err != nil {
-		respondGitHubError(c, err)
-		return
+	// Only an open pull request's verdict depends on the default branch; a merged or
+	// closed one is not applicable whatever the branch is.
+	open := pr.State == "open"
+	var defaultBranch string
+	if open {
+		var err error
+		if defaultBranch, err = fetchDefaultBranch(ctx, a.gh, identity); err != nil {
+			respondGitHubError(c, err)
+			return
+		}
 	}
 
 	evidence := gatherReadinessEvidence(ctx, a.gh, identity, pr, defaultBranch)
@@ -135,10 +141,12 @@ func (a api) loadReadiness(c *gin.Context) {
 		respondGitHubError(c, err)
 		return
 	}
-	verifiedDefault, err := fetchDefaultBranch(ctx, a.gh, identity)
-	if err != nil {
-		respondGitHubError(c, err)
-		return
+	verifiedDefault := defaultBranch
+	if open {
+		if verifiedDefault, err = fetchDefaultBranch(ctx, a.gh, identity); err != nil {
+			respondGitHubError(c, err)
+			return
+		}
 	}
 	if !sameReadinessSnapshot(pr, verified) || !verifiedIdentity.Equal(identity) || verifiedDefault != defaultBranch {
 		c.JSON(http.StatusConflict, gin.H{"error": "This pull request changed while its readiness was being checked. Check it again."})

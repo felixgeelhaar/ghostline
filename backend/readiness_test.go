@@ -344,6 +344,10 @@ func TestReadinessDoesNotApplyToAPullRequestThatIsNotOpen(t *testing.T) {
 	}{
 		{name: "merged", fake: &readinessGitHub{state: "closed", merged: true, behindBy: 3}, wantMessage: "The pull request is already merged."},
 		{name: "closed without merging", fake: &readinessGitHub{state: "closed"}, wantMessage: "The pull request was closed without being merged."},
+		// The default branch cannot change a not-applicable verdict, so a gap or a change
+		// in it must not turn the verdict into an error.
+		{name: "merged, default branch unknown", fake: &readinessGitHub{state: "closed", merged: true, noDefaultBranch: true}, wantMessage: "The pull request is already merged."},
+		{name: "merged, default branch changes", fake: &readinessGitHub{state: "closed", merged: true, defaultAfterEvaluation: "trunk"}, wantMessage: "The pull request is already merged."},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
