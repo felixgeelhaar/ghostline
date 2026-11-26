@@ -144,6 +144,21 @@ make_case cancelled-rerun 0 "$(review_body "$head_sha" "$clean_groups")" success
 fixture cancelled-rerun "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson e "$(earlier_run cancelled 8)" '.check_runs += [$e]')"
 expect cancelled-rerun 2 INCOMPLETE "Go checks: an earlier run on this head ended cancelled; GitHub does not show whether the runner or the code caused it, so the engineer decides"
 
+# The same order as classifyCheckRuns in backend/internal/domain/readiness.go (#157).
+make_case earlier-no-conclusion 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture earlier-no-conclusion "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq '.check_runs += [{"name":"Go checks","status":"completed","conclusion":null,"started_at":"2026-11-21T08:00:00Z","app":{"id":15368}}]')"
+expect earlier-no-conclusion 2 INCOMPLETE "Go checks: an earlier run on this head ended without a conclusion; GitHub does not show whether the runner or the code caused it, so the engineer decides"
+
+make_case running-after-failure 0 "$(review_body "$head_sha" "$clean_groups")" success success
+fixture running-after-failure "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson e "$(earlier_run failure 8)" '(.check_runs[] | select(.name == "Go checks")) |= (.status = "in_progress" | .conclusion = null) | .check_runs += [$e]')"
+expect running-after-failure 1 FAIL "Go checks: an earlier run on this head concluded failure; a later run does not clear it"
+
+make_case latest-never-started 0 "$(review_body "$head_sha" "$clean_groups")" startup_failure success
+expect latest-never-started 2 INCOMPLETE "Go checks: startup_failure; the job never started, so one rerun is allowed"
+
+make_case latest-cancelled 0 "$(review_body "$head_sha" "$clean_groups")" cancelled success
+expect latest-cancelled 2 INCOMPLETE "Go checks: the latest run on this head ended cancelled; GitHub does not show whether the runner or the code caused it, so the engineer decides"
+
 make_case wrong-app 0 "$(review_body "$head_sha" "$clean_groups")" success success
 fixture wrong-app "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq '(.check_runs[] | select(.name == "Go checks") | .app.id) = 999')"
 expect wrong-app 2 INCOMPLETE "Go checks: missing on head"
