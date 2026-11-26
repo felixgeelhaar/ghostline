@@ -40,7 +40,7 @@ describe('readiness sweep', () => {
 
   it('records a failure and goes on, but stops when the rest would fail too', async () => {
     const fetchReadiness = vi.fn<FetchReadiness>()
-      .mockRejectedValueOnce(new GhostlineApiError(409, 'This pull request changed while its readiness was being checked. Check it again.'))
+      .mockRejectedValueOnce(new GhostlineApiError(502, 'GitHub is having trouble right now. Try again shortly.'))
       .mockRejectedValueOnce(new GhostlineApiError(429, 'Too many requests. Try again in 20 seconds.'))
     const { done, updates, failures } = run([row(3), row(2), row(1)], fetchReadiness)
     await done
@@ -48,6 +48,16 @@ describe('readiness sweep', () => {
     expect(failures).toHaveLength(2)
     expect(updates.filter(([, check]) => check.state === 'error').map(([number]) => number)).toEqual([3, 2])
     expect(updates.some(([number]) => number === 1)).toBe(false)
+  })
+
+  it('marks a pull request that changed while it was checked, and goes on', async () => {
+    const fetchReadiness = vi.fn<FetchReadiness>()
+      .mockRejectedValueOnce(new GhostlineApiError(409, 'This pull request changed while its readiness was being checked. Check it again.'))
+      .mockResolvedValueOnce(verdict(1))
+    const { done, updates, failures } = run([row(2), row(1)], fetchReadiness)
+    await done
+    expect(updates.map(([number, check]) => `${number}:${check.state}`)).toEqual(['2:checking', '2:changed', '1:checking', '1:checked'])
+    expect(failures).toHaveLength(0)
   })
 
   it('applies nothing once the list it was started for is no longer current', async () => {

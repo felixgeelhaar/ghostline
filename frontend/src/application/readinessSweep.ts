@@ -1,4 +1,5 @@
 import { endsReadinessSweep, fetchReadiness as fetchReadinessFromApi } from './fetchReadiness'
+import { GhostlineApiError } from './apiError'
 import type { OpenPullRequest, RowCheck } from '../domain/openPullRequests'
 import type { Readiness } from '../domain/readiness'
 
@@ -28,6 +29,11 @@ export async function sweepReadiness(sweep: ReadinessSweep): Promise<void> {
       sweep.onUpdate(row.number, { state: 'checked', readiness })
     } catch (error) {
       if (!sweep.isCurrent()) return
+      // Ghostline answers 409 when the pull request changed between its reads.
+      if (error instanceof GhostlineApiError && error.status === 409) {
+        sweep.onUpdate(row.number, { state: 'changed' })
+        continue
+      }
       sweep.onUpdate(row.number, { state: 'error', message: error instanceof Error ? error.message : 'Could not check merge readiness.' })
       sweep.onFailure(error)
       if (endsReadinessSweep(error)) return

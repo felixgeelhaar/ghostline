@@ -28,6 +28,8 @@ export type RowCheck =
   | { state: 'unchecked' }
   | { state: 'checking' }
   | { state: 'checked'; readiness: Readiness }
+  // The pull request changed while its readiness was being read, so no verdict applies.
+  | { state: 'changed' }
   | { state: 'error'; message: string }
 
 export type RowVerdict = ReadinessOutcome | 'stale' | 'unchecked' | 'checking' | 'error'
@@ -41,7 +43,7 @@ function movedHead(row: OpenPullRequest, check: RowCheck, openedHeadSha?: string
 
 // A verdict counts only for the head the row was listed with; otherwise the row is stale.
 export function rowVerdict(row: OpenPullRequest, check: RowCheck, openedHeadSha?: string): RowVerdict {
-  if (movedHead(row, check, openedHeadSha)) return 'stale'
+  if (movedHead(row, check, openedHeadSha) || check.state === 'changed') return 'stale'
   return check.state === 'checked' ? check.readiness.verdict : check.state
 }
 
@@ -53,5 +55,14 @@ export function rowNextAction(row: OpenPullRequest, check: RowCheck, openedHeadS
     case 'checking': return 'checking…'
     case 'error': return check.message
     case 'checked': return check.readiness.nextAction
+    case 'changed': return 'changed while being checked: list again'
   }
+}
+
+export interface OpenedPullRequest { repository: string; number: number; headSha: string }
+
+// The head the detail view found for this row's pull request, if that is the one opened.
+export function openedHeadFor(listRepository: string, row: OpenPullRequest, opened?: OpenedPullRequest): string | undefined {
+  if (!opened || opened.number !== row.number || opened.repository.toLowerCase() !== listRepository.toLowerCase()) return undefined
+  return opened.headSha
 }

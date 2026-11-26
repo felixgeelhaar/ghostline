@@ -2,10 +2,10 @@
 import { computed, ref } from 'vue'
 import { listOpenPullRequests } from '../application/listOpenPullRequests'
 import { sweepReadiness } from '../application/readinessSweep'
-import { rowNextAction, rowVerdict, type OpenPullRequest, type OpenPullRequests, type RowCheck, type RowVerdict } from '../domain/openPullRequests'
+import { openedHeadFor, rowNextAction, rowVerdict, type OpenedPullRequest, type OpenPullRequest, type OpenPullRequests, type RowCheck, type RowVerdict } from '../domain/openPullRequests'
 
 // openedPull is the pull request the detail view imported, with the head it found.
-const props = defineProps<{ openedPull?: { repository: string; number: number; headSha: string } }>()
+const props = defineProps<{ openedPull?: OpenedPullRequest }>()
 // request-failed passes each failure up, so the app can notice a lost sign-in.
 const emit = defineEmits<{ open: [{ repository: string; row: OpenPullRequest }]; 'request-failed': [unknown] }>()
 
@@ -38,13 +38,9 @@ const summary = computed(() => {
 })
 
 function checkFor(row: OpenPullRequest): RowCheck { return checks.value[row.number] ?? { state: 'unchecked' } }
-function openedHeadFor(row: OpenPullRequest) {
-  const opened = props.openedPull
-  if (!opened || !result.value || opened.number !== row.number || opened.repository.toLowerCase() !== result.value.repository.toLowerCase()) return undefined
-  return opened.headSha
-}
-function verdictOf(row: OpenPullRequest) { return rowVerdict(row, checkFor(row), openedHeadFor(row)) }
-function nextActionOf(row: OpenPullRequest) { return rowNextAction(row, checkFor(row), openedHeadFor(row)) }
+function openedHead(row: OpenPullRequest) { return result.value ? openedHeadFor(result.value.repository, row, props.openedPull) : undefined }
+function verdictOf(row: OpenPullRequest) { return rowVerdict(row, checkFor(row), openedHead(row)) }
+function nextActionOf(row: OpenPullRequest) { return rowNextAction(row, checkFor(row), openedHead(row)) }
 
 async function list() {
   const request = ++generation
