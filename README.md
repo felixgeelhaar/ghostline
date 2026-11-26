@@ -41,6 +41,8 @@ Open the URL Vite prints. Or run `docker compose up --build` and open http://loc
 
 **Import a pull request.** The import field takes a URL or `owner/repo#123`. A safe example is `felixgeelhaar/ghostline#152`: a small, merged pull request with GitHub checks and a Qodo review. Its readiness is NOT APPLICABLE because it's merged. Import any open public pull request to see a full verdict. When you're signed in with GitHub, typing anything else (three or more characters) searches your own public pull requests (`is:pr is:public involves:@me`) and lists matches to pick from; nothing is listed until you type.
 
+**List a repository's open pull requests.** Enter `owner/repo` under **Open pull requests**, then select **Check readiness**. Each row shows its head, verdict and next action, such as "update branch: 3 behind main". Ghostline checks one pull request at a time and stops at the request limit. A list longer than 30 is labelled partial, and a row whose head moved is marked stale ([screenshot](docs/feature-evidence/open-pr-readiness.md)).
+
 No token is needed for public pull-request data. To show Nox reports, set `GITHUB_TOKEN` with read access to Actions artifacts; without one, Ghostline reports Nox evidence as unavailable, not clean. See [Configuration](docs/configuration.md).
 
 ## What Ghostline won't do

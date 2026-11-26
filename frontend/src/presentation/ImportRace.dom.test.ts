@@ -69,12 +69,12 @@ describe('latest pull request import wins', () => {
 
     await submitURL('https://github.com/acme/app/pull/7')
     await submitURL('https://github.com/acme/app/pull/8')
-    expect(host?.querySelector('h2')?.textContent).toBe('Latest change')
+    expect(host?.querySelector('.change-card h2')?.textContent).toBe('Latest change')
 
     earlier.resolve(makePR(7, 'Earlier change'))
     await settle()
 
-    expect(host?.querySelector('h2')?.textContent).toBe('Latest change')
+    expect(host?.querySelector('.change-card h2')?.textContent).toBe('Latest change')
     expect(host?.textContent).not.toContain('Earlier change')
   })
 
@@ -90,7 +90,7 @@ describe('latest pull request import wins', () => {
     earlier.reject(new Error('Earlier import failed'))
     await settle()
 
-    expect(host?.querySelector('h2')?.textContent).toBe('Latest change')
+    expect(host?.querySelector('.change-card h2')?.textContent).toBe('Latest change')
     expect(host?.querySelector('[role="alert"]')).toBeNull()
     expect(host?.textContent).not.toContain('FETCHING…')
   })
@@ -108,7 +108,7 @@ describe('latest pull request import wins', () => {
     earlier.resolve(makePR(7, 'Stale result'))
     await settle()
 
-    expect(host?.querySelector('h2')).toBeNull()
+    expect(host?.querySelector('.change-card h2')).toBeNull()
     expect(host?.querySelector('[role="alert"]')?.textContent).toContain('Enter a valid GitHub pull request URL')
     expect(host?.textContent).not.toContain('FETCHING…')
   })

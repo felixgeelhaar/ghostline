@@ -141,11 +141,13 @@ type readinessBody struct {
 	HeadSHA    string `json:"headSha"`
 	HeadURL    string `json:"headUrl"`
 	Verdict    string `json:"verdict"`
+	NextAction string `json:"nextAction"`
 	Reasons    []struct {
 		Subject   string `json:"subject"`
 		Outcome   string `json:"outcome"`
 		Message   string `json:"message"`
 		SourceURL string `json:"sourceUrl"`
+		Action    string `json:"action"`
 	} `json:"reasons"`
 	Findings *struct {
 		High   int `json:"high"`
@@ -366,5 +368,22 @@ func TestReadinessDoesNotApplyToAPullRequestThatIsNotOpen(t *testing.T) {
 				t.Fatalf("read %d evidence sources, want none for a pull request that is not open", reads)
 			}
 		})
+	}
+}
+
+// The response carries the next action and each unmet requirement's action.
+func TestReadinessReportsTheNextAction(t *testing.T) {
+	code, body := postReadiness(t, &readinessGitHub{behindBy: 3})
+	if code != http.StatusOK || body.NextAction != "update branch: 3 behind main" {
+		t.Fatalf("got %d next action %q, want 200 and the branch update", code, body.NextAction)
+	}
+	for _, reason := range body.Reasons {
+		if (reason.Outcome == "pass") != (reason.Action == "") {
+			t.Fatalf("reason %+v: only an unmet requirement carries an action", reason)
+		}
+	}
+	_, ready := postReadiness(t, &readinessGitHub{})
+	if ready.NextAction != "ready: the engineer decides whether to merge" {
+		t.Fatalf("ready next action = %q", ready.NextAction)
 	}
 }

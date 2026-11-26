@@ -14,7 +14,9 @@ export const ReadinessSchema = z.object({
   headShortSha: z.string().min(7),
   headUrl: webURL,
   verdict: outcome,
-  reasons: z.array(z.object({ subject: z.string().min(1), outcome, message: z.string().min(1), sourceUrl: webURL.optional() })),
+  // What the head is waiting for, from the first failed requirement or else the first gap.
+  nextAction: z.string().min(1),
+  reasons: z.array(z.object({ subject: z.string().min(1), outcome, message: z.string().min(1), sourceUrl: webURL.optional(), action: z.string().min(1).optional() })),
   findings: z.object({ high: z.number().int().nonnegative(), medium: z.number().int().nonnegative(), low: z.number().int().nonnegative() }).optional(),
 })
 export type Readiness = z.infer<typeof ReadinessSchema>

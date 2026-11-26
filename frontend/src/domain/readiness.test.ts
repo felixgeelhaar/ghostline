@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { orderReadinessReasons, readinessHeadline, ReadinessSchema, type Readiness } from './readiness'
 
 const sha = 'c'.repeat(40)
-const base: Readiness = { repository: 'acme/app', number: 7, headSha: sha, headShortSha: 'ccccccc', headUrl: `https://github.com/acme/app/commit/${sha}`, verdict: 'pass', reasons: [] }
+const base: Readiness = { repository: 'acme/app', number: 7, headSha: sha, headShortSha: 'ccccccc', headUrl: `https://github.com/acme/app/commit/${sha}`, verdict: 'pass', nextAction: 'ready: the engineer decides whether to merge', reasons: [] }
 
 describe('readiness presentation rules', () => {
   it('names the head commit in every headline', () => {
@@ -16,6 +16,13 @@ describe('readiness presentation rules', () => {
     const headline = readinessHeadline({ ...base, verdict: 'not-applicable' })
     expect(headline).toBe('NOT APPLICABLE · ccccccc is the head of a pull request that is not open')
     expect(headline).not.toMatch(/missing|not yet current/)
+  })
+
+  it('requires the next action and accepts an action on a reason', () => {
+    const reasons = [{ subject: 'branch', outcome: 'incomplete', message: 'The branch is behind main by 3 commits.', action: 'update branch: 3 behind main' }]
+    expect(ReadinessSchema.parse({ ...base, verdict: 'incomplete', nextAction: 'update branch: 3 behind main', reasons }).reasons[0].action).toBe('update branch: 3 behind main')
+    const { nextAction: _omitted, ...withoutNextAction } = base
+    expect(ReadinessSchema.safeParse(withoutNextAction).success).toBe(false)
   })
 
   it('accepts a not-applicable verdict and reason from the API', () => {

@@ -4,7 +4,7 @@ import { fetchReadiness } from './fetchReadiness'
 const sha = 'c'.repeat(40)
 const payload = {
   repository: 'acme/app', number: 7, headSha: sha, headShortSha: sha.slice(0, 7), headUrl: `https://github.com/acme/app/commit/${sha}`,
-  verdict: 'pass',
+  verdict: 'pass', nextAction: 'ready: the engineer decides whether to merge',
   reasons: [{ subject: 'qodo', outcome: 'pass', message: "Qodo's review covers the head with no open findings.", sourceUrl: 'https://github.com/acme/app/pull/7#issuecomment-1' }],
   findings: { high: 0, medium: 0, low: 0 },
 }

@@ -18,6 +18,7 @@ type readinessReason struct {
 	Outcome   string `json:"outcome"`
 	Message   string `json:"message"`
 	SourceURL string `json:"sourceUrl,omitempty"`
+	Action    string `json:"action,omitempty"`
 }
 
 type readinessFindings struct {
@@ -35,6 +36,7 @@ type readinessResponse struct {
 	HeadShortSHA string             `json:"headShortSha"`
 	HeadURL      string             `json:"headUrl"`
 	Verdict      string             `json:"verdict"`
+	NextAction   string             `json:"nextAction"`
 	Reasons      []readinessReason  `json:"reasons"`
 	Findings     *readinessFindings `json:"findings,omitempty"`
 }
@@ -154,13 +156,13 @@ func (a api) loadReadiness(c *gin.Context) {
 	}
 
 	result := domain.EvaluateReadiness(evidence)
-	response := readinessResponse{Repository: identity.FullName(), Number: pr.Number, HeadSHA: result.HeadSHA, Verdict: string(result.Verdict), Reasons: make([]readinessReason, 0, len(result.Reasons))}
+	response := readinessResponse{Repository: identity.FullName(), Number: pr.Number, HeadSHA: result.HeadSHA, Verdict: string(result.Verdict), NextAction: result.NextAction, Reasons: make([]readinessReason, 0, len(result.Reasons))}
 	if fullSHA.MatchString(result.HeadSHA) {
 		response.HeadShortSHA = result.HeadSHA[:7]
 		response.HeadURL = fmt.Sprintf("https://github.com/%s/%s/commit/%s", url.PathEscape(identity.Owner), url.PathEscape(identity.Name), result.HeadSHA)
 	}
 	for _, reason := range result.Reasons {
-		response.Reasons = append(response.Reasons, readinessReason{Subject: reason.Subject, Outcome: string(reason.Outcome), Message: reason.Message, SourceURL: safeURL(reason.SourceURL)})
+		response.Reasons = append(response.Reasons, readinessReason{Subject: reason.Subject, Outcome: string(reason.Outcome), Message: reason.Message, SourceURL: safeURL(reason.SourceURL), Action: reason.Action})
 	}
 	if result.Findings != nil {
 		response.Findings = &readinessFindings{High: result.Findings.High, Medium: result.Findings.Medium, Low: result.Findings.Low}

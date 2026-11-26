@@ -24,7 +24,7 @@ const makePR = (number: number, head = sha): PullRequest => ({
 })
 const verdict = (number: number, overrides: Partial<Readiness> = {}): Readiness => ({
   repository: 'acme/app', number, headSha: sha, headShortSha: sha.slice(0, 7), headUrl: `https://github.com/acme/app/commit/${sha}`,
-  verdict: 'fail', findings: { high: 0, medium: 1, low: 0 },
+  verdict: 'fail', nextAction: 'fix 1 High or Medium Qodo finding', findings: { high: 0, medium: 1, low: 0 },
   reasons: [
     { subject: 'branch', outcome: 'pass', message: 'The branch is up to date with main.' },
     { subject: 'qodo', outcome: 'fail', message: `Qodo reports 1 High or Medium finding on PR ${number}.`, sourceUrl: `https://github.com/acme/app/pull/${number}#issuecomment-1` },
@@ -80,6 +80,7 @@ describe('merge readiness panel', () => {
     await vi.waitFor(() => expect(panelText()).toContain('FAIL'))
     expect(panelText()).toContain('aaaaaaa')
     expect(panelText()).toContain('1 MEDIUM')
+    expect(host!.querySelector('.readiness-next-action')?.textContent).toContain('fix 1 High or Medium Qodo finding')
     const reasons = [...host!.querySelectorAll('.readiness-reasons li')].map((item) => item.textContent ?? '')
     expect(reasons[0]).toContain('Qodo reports')
     expect(host!.querySelector<HTMLAnchorElement>('.readiness-reasons a')?.href).toBe('https://github.com/acme/app/pull/7#issuecomment-1')
