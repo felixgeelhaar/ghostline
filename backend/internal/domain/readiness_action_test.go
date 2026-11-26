@@ -119,3 +119,38 @@ func TestEveryUnmetReasonHasAnAction(t *testing.T) {
 		}
 	}
 }
+
+// The verdict, source and action for a required check agree: a reported result fails it
+// and links that run; a run without a result leaves it incomplete.
+func TestRequiredCheckOutcomeMatchesItsAction(t *testing.T) {
+	failed := CheckRunEvidence{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "failure", URL: "https://github.com/acme/app/runs/5"}
+	tests := []struct {
+		name    string
+		runs    []CheckRunEvidence
+		want    ReadinessOutcome
+		wantURL string
+	}{
+		{name: "latest never started", runs: []CheckRunEvidence{{ID: 10, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "startup_failure", URL: "https://github.com/acme/app/runs/10"}}, want: ReadinessIncomplete, wantURL: "https://github.com/acme/app/runs/10"},
+		{name: "latest cancelled", runs: []CheckRunEvidence{{ID: 10, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "cancelled", URL: "https://github.com/acme/app/runs/10"}}, want: ReadinessIncomplete, wantURL: "https://github.com/acme/app/runs/10"},
+		{name: "latest without a conclusion", runs: []CheckRunEvidence{{ID: 10, Name: "Go checks", AppID: actionsID, Status: "completed", URL: "https://github.com/acme/app/runs/10"}}, want: ReadinessIncomplete, wantURL: "https://github.com/acme/app/runs/10"},
+		{name: "a rerun is running after a failure", runs: []CheckRunEvidence{failed, {ID: 10, Name: "Go checks", AppID: actionsID, Status: "in_progress", URL: "https://github.com/acme/app/runs/10"}}, want: ReadinessFail, wantURL: failed.URL},
+		{name: "a rerun never started after a failure", runs: []CheckRunEvidence{failed, {ID: 10, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "startup_failure", URL: "https://github.com/acme/app/runs/10"}}, want: ReadinessFail, wantURL: failed.URL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evidence := readyEvidence()
+			evidence.CheckRuns = tt.runs
+			got := EvaluateReadiness(evidence)
+			for _, reason := range got.Reasons {
+				if reason.Subject != "check:Go checks" {
+					continue
+				}
+				if reason.Outcome != tt.want || reason.SourceURL != tt.wantURL || reason.Action == "" {
+					t.Fatalf("reason = %+v, want %s linking %s with an action", reason, tt.want, tt.wantURL)
+				}
+				return
+			}
+			t.Fatalf("no Go checks reason in %+v", got.Reasons)
+		})
+	}
+}

@@ -285,88 +285,82 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 		return
 	}
 
-	latest := runs[len(runs)-1]
-	if latest.Status != "completed" {
-		add(subject, ReadinessIncomplete, latest.URL, "%s: %s.", required.Context, latest.Status)("%s", checkAction(required.Context, latest, runs[:len(runs)-1]))
-		return
-	}
-	if !passingConclusion(latest.Conclusion) {
-		add(subject, ReadinessFail, latest.URL, "%s: %s.", required.Context, conclusionLabel(latest.Conclusion))("%s", checkAction(required.Context, latest, runs[:len(runs)-1]))
-		return
-	}
-	// docs/factory-verification.md: a run that reported a result stays a real result even
-	// if a rerun on the same head passed. Only a run that ended without a result, because
-	// of the runner or the network, may be rerun, and only once. GitHub records that cause
-	// only for a job that never started; any other no-result run needs the engineer.
-	var noResult []CheckRunEvidence
-	var unknownCause *CheckRunEvidence
-	for _, earlier := range runs[:len(runs)-1] {
-		switch {
-		case earlier.Status != "completed" || passingConclusion(earlier.Conclusion):
-		case noResultConclusion(earlier.Conclusion):
-			noResult = append(noResult, earlier)
-		case unknownCauseConclusion(earlier.Conclusion):
-			if unknownCause == nil {
-				unknownCause = &earlier
-			}
-		default:
-			add(subject, ReadinessFail, earlier.URL, "%s: an earlier run on this head concluded %s; a passing rerun does not clear it.", required.Context, earlier.Conclusion)("%s", checkAction(required.Context, latest, runs[:len(runs)-1]))
-			return
-		}
-	}
-	switch {
-	// A reason the engineer decides links the run they need to inspect.
-	case unknownCause != nil:
-		add(subject, ReadinessIncomplete, unknownCause.URL, "%s: an earlier run on this head ended %s; GitHub does not show whether the runner or the code caused it, so the engineer decides.", required.Context, endedLabel(unknownCause.Conclusion))("%s", checkAction(required.Context, latest, runs[:len(runs)-1]))
-	case len(noResult) > 1:
-		add(subject, ReadinessIncomplete, noResult[len(noResult)-1].URL, "%s: %d earlier runs on this head ended with no result; only one rerun is allowed, so the engineer decides.", required.Context, len(noResult))("%s", checkAction(required.Context, latest, runs[:len(runs)-1]))
-	case len(noResult) == 1:
-		add(subject, ReadinessPass, latest.URL, "%s: %s on a rerun; an earlier run ended %s with no result.", required.Context, latest.Conclusion, noResult[0].Conclusion)
-	default:
-		add(subject, ReadinessPass, latest.URL, "%s: %s.", required.Context, latest.Conclusion)
+	verdict := classifyCheckRuns(required.Context, runs[len(runs)-1], runs[:len(runs)-1])
+	setAction := add(subject, verdict.outcome, verdict.sourceURL, "%s", verdict.message)
+	if verdict.outcome != ReadinessPass {
+		setAction("%s", verdict.action)
 	}
 }
 
-// checkAction says what would move a required check whose latest run is unfinished or
-// did not pass, in the order docs/factory-verification.md sets: a reported result needs
-// a fix, and a later run does not clear it; a run whose cause GitHub does not record
-// needs the engineer, as do reruns beyond the one allowed; otherwise wait for the
-// running job, re-check a run with no conclusion, or rerun a job that never started.
-func checkAction(name string, latest CheckRunEvidence, earlier []CheckRunEvidence) string {
+// checkRunVerdict is one required check's outcome, the run that decides it, and what
+// would move it toward passing.
+type checkRunVerdict struct {
+	outcome   ReadinessOutcome
+	sourceURL string
+	message   string
+	action    string
+}
+
+// classifyCheckRuns decides a required check from every run on the head, in the order
+// docs/factory-verification.md sets. A run that reported a result stays a real result,
+// even if a later run passed or is still running. A run whose cause GitHub does not
+// record, or more than the one allowed rerun of a job that never started, needs the
+// engineer. Otherwise the latest run decides: still running, never started (one rerun
+// is allowed), or passed.
+func classifyCheckRuns(name string, latest CheckRunEvidence, earlier []CheckRunEvidence) checkRunVerdict {
 	completed := latest.Status == "completed"
 	if completed && reportedResult(latest.Conclusion) {
-		return fmt.Sprintf("fix %s (%s)", name, latest.Conclusion)
+		return checkRunVerdict{ReadinessFail, latest.URL, fmt.Sprintf("%s: %s.", name, latest.Conclusion), fmt.Sprintf("fix %s (%s)", name, latest.Conclusion)}
 	}
 	for _, run := range earlier {
 		if run.Status == "completed" && reportedResult(run.Conclusion) {
-			return fmt.Sprintf("fix %s (an earlier run on this head concluded %s)", name, run.Conclusion)
+			return checkRunVerdict{ReadinessFail, run.URL,
+				fmt.Sprintf("%s: an earlier run on this head concluded %s; a later run does not clear it.", name, run.Conclusion),
+				fmt.Sprintf("fix %s (an earlier run on this head concluded %s)", name, run.Conclusion)}
 		}
 	}
 	if completed && unknownCauseConclusion(latest.Conclusion) {
-		return fmt.Sprintf("decide on the latest run of %s (%s)", name, conclusionLabel(latest.Conclusion))
+		return checkRunVerdict{ReadinessIncomplete, latest.URL,
+			fmt.Sprintf("%s: the latest run on this head ended %s; GitHub does not show whether the runner or the code caused it, so the engineer decides.", name, endedLabel(latest.Conclusion)),
+			fmt.Sprintf("decide on the latest run of %s (%s)", name, conclusionLabel(latest.Conclusion))}
 	}
-	noResult := 0
+	var noResult []CheckRunEvidence
 	for _, run := range earlier {
 		if run.Status != "completed" {
 			continue
 		}
 		if unknownCauseConclusion(run.Conclusion) {
-			return fmt.Sprintf("decide on the earlier run of %s (%s)", name, conclusionLabel(run.Conclusion))
+			return checkRunVerdict{ReadinessIncomplete, run.URL,
+				fmt.Sprintf("%s: an earlier run on this head ended %s; GitHub does not show whether the runner or the code caused it, so the engineer decides.", name, endedLabel(run.Conclusion)),
+				fmt.Sprintf("decide on the earlier run of %s (%s)", name, conclusionLabel(run.Conclusion))}
 		}
 		if noResultConclusion(run.Conclusion) {
-			noResult++
+			noResult = append(noResult, run)
 		}
 	}
-	if completed && noResultConclusion(latest.Conclusion) {
-		noResult++
+	latestNoResult := completed && noResultConclusion(latest.Conclusion)
+	if latestNoResult {
+		noResult = append(noResult, latest)
 	}
 	switch {
-	case noResult > 1:
-		return fmt.Sprintf("decide on the reruns of %s", name)
+	case len(noResult) > 1:
+		runs := "runs"
+		if !latestNoResult {
+			runs = "earlier runs"
+		}
+		return checkRunVerdict{ReadinessIncomplete, noResult[len(noResult)-1].URL,
+			fmt.Sprintf("%s: %d %s on this head ended with no result; only one rerun is allowed, so the engineer decides.", name, len(noResult), runs),
+			fmt.Sprintf("decide on the reruns of %s", name)}
 	case !completed:
-		return fmt.Sprintf("wait for %s", name)
+		return checkRunVerdict{ReadinessIncomplete, latest.URL, fmt.Sprintf("%s: %s.", name, latest.Status), fmt.Sprintf("wait for %s", name)}
+	case latestNoResult:
+		return checkRunVerdict{ReadinessIncomplete, latest.URL,
+			fmt.Sprintf("%s: %s; the job never started, so one rerun is allowed.", name, latest.Conclusion),
+			fmt.Sprintf("rerun %s: the job never started", name)}
+	case len(noResult) == 1:
+		return checkRunVerdict{outcome: ReadinessPass, sourceURL: latest.URL, message: fmt.Sprintf("%s: %s on a rerun; an earlier run ended %s with no result.", name, latest.Conclusion, noResult[0].Conclusion)}
 	default:
-		return fmt.Sprintf("rerun %s: the job never started", name)
+		return checkRunVerdict{outcome: ReadinessPass, sourceURL: latest.URL, message: fmt.Sprintf("%s: %s.", name, latest.Conclusion)}
 	}
 }
 
