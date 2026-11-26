@@ -110,6 +110,9 @@ func TestEvaluateReadiness(t *testing.T) {
 			e.CheckRuns = nil
 			e.Statuses = append(e.Statuses, CommitStatusEvidence{Context: "Go checks", State: "success"})
 		}, want: ReadinessIncomplete, wantMessage: "Go checks: missing on the head"},
+		{name: "an earlier run without a conclusion is not a reported failure", change: func(e *ReadinessEvidence) {
+			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed"}}, e.CheckRuns...)
+		}, want: ReadinessIncomplete, wantMessage: "Go checks: an earlier run on this head ended without a conclusion; GitHub does not show whether the runner or the code caused it, so the engineer decides."},
 		{name: "status missing", change: func(e *ReadinessEvidence) { e.Statuses = nil }, want: ReadinessIncomplete, wantMessage: "warden/gate: missing on the head"},
 		{name: "status pending", change: func(e *ReadinessEvidence) { e.Statuses[0].State = "pending" }, want: ReadinessIncomplete, wantMessage: "warden/gate: pending"},
 		{name: "status failed", change: func(e *ReadinessEvidence) { e.Statuses[0].State = "failure" }, want: ReadinessFail, wantMessage: "warden/gate: failure"},

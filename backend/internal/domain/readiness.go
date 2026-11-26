@@ -291,7 +291,7 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 		return
 	}
 	if !passingConclusion(latest.Conclusion) {
-		add(subject, ReadinessFail, latest.URL, "%s: %s.", required.Context, latest.Conclusion)("%s", checkAction(required.Context, latest, runs[:len(runs)-1]))
+		add(subject, ReadinessFail, latest.URL, "%s: %s.", required.Context, conclusionLabel(latest.Conclusion))("%s", checkAction(required.Context, latest, runs[:len(runs)-1]))
 		return
 	}
 	// docs/factory-verification.md: a run that reported a result stays a real result even
@@ -310,16 +310,16 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 				unknownCause = &earlier
 			}
 		default:
-			add(subject, ReadinessFail, earlier.URL, "%s: an earlier run on this head concluded %s; a passing rerun does not clear it.", required.Context, earlier.Conclusion)("fix %s (an earlier run on this head concluded %s)", required.Context, earlier.Conclusion)
+			add(subject, ReadinessFail, earlier.URL, "%s: an earlier run on this head concluded %s; a passing rerun does not clear it.", required.Context, earlier.Conclusion)("%s", checkAction(required.Context, latest, runs[:len(runs)-1]))
 			return
 		}
 	}
 	switch {
 	// A reason the engineer decides links the run they need to inspect.
 	case unknownCause != nil:
-		add(subject, ReadinessIncomplete, unknownCause.URL, "%s: an earlier run on this head ended %s; GitHub does not show whether the runner or the code caused it, so the engineer decides.", required.Context, unknownCause.Conclusion)("decide on the earlier %s run of %s", unknownCause.Conclusion, required.Context)
+		add(subject, ReadinessIncomplete, unknownCause.URL, "%s: an earlier run on this head ended %s; GitHub does not show whether the runner or the code caused it, so the engineer decides.", required.Context, endedLabel(unknownCause.Conclusion))("%s", checkAction(required.Context, latest, runs[:len(runs)-1]))
 	case len(noResult) > 1:
-		add(subject, ReadinessIncomplete, noResult[len(noResult)-1].URL, "%s: %d earlier runs on this head ended with no result; only one rerun is allowed, so the engineer decides.", required.Context, len(noResult))("decide on the reruns of %s", required.Context)
+		add(subject, ReadinessIncomplete, noResult[len(noResult)-1].URL, "%s: %d earlier runs on this head ended with no result; only one rerun is allowed, so the engineer decides.", required.Context, len(noResult))("%s", checkAction(required.Context, latest, runs[:len(runs)-1]))
 	case len(noResult) == 1:
 		add(subject, ReadinessPass, latest.URL, "%s: %s on a rerun; an earlier run ended %s with no result.", required.Context, latest.Conclusion, noResult[0].Conclusion)
 	default:
@@ -343,7 +343,7 @@ func checkAction(name string, latest CheckRunEvidence, earlier []CheckRunEvidenc
 		}
 	}
 	if completed && unknownCauseConclusion(latest.Conclusion) {
-		return fmt.Sprintf("decide on the latest %s run of %s", latest.Conclusion, name)
+		return fmt.Sprintf("decide on the latest run of %s (%s)", name, conclusionLabel(latest.Conclusion))
 	}
 	noResult := 0
 	for _, run := range earlier {
@@ -351,7 +351,7 @@ func checkAction(name string, latest CheckRunEvidence, earlier []CheckRunEvidenc
 			continue
 		}
 		if unknownCauseConclusion(run.Conclusion) {
-			return fmt.Sprintf("decide on the earlier %s run of %s", run.Conclusion, name)
+			return fmt.Sprintf("decide on the earlier run of %s (%s)", name, conclusionLabel(run.Conclusion))
 		}
 		if noResultConclusion(run.Conclusion) {
 			noResult++
@@ -365,8 +365,6 @@ func checkAction(name string, latest CheckRunEvidence, earlier []CheckRunEvidenc
 		return fmt.Sprintf("decide on the reruns of %s", name)
 	case !completed:
 		return fmt.Sprintf("wait for %s", name)
-	case latest.Conclusion == "":
-		return fmt.Sprintf("re-check %s: GitHub reported no conclusion", name)
 	default:
 		return fmt.Sprintf("rerun %s: the job never started", name)
 	}
@@ -376,6 +374,22 @@ func checkAction(name string, latest CheckRunEvidence, earlier []CheckRunEvidenc
 // missing conclusion is not one.
 func reportedResult(conclusion string) bool {
 	return conclusion != "" && !passingConclusion(conclusion) && !noResultConclusion(conclusion) && !unknownCauseConclusion(conclusion)
+}
+
+// endedLabel completes "a run ended ..." for a conclusion GitHub may not report.
+func endedLabel(conclusion string) string {
+	if conclusion == "" {
+		return "without a conclusion"
+	}
+	return conclusion
+}
+
+// conclusionLabel names a conclusion for display; GitHub may report none.
+func conclusionLabel(conclusion string) string {
+	if conclusion == "" {
+		return "no conclusion"
+	}
+	return conclusion
 }
 
 // noResultConclusion reports a run that provably produced no result: the job never
@@ -389,7 +403,7 @@ func noResultConclusion(conclusion string) bool {
 // timed out or stopped reporting, as well as the runner or the network.
 func unknownCauseConclusion(conclusion string) bool {
 	switch conclusion {
-	case "cancelled", "timed_out", "stale":
+	case "cancelled", "timed_out", "stale", "":
 		return true
 	}
 	return false
