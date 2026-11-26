@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { OpenPullRequestsSchema, openedHeadFor, rowNextAction, rowVerdict, type OpenPullRequest, type RowCheck } from './openPullRequests'
+import { OpenPullRequestsSchema, rowNextAction, rowVerdict, type OpenPullRequest, type RowCheck } from './openPullRequests'
 import type { Readiness } from './readiness'
 
 const head = 'a'.repeat(40)
@@ -38,14 +38,6 @@ describe('open pull request list', () => {
   it('marks a row stale when its pull request changed while it was being checked', () => {
     expect(rowVerdict(row, { state: 'changed' })).toBe('stale')
     expect(rowNextAction(row, { state: 'changed' })).toBe('changed while being checked: list again')
-  })
-
-  it('matches the opened pull request to its row by repository and number', () => {
-    const opened = { repository: 'ACME/App', number: 7, headSha: moved }
-    expect(openedHeadFor('acme/app', row, opened)).toBe(moved)
-    expect(openedHeadFor('acme/web', row, opened)).toBeUndefined()
-    expect(openedHeadFor('acme/app', { ...row, number: 8 }, opened)).toBeUndefined()
-    expect(openedHeadFor('acme/app', row, undefined)).toBeUndefined()
   })
 
   it('says what is still unknown for a row without a verdict', () => {

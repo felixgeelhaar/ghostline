@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { createApp, h, nextTick, ref } from 'vue'
+import { createApp, h, nextTick } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { listOpenPullRequests } from '../application/listOpenPullRequests'
 import { fetchReadiness } from '../application/fetchReadiness'
@@ -28,14 +28,13 @@ function deferred<T>() {
 
 let app: ReturnType<typeof createApp> | undefined
 let host: HTMLDivElement | undefined
-const opened = vi.fn()
-const openedPull = ref<{ repository: string; number: number; headSha: string }>()
+const opened = vi.fn<(target: { repository: string; row: OpenPullRequest }) => Promise<string | undefined>>()
 const settle = async () => { for (let i = 0; i < 4; i++) { await Promise.resolve(); await nextTick() } }
 
 async function mount() {
   host = document.createElement('div')
   document.body.append(host)
-  app = createApp({ render: () => h(OpenPullRequestsPanel, { openedPull: openedPull.value, onOpen: opened }) })
+  app = createApp({ render: () => h(OpenPullRequestsPanel, { openRow: opened }) })
   app.mount(host)
   await nextTick()
 }
@@ -53,7 +52,6 @@ const checkAll = () => host!.querySelector<HTMLButtonElement>('.open-pulls-check
 afterEach(() => {
   app?.unmount(); app = undefined
   host?.remove(); host = undefined
-  openedPull.value = undefined
   vi.mocked(listOpenPullRequests).mockReset()
   vi.mocked(fetchReadiness).mockReset()
   opened.mockReset()
@@ -144,32 +142,60 @@ describe('open pull request list', () => {
     expect(opened).toHaveBeenCalledWith({ repository: 'acme/app', row: row(1) })
   })
 
-  it('marks a row stale when opening it found a newer head', async () => {
+  it('marks a row stale when its own import found a newer head', async () => {
     vi.mocked(listOpenPullRequests).mockResolvedValue(list([row(1)]))
+    opened.mockResolvedValue(sha('9'))
     await mount()
     await listRepository('acme/app')
     host!.querySelector<HTMLButtonElement>('.open-pulls tbody button')!.click()
-    openedPull.value = { repository: 'acme/app', number: 1, headSha: sha('9') }
     await settle()
     expect(rows()[0]).toContain('STALE')
     expect(rows()[0]).toContain('head moved from 1111111 to 9999999: list again')
   })
 
-  it('does not compare a row with an import made before the list was read', async () => {
-    openedPull.value = { repository: 'acme/app', number: 1, headSha: sha('9') }
+  it('leaves a row as it was when its import fails', async () => {
     vi.mocked(listOpenPullRequests).mockResolvedValue(list([row(1)]))
+    opened.mockResolvedValue(undefined)
     await mount()
     await listRepository('acme/app')
+    host!.querySelector<HTMLButtonElement>('.open-pulls tbody button')!.click()
+    await settle()
     expect(rows()[0]).not.toContain('STALE')
     expect(rows()[0]).toContain('check readiness')
   })
 
-  it('stops comparing with an import once the repository is listed again', async () => {
+  it('keeps a row stale when another row is opened afterwards', async () => {
+    vi.mocked(listOpenPullRequests).mockResolvedValue(list([row(2), row(1)]))
+    opened.mockResolvedValueOnce(sha('9')).mockResolvedValueOnce(undefined)
+    await mount()
+    await listRepository('acme/app')
+    host!.querySelectorAll<HTMLButtonElement>('.open-pulls tbody button')[1].click()
+    await settle()
+    host!.querySelectorAll<HTMLButtonElement>('.open-pulls tbody button')[0].click()
+    await settle()
+    expect(rows()[1]).toContain('STALE')
+    expect(rows()[0]).not.toContain('STALE')
+  })
+
+  it('ignores an import that settles after the repository was listed again', async () => {
+    const pending = deferred<string | undefined>()
     vi.mocked(listOpenPullRequests).mockResolvedValue(list([row(1)]))
+    opened.mockReturnValueOnce(pending.promise)
     await mount()
     await listRepository('acme/app')
     host!.querySelector<HTMLButtonElement>('.open-pulls tbody button')!.click()
-    openedPull.value = { repository: 'acme/app', number: 1, headSha: sha('9') }
+    await listRepository('acme/app')
+    pending.resolve(sha('9'))
+    await settle()
+    expect(rows()[0]).not.toContain('STALE')
+  })
+
+  it('forgets opened heads when the repository is listed again', async () => {
+    vi.mocked(listOpenPullRequests).mockResolvedValue(list([row(1)]))
+    opened.mockResolvedValue(sha('9'))
+    await mount()
+    await listRepository('acme/app')
+    host!.querySelector<HTMLButtonElement>('.open-pulls tbody button')!.click()
     await settle()
     expect(rows()[0]).toContain('STALE')
     vi.mocked(listOpenPullRequests).mockResolvedValue(list([row(1, sha('9'))]))

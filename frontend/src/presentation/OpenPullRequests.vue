@@ -2,12 +2,13 @@
 import { computed, ref } from 'vue'
 import { listOpenPullRequests } from '../application/listOpenPullRequests'
 import { sweepReadiness } from '../application/readinessSweep'
-import { openedHeadFor, rowNextAction, rowVerdict, type OpenedPullRequest, type OpenPullRequest, type OpenPullRequests, type RowCheck, type RowVerdict } from '../domain/openPullRequests'
+import { rowNextAction, rowVerdict, type OpenPullRequest, type OpenPullRequests, type RowCheck, type RowVerdict } from '../domain/openPullRequests'
 
-// openedPull is the pull request the detail view imported, with the head it found.
-const props = defineProps<{ openedPull?: OpenedPullRequest }>()
+// openRow opens a row's pull request in the detail view and resolves to the head that
+// import found, or to nothing when it failed or was replaced.
+const props = defineProps<{ openRow?: (target: { repository: string; row: OpenPullRequest }) => Promise<string | undefined> }>()
 // request-failed passes each failure up, so the app can notice a lost sign-in.
-const emit = defineEmits<{ open: [{ repository: string; row: OpenPullRequest }]; 'request-failed': [unknown] }>()
+const emit = defineEmits<{ 'request-failed': [unknown] }>()
 
 const repository = ref('')
 const listing = ref(false)
@@ -15,9 +16,8 @@ const error = ref('')
 const result = ref<OpenPullRequests>()
 const checks = ref<Record<number, RowCheck>>({})
 const checking = ref(false)
-// Rows opened from this list. Only their imports describe a head read after the list,
-// so only they can show that a listed head moved.
-const openedRows = ref<Set<number>>(new Set())
+// The head each row's own import found after this list was read, by row number.
+const openedHeads = ref<Record<number, string>>({})
 // Each list gets a generation; a request settling for an earlier list is dropped.
 let generation = 0
 
@@ -41,13 +41,14 @@ const summary = computed(() => {
 })
 
 function checkFor(row: OpenPullRequest): RowCheck { return checks.value[row.number] ?? { state: 'unchecked' } }
-function openedHead(row: OpenPullRequest) {
-  return result.value && openedRows.value.has(row.number) ? openedHeadFor(result.value.repository, row, props.openedPull) : undefined
-}
-function open(row: OpenPullRequest) {
-  if (!result.value) return
-  openedRows.value = new Set(openedRows.value).add(row.number)
-  emit('open', { repository: result.value.repository, row })
+function openedHead(row: OpenPullRequest) { return openedHeads.value[row.number] }
+async function open(row: OpenPullRequest) {
+  const list = result.value
+  if (!list || !props.openRow) return
+  const request = generation
+  const head = await props.openRow({ repository: list.repository, row })
+  if (request !== generation || !head) return
+  openedHeads.value = { ...openedHeads.value, [row.number]: head }
 }
 function verdictOf(row: OpenPullRequest) { return rowVerdict(row, checkFor(row), openedHead(row)) }
 function nextActionOf(row: OpenPullRequest) { return rowNextAction(row, checkFor(row), openedHead(row)) }
@@ -59,7 +60,7 @@ async function list() {
   error.value = ''
   result.value = undefined
   checks.value = {}
-  openedRows.value = new Set()
+  openedHeads.value = {}
   try {
     const listed = await listOpenPullRequests(repository.value)
     if (request === generation) result.value = listed

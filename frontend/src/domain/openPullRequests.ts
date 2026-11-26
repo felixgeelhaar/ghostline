@@ -58,11 +58,3 @@ export function rowNextAction(row: OpenPullRequest, check: RowCheck, openedHeadS
     case 'changed': return 'changed while being checked: list again'
   }
 }
-
-export interface OpenedPullRequest { repository: string; number: number; headSha: string }
-
-// The head the detail view found for this row's pull request, if that is the one opened.
-export function openedHeadFor(listRepository: string, row: OpenPullRequest, opened?: OpenedPullRequest): string | undefined {
-  if (!opened || opened.number !== row.number || opened.repository.toLowerCase() !== listRepository.toLowerCase()) return undefined
-  return opened.headSha
-}
