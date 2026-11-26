@@ -25,7 +25,7 @@ import DeepTrace from './DeepTrace.vue'
 import StructuredQodoReview from './StructuredQodoReview.vue'
 import ReadinessPanel from './ReadinessPanel.vue'
 import OpenPullRequestsPanel from './OpenPullRequests.vue'
-import type { OpenPullRequest } from '../domain/openPullRequests'
+import type { OpenedPullRequest, OpenPullRequest } from '../domain/openPullRequests'
 import ImportCombobox from './ImportCombobox.vue'
 import { useGhostlineSession } from './useGhostlineSession'
 import { releaseLabel } from '../domain/release'
@@ -202,16 +202,21 @@ async function checkReadiness() {
   }
 }
 
-// The imported pull request and the head it found, so a listed row can tell whether
-// its head moved since the list was read.
-const openedPull = computed(() => pr.value && pr.value.checks.revisionSha
-  ? { repository: pr.value.repository, number: pr.value.number, headSha: pr.value.checks.revisionSha }
-  : undefined)
+// The head a successful import found for a pull request opened from the list. Only
+// such an import shows that a listed head moved; a failed one, or one started from the
+// import field, says nothing about the list.
+const listedImport = ref<OpenedPullRequest>()
+let listedOpenRequest = 0
 
 // Opens a listed pull request from the clicked row, never from the editable fields.
 async function openListedPull({ repository, row }: { repository: string; row: OpenPullRequest }) {
+  const request = ++listedOpenRequest
+  listedImport.value = undefined
   url.value = `${repository}#${row.number}`
   await loadPR(row.url)
+  const imported = pr.value
+  if (request !== listedOpenRequest || error.value || showingPreviousSnapshot.value || imported?.url !== row.url || !imported.checks.revisionSha) return
+  listedImport.value = { repository: imported.repository, number: imported.number, headSha: imported.checks.revisionSha }
 }
 
 // Searching needs a signed-in GitHub account; the server searches with its token.
@@ -508,7 +513,7 @@ function optionalDate(value?: string) { return value ? date(value) : 'not report
     <p v-if="sessionError && ghostlineSession.authenticated" class="session-error" role="alert">{{ sessionError }}</p>
     <section class="hero"><p class="eyebrow">CHANGE INTELLIGENCE / 001</p><h1>See the work.<br><em>Trace the decisions.</em></h1><p class="lede">Import a pull request to inspect its revision history. Commit timestamps show when commits were authored, not when they were pushed.</p></section>
     <section class="import-panel"><ImportCombobox v-model="url" :loading="loading" :can-search="canSearchPullRequests" @import="loadPR" @search-failed="handleUnauthorized" /><p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="showingPreviousSnapshot && pr" class="checks-note warn" role="status">GitHub refresh failed. Showing the last imported snapshot for {{ pr.owner }}/{{ pr.repo }}#{{ pr.number }}.</p></section>
-    <OpenPullRequestsPanel :opened-pull="openedPull" @open="openListedPull" @request-failed="handleUnauthorized" />
+    <OpenPullRequestsPanel :opened-pull="listedImport" @open="openListedPull" @request-failed="handleUnauthorized" />
     <section v-if="pr" class="change-card">
       <div class="change-heading"><div><span class="eyebrow">{{ pr.repository }} / PULL REQUEST #{{ pr.number }}</span><h2>{{ pr.title }}</h2></div><span class="state" :class="prStatus">{{ prStatus }}</span></div>
       <div class="meta"><span>{{ pr.commits.length }} COMMITS</span><span>OPENED {{ date(pr.createdAt) }}</span><a :href="pr.url" target="_blank" rel="noreferrer">VIEW ON GITHUB ↗</a></div>

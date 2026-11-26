@@ -48,4 +48,29 @@ describe('opening a listed pull request', () => {
     await vi.waitFor(() => expect(host!.querySelector('.open-pulls tbody tr')?.textContent).toContain('STALE'))
     expect(host.querySelector('.open-pulls tbody tr')?.textContent).toContain('head moved from aaaaaaa to ddddddd: list again')
   })
+
+  it('does not mark a row stale from an older import when opening it fails', async () => {
+    vi.mocked(listOpenPullRequests).mockResolvedValue({ repository: 'acme/app', complete: true, limit: 30, items: [{ number: 7, title: 'Change 7', draft: false, author: 'octo', headSha: listed, headShortSha: 'aaaaaaa', url: 'https://github.com/acme/app/pull/7' }] })
+    vi.mocked(importPullRequest).mockResolvedValueOnce(pull(moved)).mockRejectedValueOnce(new Error('GitHub is having trouble right now. Try again shortly.'))
+    host = document.createElement('div')
+    document.body.append(host)
+    app = createApp(App)
+    app.mount(host)
+    await vi.waitFor(() => expect(host!.querySelector('#pr-url')).not.toBeNull())
+    const field = host.querySelector<HTMLInputElement>('#pr-url')!
+    field.value = 'https://github.com/acme/app/pull/7'
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLButtonElement>('.import-panel button')!.click()
+    await vi.waitFor(() => expect(host!.querySelector('.change-card h2')?.textContent).toBe('Change 7'))
+    const input = host.querySelector<HTMLInputElement>('#open-pulls-repository')!
+    input.value = 'acme/app'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    host.querySelector<HTMLFormElement>('.open-pulls form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await vi.waitFor(() => expect(host!.querySelector('.open-pulls tbody button')).not.toBeNull())
+    host.querySelector<HTMLButtonElement>('.open-pulls tbody button')!.click()
+    await vi.waitFor(() => expect(host!.querySelector('.import-panel .error')?.textContent).toContain('GitHub is having trouble'))
+    expect(host.querySelector('.open-pulls tbody tr')?.textContent).not.toContain('STALE')
+  })
 })
