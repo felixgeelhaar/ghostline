@@ -148,10 +148,33 @@ describe('open pull request list', () => {
     vi.mocked(listOpenPullRequests).mockResolvedValue(list([row(1)]))
     await mount()
     await listRepository('acme/app')
+    host!.querySelector<HTMLButtonElement>('.open-pulls tbody button')!.click()
     openedPull.value = { repository: 'acme/app', number: 1, headSha: sha('9') }
     await settle()
     expect(rows()[0]).toContain('STALE')
     expect(rows()[0]).toContain('head moved from 1111111 to 9999999: list again')
+  })
+
+  it('does not compare a row with an import made before the list was read', async () => {
+    openedPull.value = { repository: 'acme/app', number: 1, headSha: sha('9') }
+    vi.mocked(listOpenPullRequests).mockResolvedValue(list([row(1)]))
+    await mount()
+    await listRepository('acme/app')
+    expect(rows()[0]).not.toContain('STALE')
+    expect(rows()[0]).toContain('check readiness')
+  })
+
+  it('stops comparing with an import once the repository is listed again', async () => {
+    vi.mocked(listOpenPullRequests).mockResolvedValue(list([row(1)]))
+    await mount()
+    await listRepository('acme/app')
+    host!.querySelector<HTMLButtonElement>('.open-pulls tbody button')!.click()
+    openedPull.value = { repository: 'acme/app', number: 1, headSha: sha('9') }
+    await settle()
+    expect(rows()[0]).toContain('STALE')
+    vi.mocked(listOpenPullRequests).mockResolvedValue(list([row(1, sha('9'))]))
+    await listRepository('acme/app')
+    expect(rows()[0]).not.toContain('STALE')
   })
 
   it('shows the server error instead of a list', async () => {

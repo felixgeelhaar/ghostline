@@ -15,6 +15,9 @@ const error = ref('')
 const result = ref<OpenPullRequests>()
 const checks = ref<Record<number, RowCheck>>({})
 const checking = ref(false)
+// Rows opened from this list. Only their imports describe a head read after the list,
+// so only they can show that a listed head moved.
+const openedRows = ref<Set<number>>(new Set())
 // Each list gets a generation; a request settling for an earlier list is dropped.
 let generation = 0
 
@@ -38,7 +41,14 @@ const summary = computed(() => {
 })
 
 function checkFor(row: OpenPullRequest): RowCheck { return checks.value[row.number] ?? { state: 'unchecked' } }
-function openedHead(row: OpenPullRequest) { return result.value ? openedHeadFor(result.value.repository, row, props.openedPull) : undefined }
+function openedHead(row: OpenPullRequest) {
+  return result.value && openedRows.value.has(row.number) ? openedHeadFor(result.value.repository, row, props.openedPull) : undefined
+}
+function open(row: OpenPullRequest) {
+  if (!result.value) return
+  openedRows.value = new Set(openedRows.value).add(row.number)
+  emit('open', { repository: result.value.repository, row })
+}
 function verdictOf(row: OpenPullRequest) { return rowVerdict(row, checkFor(row), openedHead(row)) }
 function nextActionOf(row: OpenPullRequest) { return rowNextAction(row, checkFor(row), openedHead(row)) }
 
@@ -49,6 +59,7 @@ async function list() {
   error.value = ''
   result.value = undefined
   checks.value = {}
+  openedRows.value = new Set()
   try {
     const listed = await listOpenPullRequests(repository.value)
     if (request === generation) result.value = listed
@@ -103,7 +114,7 @@ async function checkAll() {
             <td><code>{{ row.headShortSha }}</code></td>
             <td><span class="check-state" :class="tones[verdictOf(row)]">{{ labels[verdictOf(row)] }}</span></td>
             <td class="open-pulls-action">{{ nextActionOf(row) }}</td>
-            <td><button type="button" :aria-label="`Open ${result.repository}#${row.number}: ${row.title}`" @click="emit('open', { repository: result.repository, row })">OPEN</button></td>
+            <td><button type="button" :aria-label="`Open ${result.repository}#${row.number}: ${row.title}`" @click="open(row)">OPEN</button></td>
           </tr>
         </tbody>
       </table>
