@@ -25,7 +25,7 @@ This note was added when the document was first committed. The intent below is u
   - Stage A: PR import, commit timeline, revision focus.
   - Stage B: source-linked Qodo comments with revision coverage.
   - Parts of Stage C: recurring findings and **Deep Trace** (`frontend/src/presentation/DeepTrace.vue`).
-  - Revision-bound GitHub checks and annotations, and a trust-checked **Nox** report (see the README and [threat model](threat-model.md)).
+  - Revision-bound GitHub checks and annotations, and a trust-checked **Nox** report (see [repository checks](repository-checks.md) and the [threat model](threat-model.md)).
   - The working palette below is the UI's palette.
 - **Netrunner:** GitHub and Qodo translation both exist now (the §10 plan said to add Qodo later), but not yet as a separate package. Tool translation currently lives in edge files under `backend/`: `github.go`, `reviews.go` and `qodo_mcp.go` (Qodo), and `nox_report.go`. The domain rules sit in `backend/internal/domain`. Extracting these adapters into a Netrunner package is the obvious step once a fourth source arrives.
 - **Not started:** Netspace, Override, Forensics as a named view, SQLite persistence, and the review-and-repair supervision loop.
