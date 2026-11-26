@@ -287,19 +287,11 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 
 	latest := runs[len(runs)-1]
 	if latest.Status != "completed" {
-		setAction := add(subject, ReadinessIncomplete, latest.URL, "%s: %s.", required.Context, latest.Status)
-		// A rerun cannot clear a result an earlier run reported, so waiting for it would not help.
-		for _, earlier := range runs[:len(runs)-1] {
-			if earlier.Status == "completed" && reportedResult(earlier.Conclusion) {
-				setAction("fix %s (an earlier run on this head concluded %s)", required.Context, earlier.Conclusion)
-				return
-			}
-		}
-		setAction("wait for %s", required.Context)
+		add(subject, ReadinessIncomplete, latest.URL, "%s: %s.", required.Context, latest.Status)("%s", checkAction(required.Context, latest, runs[:len(runs)-1]))
 		return
 	}
 	if !passingConclusion(latest.Conclusion) {
-		add(subject, ReadinessFail, latest.URL, "%s: %s.", required.Context, latest.Conclusion)("%s", failedCheckAction(required.Context, latest, runs[:len(runs)-1]))
+		add(subject, ReadinessFail, latest.URL, "%s: %s.", required.Context, latest.Conclusion)("%s", checkAction(required.Context, latest, runs[:len(runs)-1]))
 		return
 	}
 	// docs/factory-verification.md: a run that reported a result stays a real result even
@@ -335,15 +327,14 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 	}
 }
 
-// failedCheckAction says what would move a check whose latest run did not pass. A
-// reported result needs a fix, and an earlier reported result is not cleared by a later
-// run. A run whose cause GitHub does not record needs the engineer. A job that never
-// started may be rerun once (docs/factory-verification.md).
-func failedCheckAction(name string, latest CheckRunEvidence, earlier []CheckRunEvidence) string {
-	if latest.Conclusion == "" {
-		return fmt.Sprintf("re-check %s: GitHub reported no conclusion", name)
-	}
-	if reportedResult(latest.Conclusion) {
+// checkAction says what would move a required check whose latest run is unfinished or
+// did not pass, in the order docs/factory-verification.md sets: a reported result needs
+// a fix, and a later run does not clear it; a run whose cause GitHub does not record
+// needs the engineer, as do reruns beyond the one allowed; otherwise wait for the
+// running job, re-check a run with no conclusion, or rerun a job that never started.
+func checkAction(name string, latest CheckRunEvidence, earlier []CheckRunEvidence) string {
+	completed := latest.Status == "completed"
+	if completed && reportedResult(latest.Conclusion) {
 		return fmt.Sprintf("fix %s (%s)", name, latest.Conclusion)
 	}
 	for _, run := range earlier {
@@ -351,20 +342,34 @@ func failedCheckAction(name string, latest CheckRunEvidence, earlier []CheckRunE
 			return fmt.Sprintf("fix %s (an earlier run on this head concluded %s)", name, run.Conclusion)
 		}
 	}
-	if unknownCauseConclusion(latest.Conclusion) {
+	if completed && unknownCauseConclusion(latest.Conclusion) {
 		return fmt.Sprintf("decide on the latest %s run of %s", latest.Conclusion, name)
 	}
+	noResult := 0
 	for _, run := range earlier {
-		if run.Status == "completed" && unknownCauseConclusion(run.Conclusion) {
+		if run.Status != "completed" {
+			continue
+		}
+		if unknownCauseConclusion(run.Conclusion) {
 			return fmt.Sprintf("decide on the earlier %s run of %s", run.Conclusion, name)
 		}
-	}
-	for _, run := range earlier {
-		if run.Status == "completed" && noResultConclusion(run.Conclusion) {
-			return fmt.Sprintf("decide on the reruns of %s", name)
+		if noResultConclusion(run.Conclusion) {
+			noResult++
 		}
 	}
-	return fmt.Sprintf("rerun %s: the job never started", name)
+	if completed && noResultConclusion(latest.Conclusion) {
+		noResult++
+	}
+	switch {
+	case noResult > 1:
+		return fmt.Sprintf("decide on the reruns of %s", name)
+	case !completed:
+		return fmt.Sprintf("wait for %s", name)
+	case latest.Conclusion == "":
+		return fmt.Sprintf("re-check %s: GitHub reported no conclusion", name)
+	default:
+		return fmt.Sprintf("rerun %s: the job never started", name)
+	}
 }
 
 // reportedResult reports a run that ended with a result the checked code produced. A
