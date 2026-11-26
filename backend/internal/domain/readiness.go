@@ -340,6 +340,9 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 // run. A run whose cause GitHub does not record needs the engineer. A job that never
 // started may be rerun once (docs/factory-verification.md).
 func failedCheckAction(name string, latest CheckRunEvidence, earlier []CheckRunEvidence) string {
+	if latest.Conclusion == "" {
+		return fmt.Sprintf("re-check %s: GitHub reported no conclusion", name)
+	}
 	if reportedResult(latest.Conclusion) {
 		return fmt.Sprintf("fix %s (%s)", name, latest.Conclusion)
 	}
@@ -364,9 +367,10 @@ func failedCheckAction(name string, latest CheckRunEvidence, earlier []CheckRunE
 	return fmt.Sprintf("rerun %s: the job never started", name)
 }
 
-// reportedResult reports a run that ended with a result the checked code produced.
+// reportedResult reports a run that ended with a result the checked code produced. A
+// missing conclusion is not one.
 func reportedResult(conclusion string) bool {
-	return !passingConclusion(conclusion) && !noResultConclusion(conclusion) && !unknownCauseConclusion(conclusion)
+	return conclusion != "" && !passingConclusion(conclusion) && !noResultConclusion(conclusion) && !unknownCauseConclusion(conclusion)
 }
 
 // noResultConclusion reports a run that provably produced no result: the job never

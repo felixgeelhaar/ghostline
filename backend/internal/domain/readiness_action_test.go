@@ -66,6 +66,7 @@ func TestEvaluateReadinessNamesTheNextAction(t *testing.T) {
 			e.CheckRuns = append(e.CheckRuns, CheckRunEvidence{ID: 90, Name: "Go checks", AppID: actionsID, Status: "in_progress"})
 			e.CheckRuns[0].Conclusion = "failure"
 		}, want: "fix Go checks (an earlier run on this head concluded failure)"},
+		{name: "a completed run without a conclusion", change: func(e *ReadinessEvidence) { e.CheckRuns[0].Conclusion = "" }, want: "re-check Go checks: GitHub reported no conclusion"},
 		{name: "status pending", change: func(e *ReadinessEvidence) { e.Statuses[0].State = "pending" }, want: "wait for warden/gate"},
 		{name: "status failed", change: func(e *ReadinessEvidence) { e.Statuses[0].State = "error" }, want: "fix warden/gate (error)"},
 		{name: "a failure outranks an earlier gap", change: func(e *ReadinessEvidence) { e.BehindBy = 2; e.Review.High = 1 }, want: "fix 1 High or Medium Qodo finding"},

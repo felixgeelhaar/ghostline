@@ -39,11 +39,13 @@ describe('fetchReadiness', () => {
 })
 
 describe('when checking several pull requests stops', () => {
-  it('stops at the request limit or a lost sign-in, and goes on after any other failure', async () => {
+  it('stops at a request limit, a lost sign-in or an unusable server token, and goes on after any other failure', async () => {
     const { endsReadinessSweep } = await import('./fetchReadiness')
     const { GhostlineApiError } = await import('./apiError')
     expect(endsReadinessSweep(new GhostlineApiError(429, 'Too many requests.'))).toBe(true)
     expect(endsReadinessSweep(new GhostlineApiError(401, 'Sign in again.'))).toBe(true)
+    // The server's GitHub token is rejected or rate-limited for every row alike.
+    expect(endsReadinessSweep(new GhostlineApiError(503, 'The server’s GitHub token has reached its rate limit.'))).toBe(true)
     expect(endsReadinessSweep(new GhostlineApiError(409, 'This pull request changed.'))).toBe(false)
     expect(endsReadinessSweep(new Error('network'))).toBe(false)
   })
