@@ -1,4 +1,4 @@
-import { ghostlineApiError, readResponsePayload } from './apiError'
+import { GhostlineApiError, ghostlineApiError, readResponsePayload } from './apiError'
 import { ReadinessSchema } from '../domain/readiness'
 
 // The URL, repository and number come from the imported pull request, never from the
@@ -17,4 +17,11 @@ export async function fetchReadiness(url: string, repository: string, number: nu
     throw new Error('Ghostline returned a readiness verdict for a different pull request.')
   }
   return parsed.data
+}
+
+// When checking several pull requests in turn, a request limit (429), a lost sign-in
+// (401) or an unusable server GitHub token (503) would fail every remaining check too,
+// so the sweep stops; any other failure belongs to one pull request and the sweep goes on.
+export function endsReadinessSweep(error: unknown): boolean {
+  return error instanceof GhostlineApiError && [401, 429, 503].includes(error.status)
 }

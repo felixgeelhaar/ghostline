@@ -24,6 +24,8 @@ import ReviewCard from './ReviewCard.vue'
 import DeepTrace from './DeepTrace.vue'
 import StructuredQodoReview from './StructuredQodoReview.vue'
 import ReadinessPanel from './ReadinessPanel.vue'
+import OpenPullRequestsPanel from './OpenPullRequests.vue'
+import { importedHeadFor, type OpenPullRequest } from '../domain/openPullRequests'
 import ImportCombobox from './ImportCombobox.vue'
 import { useGhostlineSession } from './useGhostlineSession'
 import { releaseLabel } from '../domain/release'
@@ -200,12 +202,23 @@ async function checkReadiness() {
   }
 }
 
+// Opens a listed pull request from the clicked row, never from the editable fields, and
+// resolves to the head its own import found, so the row can tell whether its listed
+// head moved. A failed or replaced import resolves to nothing.
+async function openListedPull({ repository, row }: { repository: string; row: OpenPullRequest }): Promise<string | undefined> {
+  url.value = `${repository}#${row.number}`
+  return importedHeadFor(row, await loadPR(row.url))
+}
+
 // Searching needs a signed-in GitHub account; the server searches with its token.
 const canSearchPullRequests = computed(() => ghostlineSession.value?.authRequired === true && ghostlineSession.value.authenticated)
 
 // target is a picked suggestion's URL or the field's text when the user submits it.
-async function loadPR(target: string) {
+// Resolves to the pull request this import applied, or undefined when it failed or a
+// later import replaced it.
+async function loadPR(target: string): Promise<PullRequest | undefined> {
   const request = ++importRequest
+  let applied: PullRequest | undefined
   const input = classifyImportInput(target)
   const requestedURL = input.kind === 'pull-request' ? input.url : target
   error.value = input.kind === 'search' && canSearchPullRequests.value
@@ -291,6 +304,7 @@ async function loadPR(target: string) {
         noxError.value = 'GitHub did not provide a pull request revision, so Ghostline cannot load its security report.'
       }
       showingPreviousSnapshot.value = false
+      applied = importedPR
     }
   } catch (e) {
     handleUnauthorized(e)
@@ -309,6 +323,7 @@ async function loadPR(target: string) {
   } finally {
     if (request === importRequest) loading.value = false
   }
+  return applied
 }
 // Annotation state is reset when an import starts and again when its result is
 // applied: a refresh can return new check runs, and a request made against the
@@ -494,6 +509,7 @@ function optionalDate(value?: string) { return value ? date(value) : 'not report
     <p v-if="sessionError && ghostlineSession.authenticated" class="session-error" role="alert">{{ sessionError }}</p>
     <section class="hero"><p class="eyebrow">CHANGE INTELLIGENCE / 001</p><h1>See the work.<br><em>Trace the decisions.</em></h1><p class="lede">Import a pull request to inspect its revision history. Commit timestamps show when commits were authored, not when they were pushed.</p></section>
     <section class="import-panel"><ImportCombobox v-model="url" :loading="loading" :can-search="canSearchPullRequests" @import="loadPR" @search-failed="handleUnauthorized" /><p v-if="error" class="error" role="alert">{{ error }}</p><p v-if="showingPreviousSnapshot && pr" class="checks-note warn" role="status">GitHub refresh failed. Showing the last imported snapshot for {{ pr.owner }}/{{ pr.repo }}#{{ pr.number }}.</p></section>
+    <OpenPullRequestsPanel :open-row="openListedPull" @request-failed="handleUnauthorized" />
     <section v-if="pr" class="change-card">
       <div class="change-heading"><div><span class="eyebrow">{{ pr.repository }} / PULL REQUEST #{{ pr.number }}</span><h2>{{ pr.title }}</h2></div><span class="state" :class="prStatus">{{ prStatus }}</span></div>
       <div class="meta"><span>{{ pr.commits.length }} COMMITS</span><span>OPENED {{ date(pr.createdAt) }}</span><a :href="pr.url" target="_blank" rel="noreferrer">VIEW ON GITHUB ↗</a></div>

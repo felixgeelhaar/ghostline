@@ -123,36 +123,53 @@ while IFS= read -r requirement; do
   ctx="$(jq -r '.context' <<<"$requirement")"
   app_id="$(jq -r '.app_id // ""' <<<"$requirement")"
   matching="$(jq --arg c "$ctx" --arg app "$app_id" '[.[] | select(.name == $c and ($app == "" or ((.app.id // "") | tostring) == $app))] | sort_by(.id // 0, .started_at // "")' <<<"$runs")"
-  result="$(jq -r 'last | if . == null then "" elif .status != "completed" then .status else .conclusion end' <<<"$matching")"
-  # docs/factory-verification.md: a run that reported a result stays real even if a rerun on the
-  # same head passed. Only a run that ended with no result (runner or network) may be rerun, once.
-  # GitHub records that cause only for a job that never started (startup_failure); a cancelled,
-  # timed-out or stale run may have been a hang in the code, so the engineer decides.
-  earlier="$(jq '.[:-1] | map(select(.status == "completed" and ((.conclusion // "") | IN("success","skipped","neutral") | not)) | .conclusion)' <<<"$matching")"
-  earlier_failure="$(jq -r 'map(select(IN("cancelled","timed_out","startup_failure","stale") | not)) | first // ""' <<<"$earlier")"
-  unknown_cause="$(jq -r 'map(select(IN("cancelled","timed_out","stale"))) | first // ""' <<<"$earlier")"
-  no_result="$(jq -r 'map(select(. == "startup_failure")) | "\(length) \(first // "")"' <<<"$earlier")"
-  # A commit status carries no app, so it can only satisfy a requirement that names none.
-  [[ -n "$result" || -n "$app_id" ]] || result="$(jq -r --arg c "$ctx" '[.[] | select(.context == $c)] | sort_by(.updated_at // "") | last | .state // ""' <<<"$statuses")"
-  case "$result" in
-    success|skipped|neutral)
-      if [[ -n "$earlier_failure" ]]; then
-        echo "check $ctx: $result"
-        failed+=("$ctx: an earlier run on this head concluded $earlier_failure; a passing rerun does not clear it")
-      elif [[ -n "$unknown_cause" ]]; then
-        echo "check $ctx: $result"
-        incomplete+=("$ctx: an earlier run on this head ended $unknown_cause; GitHub does not show whether the runner or the code caused it, so the engineer decides")
-      elif [[ "${no_result%% *}" == 1 ]]; then
-        echo "check $ctx: $result on a rerun; an earlier run ended ${no_result#* } with no result"
-      elif [[ "${no_result%% *}" != 0 ]]; then
-        echo "check $ctx: $result"
-        incomplete+=("$ctx: ${no_result%% *} earlier runs on this head ended with no result; only one rerun is allowed, so the engineer decides")
-      else
-        echo "check $ctx: $result"
-      fi ;;
-    "") echo "check $ctx: missing on head"; incomplete+=("$ctx: missing on head") ;;
-    queued|in_progress|pending|waiting|requested) echo "check $ctx: $result"; incomplete+=("$ctx: $result") ;;
-    *) echo "check $ctx: $result"; failed+=("$ctx: $result") ;;
+  # docs/factory-verification.md, in the order classifyCheckRuns uses in
+  # backend/internal/domain/readiness.go: a run that reported a result stays real even
+  # if a later run passed or is still running. A run whose cause GitHub does not record
+  # (cancelled, timed out, stale, or no conclusion) may have been a hang in the code, so
+  # the engineer decides. Only a job that never started (startup_failure) may be rerun, once.
+  verdict="$(jq -c --arg c "$ctx" '
+    def passing: IN("success","skipped","neutral");
+    def unknown_cause: IN("cancelled","timed_out","stale","");
+    def no_result: . == "startup_failure";
+    def reported: (passing or unknown_cause or no_result) | not;
+    def ended: if . == "" then "without a conclusion" else . end;
+    if length == 0 then {kind: "none"} else
+    last as $latest | (.[:-1] | map(select(.status == "completed") | (.conclusion // ""))) as $earlier
+    | ($latest.status == "completed") as $done | ($latest.conclusion // "") as $lc
+    | ([$earlier[] | select(no_result)] | length) + (if $done and ($lc | no_result) then 1 else 0 end) as $no_result
+    | (if $done then (if $lc == "" then "no conclusion" else $lc end) else $latest.status end) as $shown
+    | if $done and ($lc | reported) then {kind: "fail", shown: $shown, reason: "\($c): \($lc)"}
+      elif ([$earlier[] | select(reported)] | first) != null then
+        {kind: "fail", shown: $shown, reason: "\($c): an earlier run on this head concluded \([$earlier[] | select(reported)] | first); a later run does not clear it"}
+      elif $done and ($lc | unknown_cause) then
+        {kind: "incomplete", shown: $shown, reason: "\($c): the latest run on this head ended \($lc | ended); GitHub does not show whether the runner or the code caused it, so the engineer decides"}
+      elif ([$earlier[] | select(unknown_cause)] | first) != null then
+        {kind: "incomplete", shown: $shown, reason: "\($c): an earlier run on this head ended \([$earlier[] | select(unknown_cause)] | first | ended); GitHub does not show whether the runner or the code caused it, so the engineer decides"}
+      elif $no_result > 1 then
+        {kind: "incomplete", shown: $shown, reason: "\($c): \($no_result) \(if $done and ($lc | no_result) then "runs" else "earlier runs" end) on this head ended with no result; only one rerun is allowed, so the engineer decides"}
+      elif ($done | not) then {kind: "incomplete", shown: $shown, reason: "\($c): \($latest.status)"}
+      elif ($lc | no_result) then {kind: "incomplete", shown: $shown, reason: "\($c): \($lc); the job never started, so one rerun is allowed"}
+      elif $no_result == 1 then {kind: "pass", shown: "\($lc) on a rerun; an earlier run ended startup_failure with no result"}
+      else {kind: "pass", shown: $lc} end
+    end' <<<"$matching")"
+  kind="$(jq -r '.kind' <<<"$verdict")"
+  if [[ "$kind" == "none" ]]; then
+    # A commit status carries no app, so it can only satisfy a requirement that names none.
+    state=""
+    [[ -n "$app_id" ]] || state="$(jq -r --arg c "$ctx" '[.[] | select(.context == $c)] | sort_by(.updated_at // "") | last | .state // ""' <<<"$statuses")"
+    case "$state" in
+      success) echo "check $ctx: $state" ;;
+      "") echo "check $ctx: missing on head"; incomplete+=("$ctx: missing on head") ;;
+      pending) echo "check $ctx: $state"; incomplete+=("$ctx: $state") ;;
+      *) echo "check $ctx: $state"; failed+=("$ctx: $state") ;;
+    esac
+    continue
+  fi
+  echo "check $ctx: $(jq -r '.shown' <<<"$verdict")"
+  case "$kind" in
+    fail) failed+=("$(jq -r '.reason' <<<"$verdict")") ;;
+    incomplete) incomplete+=("$(jq -r '.reason' <<<"$verdict")") ;;
   esac
 done <<<"$required"
 

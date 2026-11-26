@@ -26,6 +26,7 @@ function subjectLabel(subject: string) {
     <p v-else-if="error" class="checks-note warn" role="status"><strong>Readiness unavailable.</strong> {{ error }}</p>
     <template v-else-if="readiness">
       <p class="readiness-verdict" :class="readiness.verdict" role="status"><span aria-hidden="true">{{ glyph[readiness.verdict] }}</span>{{ readinessHeadline(readiness) }}</p>
+      <p class="readiness-next-action"><small>NEXT ACTION</small> {{ readiness.nextAction }}</p>
       <p v-if="headMoved" class="checks-note warn readiness-head-moved" role="status"><strong>The head moved.</strong> This verdict describes {{ readiness.headShortSha }}; the imported timeline ends at {{ importedHeadSha?.slice(0, 7) }}. Re-import to see the new commits.</p>
       <p v-if="readiness.findings" class="readiness-findings">QODO FINDINGS ON HEAD · {{ readiness.findings.high }} HIGH · {{ readiness.findings.medium }} MEDIUM · {{ readiness.findings.low }} LOW</p>
       <ul class="readiness-reasons">
