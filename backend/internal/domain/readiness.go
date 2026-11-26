@@ -13,6 +13,9 @@ const (
 	ReadinessPass       ReadinessOutcome = "pass"
 	ReadinessFail       ReadinessOutcome = "fail"
 	ReadinessIncomplete ReadinessOutcome = "incomplete"
+	// ReadinessNotApplicable is the verdict for a merged or closed pull request: there is
+	// nothing left to merge, so no evidence can make it ready or keep it from being ready.
+	ReadinessNotApplicable ReadinessOutcome = "not-applicable"
 )
 
 var readinessFullSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -62,6 +65,7 @@ type CommitStatusEvidence struct {
 type ReadinessEvidence struct {
 	HeadSHA       string
 	Open          bool
+	Merged        bool
 	Draft         bool
 	BaseRef       string
 	DefaultBranch string
@@ -97,8 +101,9 @@ type ReadinessFindings struct {
 	Low    int
 }
 
-// Readiness is the verdict for the head. It is PASS only when every requirement
-// passed, FAIL when any requirement failed, and INCOMPLETE otherwise.
+// Readiness is the verdict for the head. It is NOT-APPLICABLE when the pull request is
+// not open, PASS only when every requirement passed, FAIL when any requirement failed,
+// and INCOMPLETE otherwise.
 type Readiness struct {
 	Verdict  ReadinessOutcome
 	HeadSHA  string
@@ -121,7 +126,13 @@ func EvaluateReadiness(e ReadinessEvidence) Readiness {
 		return result
 	}
 	if !e.Open {
-		add("pull-request", ReadinessIncomplete, "", "The pull request is not open.")
+		if e.Merged {
+			add("pull-request", ReadinessNotApplicable, "", "The pull request is already merged. Merge readiness applies only to an open pull request.")
+		} else {
+			add("pull-request", ReadinessNotApplicable, "", "The pull request was closed without being merged. Merge readiness applies only to an open pull request.")
+		}
+		result.Verdict = ReadinessNotApplicable
+		return result
 	}
 	if e.Draft {
 		add("pull-request", ReadinessIncomplete, "", "The pull request is a draft; Qodo does not review drafts.")

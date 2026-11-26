@@ -42,6 +42,7 @@ type readinessResponse struct {
 type githubReadinessPR struct {
 	Number int    `json:"number"`
 	State  string `json:"state"`
+	Merged bool   `json:"merged"`
 	Draft  bool   `json:"draft"`
 	Head   struct {
 		SHA string `json:"sha"`
@@ -119,10 +120,16 @@ func (a api) loadReadiness(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "GitHub did not identify the pull request's head commit, so no readiness evidence can be tied to it."})
 		return
 	}
-	defaultBranch, err := fetchDefaultBranch(ctx, a.gh, identity)
-	if err != nil {
-		respondGitHubError(c, err)
-		return
+	// Only an open pull request's verdict depends on the default branch; a merged or
+	// closed one is not applicable whatever the branch is.
+	open := pr.State == "open"
+	var defaultBranch string
+	if open {
+		var err error
+		if defaultBranch, err = fetchDefaultBranch(ctx, a.gh, identity); err != nil {
+			respondGitHubError(c, err)
+			return
+		}
 	}
 
 	evidence := gatherReadinessEvidence(ctx, a.gh, identity, pr, defaultBranch)
@@ -134,10 +141,12 @@ func (a api) loadReadiness(c *gin.Context) {
 		respondGitHubError(c, err)
 		return
 	}
-	verifiedDefault, err := fetchDefaultBranch(ctx, a.gh, identity)
-	if err != nil {
-		respondGitHubError(c, err)
-		return
+	verifiedDefault := defaultBranch
+	if open {
+		if verifiedDefault, err = fetchDefaultBranch(ctx, a.gh, identity); err != nil {
+			respondGitHubError(c, err)
+			return
+		}
 	}
 	if !sameReadinessSnapshot(pr, verified) || !verifiedIdentity.Equal(identity) || verifiedDefault != defaultBranch {
 		c.JSON(http.StatusConflict, gin.H{"error": "This pull request changed while its readiness was being checked. Check it again."})
@@ -160,9 +169,9 @@ func (a api) loadReadiness(c *gin.Context) {
 }
 
 // sameReadinessSnapshot reports whether every pull-request fact the verdict uses is
-// unchanged: the head, whether it is open or a draft, and the branch it targets.
+// unchanged: the head, whether it is open, merged or a draft, and the branch it targets.
 func sameReadinessSnapshot(before, after githubReadinessPR) bool {
-	return before.Head.SHA == after.Head.SHA && before.State == after.State && before.Draft == after.Draft && before.Base.Ref == after.Base.Ref
+	return before.Head.SHA == after.Head.SHA && before.State == after.State && before.Merged == after.Merged && before.Draft == after.Draft && before.Base.Ref == after.Base.Ref
 }
 
 var errDefaultBranchUnknown = errors.New("GitHub did not report the repository's default branch")
@@ -197,8 +206,10 @@ func fetchReadinessPR(ctx context.Context, gh *githubClient, owner, repo string,
 func gatherReadinessEvidence(ctx context.Context, gh *githubClient, repo domain.RepositoryIdentity, pr githubReadinessPR, defaultBranch string) domain.ReadinessEvidence {
 	head := pr.Head.SHA
 	repoPath := fmt.Sprintf("/repos/%s/%s", url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
-	evidence := domain.ReadinessEvidence{HeadSHA: head, Open: pr.State == "open", Draft: pr.Draft, BaseRef: pr.Base.Ref, DefaultBranch: defaultBranch}
-	if !fullSHA.MatchString(head) {
+	evidence := domain.ReadinessEvidence{HeadSHA: head, Open: pr.State == "open", Merged: pr.Merged, Draft: pr.Draft, BaseRef: pr.Base.Ref, DefaultBranch: defaultBranch}
+	// A pull request that is not open has nothing left to merge, so no evidence
+	// could change its verdict.
+	if !fullSHA.MatchString(head) || !evidence.Open {
 		return evidence
 	}
 

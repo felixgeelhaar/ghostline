@@ -190,6 +190,25 @@ describe('merge readiness panel', () => {
     expect(host!.querySelector('.readiness-verdict')).toBeNull()
   })
 
+  it('says merge readiness does not apply to a merged pull request', async () => {
+    vi.mocked(importPullRequest).mockResolvedValue({ ...makePR(7), state: 'closed', merged: true })
+    vi.mocked(fetchReadiness).mockResolvedValue(verdict(7, {
+      verdict: 'not-applicable', findings: undefined,
+      reasons: [{ subject: 'pull-request', outcome: 'not-applicable', message: 'The pull request is already merged. Merge readiness applies only to an open pull request.' }],
+    }))
+    await mount()
+    await importPR(7)
+    checkButton().click()
+    await vi.waitFor(() => expect(panelText()).toContain('NOT APPLICABLE'))
+    expect(host!.querySelector('.readiness-verdict')?.className).toContain('not-applicable')
+    expect(panelText()).not.toContain('INCOMPLETE')
+    expect(panelText()).not.toContain('QODO FINDINGS')
+    const reasons = [...host!.querySelectorAll('.readiness-reasons li')].map((item) => item.textContent ?? '')
+    expect(reasons).toHaveLength(1)
+    expect(reasons[0]).toContain('already merged')
+    expect(host!.querySelector('.readiness-reasons .check-state')?.className).toContain('not-applicable')
+  })
+
   it('shows the server error instead of a verdict', async () => {
     vi.mocked(importPullRequest).mockResolvedValue(makePR(7))
     vi.mocked(fetchReadiness).mockRejectedValue(new Error('This pull request changed while its readiness was being checked. Check it again.'))

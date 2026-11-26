@@ -7,7 +7,8 @@ defineEmits<{ check: [] }>()
 
 const reasons = computed(() => orderReadinessReasons(props.readiness?.reasons ?? []))
 const headMoved = computed(() => Boolean(props.readiness && props.importedHeadSha && props.readiness.headSha !== props.importedHeadSha))
-const glyph = { pass: '✓', fail: '✕', incomplete: '●' } as const
+const glyph = { pass: '✓', fail: '✕', incomplete: '●', 'not-applicable': '–' } as const
+const outcomeLabel = { pass: 'pass', fail: 'fail', incomplete: 'incomplete', 'not-applicable': 'not applicable' } as const
 function subjectLabel(subject: string) {
   if (subject.startsWith('check:')) return `CHECK · ${subject.slice(6)}`
   return { 'pull-request': 'PULL REQUEST', branch: 'BRANCH', qodo: 'QODO REVIEW', 'required-checks': 'REQUIRED CHECKS' }[subject] ?? subject.toUpperCase()
@@ -29,7 +30,7 @@ function subjectLabel(subject: string) {
       <p v-if="readiness.findings" class="readiness-findings">QODO FINDINGS ON HEAD · {{ readiness.findings.high }} HIGH · {{ readiness.findings.medium }} MEDIUM · {{ readiness.findings.low }} LOW</p>
       <ul class="readiness-reasons">
         <li v-for="reason in reasons" :key="reason.subject" :class="reason.outcome">
-          <span class="check-state" :class="reason.outcome === 'incomplete' ? 'running' : reason.outcome"><span aria-hidden="true">{{ glyph[reason.outcome] }}</span>{{ reason.outcome }}</span>
+          <span class="check-state" :class="reason.outcome === 'incomplete' ? 'running' : reason.outcome"><span aria-hidden="true">{{ glyph[reason.outcome] }}</span>{{ outcomeLabel[reason.outcome] }}</span>
           <div><small>{{ subjectLabel(reason.subject) }}</small><p>{{ reason.message }}</p><a v-if="reason.sourceUrl" :href="reason.sourceUrl" target="_blank" rel="noreferrer">SOURCE ↗<span class="sr-only"> (opens on GitHub)</span></a></div>
         </li>
       </ul>
