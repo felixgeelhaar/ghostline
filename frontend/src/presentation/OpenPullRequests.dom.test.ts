@@ -9,7 +9,7 @@ import type { Readiness } from '../domain/readiness'
 import OpenPullRequestsPanel from './OpenPullRequests.vue'
 
 vi.mock('../application/listOpenPullRequests', () => ({ listOpenPullRequests: vi.fn() }))
-vi.mock('../application/fetchReadiness', () => ({ fetchReadiness: vi.fn() }))
+vi.mock('../application/fetchReadiness', async (importOriginal) => ({ ...(await importOriginal<typeof import('../application/fetchReadiness')>()), fetchReadiness: vi.fn() }))
 
 const sha = (c: string) => c.repeat(40)
 const row = (number: number, head = sha(String(number)), repo = 'acme/app'): OpenPullRequest => ({

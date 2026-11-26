@@ -291,20 +291,7 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 		return
 	}
 	if !passingConclusion(latest.Conclusion) {
-		setAction := add(subject, ReadinessFail, latest.URL, "%s: %s.", required.Context, latest.Conclusion)
-		if !noResultConclusion(latest.Conclusion) {
-			setAction("fix %s (%s)", required.Context, latest.Conclusion)
-			return
-		}
-		// A job that never started ran no code, so one rerun is allowed; after that the
-		// engineer decides (docs/factory-verification.md).
-		for _, earlier := range runs[:len(runs)-1] {
-			if earlier.Status == "completed" && noResultConclusion(earlier.Conclusion) {
-				setAction("decide on the reruns of %s", required.Context)
-				return
-			}
-		}
-		setAction("rerun %s: the job never started", required.Context)
+		add(subject, ReadinessFail, latest.URL, "%s: %s.", required.Context, latest.Conclusion)("%s", failedCheckAction(required.Context, latest, runs[:len(runs)-1]))
 		return
 	}
 	// docs/factory-verification.md: a run that reported a result stays a real result even
@@ -338,6 +325,40 @@ func evaluateRequiredCheck(required RequiredCheck, e ReadinessEvidence, add addR
 	default:
 		add(subject, ReadinessPass, latest.URL, "%s: %s.", required.Context, latest.Conclusion)
 	}
+}
+
+// failedCheckAction says what would move a check whose latest run did not pass. A
+// reported result needs a fix, and an earlier reported result is not cleared by a later
+// run. A run whose cause GitHub does not record needs the engineer. A job that never
+// started may be rerun once (docs/factory-verification.md).
+func failedCheckAction(name string, latest CheckRunEvidence, earlier []CheckRunEvidence) string {
+	if reportedResult(latest.Conclusion) {
+		return fmt.Sprintf("fix %s (%s)", name, latest.Conclusion)
+	}
+	for _, run := range earlier {
+		if run.Status == "completed" && reportedResult(run.Conclusion) {
+			return fmt.Sprintf("fix %s (an earlier run on this head concluded %s)", name, run.Conclusion)
+		}
+	}
+	if unknownCauseConclusion(latest.Conclusion) {
+		return fmt.Sprintf("decide on the latest %s run of %s", latest.Conclusion, name)
+	}
+	for _, run := range earlier {
+		if run.Status == "completed" && unknownCauseConclusion(run.Conclusion) {
+			return fmt.Sprintf("decide on the earlier %s run of %s", run.Conclusion, name)
+		}
+	}
+	for _, run := range earlier {
+		if run.Status == "completed" && noResultConclusion(run.Conclusion) {
+			return fmt.Sprintf("decide on the reruns of %s", name)
+		}
+	}
+	return fmt.Sprintf("rerun %s: the job never started", name)
+}
+
+// reportedResult reports a run that ended with a result the checked code produced.
+func reportedResult(conclusion string) bool {
+	return !passingConclusion(conclusion) && !noResultConclusion(conclusion) && !unknownCauseConclusion(conclusion)
 }
 
 // noResultConclusion reports a run that provably produced no result: the job never

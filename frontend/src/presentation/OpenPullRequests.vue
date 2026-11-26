@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { listOpenPullRequests } from '../application/listOpenPullRequests'
-import { fetchReadiness } from '../application/fetchReadiness'
-import { GhostlineApiError } from '../application/apiError'
+import { endsReadinessSweep, fetchReadiness } from '../application/fetchReadiness'
 import { rowNextAction, rowVerdict, type OpenPullRequest, type OpenPullRequests, type RowCheck, type RowVerdict } from '../domain/openPullRequests'
 
 // openedPull is the pull request the detail view imported, with the head it found.
@@ -66,8 +65,8 @@ async function list() {
   }
 }
 
-// Checks rows one at a time, so a long list meets the request limit gradually; on the
-// limit, or a lost sign-in, the remaining rows stay unchecked.
+// Checks rows one at a time, so a long list meets the request limit gradually. When
+// endsReadinessSweep says the rest would fail too, the remaining rows stay unchecked.
 async function checkAll() {
   const list = result.value
   if (!list || checking.value) return
@@ -84,7 +83,7 @@ async function checkAll() {
       if (request !== generation) return
       checks.value = { ...checks.value, [row.number]: { state: 'error', message: e instanceof Error ? e.message : 'Could not check merge readiness.' } }
       emit('request-failed', e)
-      if (e instanceof GhostlineApiError && (e.status === 429 || e.status === 401)) break
+      if (endsReadinessSweep(e)) break
     }
   }
   if (request === generation) checking.value = false

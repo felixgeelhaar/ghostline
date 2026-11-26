@@ -52,6 +52,16 @@ func TestEvaluateReadinessNamesTheNextAction(t *testing.T) {
 			e.CheckRuns[0].Conclusion = "startup_failure"
 			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "startup_failure"}}, e.CheckRuns...)
 		}, want: "decide on the reruns of Go checks"},
+		{name: "an earlier failure outlasts a rerun that never started", change: func(e *ReadinessEvidence) {
+			e.CheckRuns[0].Conclusion = "startup_failure"
+			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "failure"}}, e.CheckRuns...)
+		}, want: "fix Go checks (an earlier run on this head concluded failure)"},
+		{name: "the latest run was cancelled", change: func(e *ReadinessEvidence) { e.CheckRuns[0].Conclusion = "cancelled" }, want: "decide on the latest cancelled run of Go checks"},
+		{name: "the latest run timed out", change: func(e *ReadinessEvidence) { e.CheckRuns[0].Conclusion = "timed_out" }, want: "decide on the latest timed_out run of Go checks"},
+		{name: "an earlier cancelled run before a run that never started", change: func(e *ReadinessEvidence) {
+			e.CheckRuns[0].Conclusion = "startup_failure"
+			e.CheckRuns = append([]CheckRunEvidence{{ID: 5, Name: "Go checks", AppID: actionsID, Status: "completed", Conclusion: "cancelled"}}, e.CheckRuns...)
+		}, want: "decide on the earlier cancelled run of Go checks"},
 		{name: "status pending", change: func(e *ReadinessEvidence) { e.Statuses[0].State = "pending" }, want: "wait for warden/gate"},
 		{name: "status failed", change: func(e *ReadinessEvidence) { e.Statuses[0].State = "error" }, want: "fix warden/gate (error)"},
 		{name: "a failure outranks an earlier gap", change: func(e *ReadinessEvidence) { e.BehindBy = 2; e.Review.High = 1 }, want: "fix 1 High or Medium Qodo finding"},

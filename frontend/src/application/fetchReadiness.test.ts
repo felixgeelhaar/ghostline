@@ -37,3 +37,14 @@ describe('fetchReadiness', () => {
     await expect(fetchReadiness('https://github.com/acme/app/pull/7', 'acme/app', 7)).rejects.toThrow('changed while')
   })
 })
+
+describe('when checking several pull requests stops', () => {
+  it('stops at the request limit or a lost sign-in, and goes on after any other failure', async () => {
+    const { endsReadinessSweep } = await import('./fetchReadiness')
+    const { GhostlineApiError } = await import('./apiError')
+    expect(endsReadinessSweep(new GhostlineApiError(429, 'Too many requests.'))).toBe(true)
+    expect(endsReadinessSweep(new GhostlineApiError(401, 'Sign in again.'))).toBe(true)
+    expect(endsReadinessSweep(new GhostlineApiError(409, 'This pull request changed.'))).toBe(false)
+    expect(endsReadinessSweep(new Error('network'))).toBe(false)
+  })
+})
