@@ -142,10 +142,10 @@ func TestOpenPullsRejectsAnItemItCannotTieToTheRepositoryOrAHead(t *testing.T) {
 }
 
 func TestOpenPullsReportsAnUnknownRepository(t *testing.T) {
-	code, _ := postOpenPulls(t, "acme/app", func(w http.ResponseWriter, r *http.Request) {
+	code, body := postOpenPulls(t, "acme/app", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
-	if code != http.StatusNotFound {
-		t.Fatalf("got %d, want 404", code)
+	if code != http.StatusNotFound || body.Error != "Repository not found. Check the name and confirm the repository is public." {
+		t.Fatalf("got %d %q, want 404 naming the repository", code, body.Error)
 	}
 }

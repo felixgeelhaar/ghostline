@@ -87,6 +87,16 @@ func parseRepositoryReference(raw string) (domain.RepositoryIdentity, error) {
 	return domain.NewRepositoryIdentity(matches[1], matches[2])
 }
 
+// respondOpenPullsError names the repository when GitHub cannot find it. A private
+// repository answers exactly like a missing one, as everywhere else in Ghostline.
+func respondOpenPullsError(c *gin.Context, err error) {
+	if errors.Is(err, errNotFound) || errors.Is(err, errPrivateRepository) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Repository not found. Check the name and confirm the repository is public."})
+		return
+	}
+	respondGitHubError(c, err)
+}
+
 // listOpenPulls reads one page of a public repository's open pull requests. It reports
 // each one's current head and nothing else; readiness is checked per pull request.
 func (a api) listOpenPulls(c *gin.Context) {
@@ -104,14 +114,14 @@ func (a api) listOpenPulls(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	if err := ensurePublicBeforeDataReads(ctx, a.gh, repo.Owner, repo.Name); err != nil {
-		respondGitHubError(c, err)
+		respondOpenPullsError(c, err)
 		return
 	}
 	var raw []githubOpenPull
 	path := fmt.Sprintf("/repos/%s/%s/pulls?state=open&sort=created&direction=desc&per_page=%d&page=1", url.PathEscape(repo.Owner), url.PathEscape(repo.Name), openPullLimit)
 	hasMore, err := a.gh.getWithNext(ctx, path, &raw)
 	if err != nil {
-		respondGitHubError(c, err)
+		respondOpenPullsError(c, err)
 		return
 	}
 	response := openPullsResponse{Repository: repo.FullName(), Complete: !hasMore && len(raw) <= openPullLimit, Limit: openPullLimit, Items: make([]openPullRequest, 0, len(raw))}
