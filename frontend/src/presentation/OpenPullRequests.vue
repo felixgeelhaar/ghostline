@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { listOpenPullRequests } from '../application/listOpenPullRequests'
-import { endsReadinessSweep, fetchReadiness } from '../application/fetchReadiness'
+import { sweepReadiness } from '../application/readinessSweep'
 import { rowNextAction, rowVerdict, type OpenPullRequest, type OpenPullRequests, type RowCheck, type RowVerdict } from '../domain/openPullRequests'
 
 // openedPull is the pull request the detail view imported, with the head it found.
@@ -65,27 +65,19 @@ async function list() {
   }
 }
 
-// Checks rows one at a time, so a long list meets the request limit gradually. When
-// endsReadinessSweep says the rest would fail too, the remaining rows stay unchecked.
 async function checkAll() {
   const list = result.value
   if (!list || checking.value) return
   const request = generation
   checking.value = true
-  for (const row of list.items) {
-    if (checkFor(row).state === 'checked') continue
-    checks.value = { ...checks.value, [row.number]: { state: 'checking' } }
-    try {
-      const readiness = await fetchReadiness(row.url, list.repository, row.number)
-      if (request !== generation) return
-      checks.value = { ...checks.value, [row.number]: { state: 'checked', readiness } }
-    } catch (e) {
-      if (request !== generation) return
-      checks.value = { ...checks.value, [row.number]: { state: 'error', message: e instanceof Error ? e.message : 'Could not check merge readiness.' } }
-      emit('request-failed', e)
-      if (endsReadinessSweep(e)) break
-    }
-  }
+  await sweepReadiness({
+    repository: list.repository,
+    rows: list.items,
+    isCurrent: () => request === generation,
+    skip: (row) => checkFor(row).state === 'checked',
+    onUpdate: (number, check) => { checks.value = { ...checks.value, [number]: check } },
+    onFailure: (error) => emit('request-failed', error),
+  })
   if (request === generation) checking.value = false
 }
 </script>
