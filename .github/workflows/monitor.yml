@@ -31,9 +31,6 @@ jobs:
     name: Signed-out journey
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: read
-      issues: write
     steps:
       - name: Check out main
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -51,51 +48,66 @@ jobs:
           test -n "$version" || { echo "::error::no pinned ghostline image in .rollops/deploy-ghostline.yaml"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Check the signed-out journey
-        id: check
         env:
           EXPECT_VERSION: ${{ steps.release.outputs.version }}
           EXPECT_APP: ${{ inputs.expect_app || 'Ghostline' }}
         run: |
           set -o pipefail
-          go run ./tools/signin-monitor -expect-version "$EXPECT_VERSION" -expect-app "$EXPECT_APP" | tee monitor.txt
+          go run ./tools/signin-monitor -expect-version "$EXPECT_VERSION" -expect-app "$EXPECT_APP" 2>&1 | tee monitor.txt
       - name: Record the result
         if: always() && steps.release.outcome == 'success'
         run: |
           { echo '```text'; cat monitor.txt 2>/dev/null || echo "the check produced no output"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      - name: Raise the alert
-        if: failure()
+
+  # A separate job, so a check that hangs until its timeout, or fails before the
+  # monitor starts, still raises the alert. It quotes the check job's own log.
+  report:
+    name: Alert or recover
+    needs: signin
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Raise or close the alert
         env:
           GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.signin.result }}
           EVENT: ${{ github.event_name }}
           EXPECT_APP: ${{ inputs.expect_app || 'Ghostline' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          issue=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$ALERT_TITLE\" in:title" --json number,title \
+            --jq "[.[] | select(.title == env.ALERT_TITLE)][0].number // empty")
+          if [ "$RESULT" = success ]; then
+            if [ -n "$issue" ] && [ "$EXPECT_APP" = Ghostline ]; then
+              gh issue close "$issue" -R "$GITHUB_REPOSITORY" --comment "Passed again at $now on \`$GITHUB_SHA\`: $RUN_URL"
+            fi
+            exit 0
+          fi
           kind="Scheduled check"
           if [ "$EVENT" = workflow_dispatch ]; then
             kind="Manual check (expect_app: \`$EXPECT_APP\`)"
           fi
+          job=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+            --jq '[.jobs[] | select(.name == "Signed-out journey")][0].id // empty')
+          excerpt=""
+          if [ -n "$job" ]; then
+            excerpt=$(gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job/logs" 2>/dev/null \
+              | sed -E 's/^[0-9T:.-]+Z //' | grep -E '^(checking |PASS |FAIL |all checks|::error|##\[error\]|go: |# )|cannot|timed out|exceeded' | tail -n 30)
+          fi
           {
-            echo "**$kind failed** at $(date -u +%Y-%m-%dT%H:%M:%SZ) on \`$GITHUB_SHA\`: $RUN_URL"
+            echo "**$kind $RESULT** at $now on \`$GITHUB_SHA\`: $RUN_URL"
             echo
             echo '```text'
-            cat monitor.txt 2>/dev/null || echo "the check produced no output; see the run log"
+            echo "${excerpt:-the check job left no readable log; open the run}"
             echo '```'
           } > alert.md
-          issue=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$ALERT_TITLE\" in:title" --json number,title \
-            --jq "[.[] | select(.title == env.ALERT_TITLE)][0].number // empty")
           if [ -n "$issue" ]; then
             gh issue comment "$issue" -R "$GITHUB_REPOSITORY" --body-file alert.md
           else
             gh issue create -R "$GITHUB_REPOSITORY" --title "$ALERT_TITLE" --body-file alert.md
-          fi
-      - name: Close a recovered alert
-        if: success() && (inputs.expect_app || 'Ghostline') == 'Ghostline'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          issue=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$ALERT_TITLE\" in:title" --json number,title \
-            --jq "[.[] | select(.title == env.ALERT_TITLE)][0].number // empty")
-          if [ -n "$issue" ]; then
-            gh issue close "$issue" -R "$GITHUB_REPOSITORY" --comment "Passed again at $(date -u +%Y-%m-%dT%H:%M:%SZ) on \`$GITHUB_SHA\`: $RUN_URL"
           fi
