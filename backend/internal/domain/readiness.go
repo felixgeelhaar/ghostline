@@ -307,6 +307,7 @@ type checkRunVerdict struct {
 // record, or more than the one allowed rerun of a job that never started, needs the
 // engineer. Otherwise the latest run decides: still running, never started (one rerun
 // is allowed), or passed.
+// testdata/check-run-cases.json holds the cases; head-evidence.sh is tested against them too.
 func classifyCheckRuns(name string, latest CheckRunEvidence, earlier []CheckRunEvidence) checkRunVerdict {
 	completed := latest.Status == "completed"
 	if completed && reportedResult(latest.Conclusion) {
