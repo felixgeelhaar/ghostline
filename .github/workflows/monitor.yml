@@ -19,9 +19,9 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: synthetic-monitor
-  cancel-in-progress: false
+# No concurrency group: with one, GitHub keeps a single pending run and cancels
+# the one it replaces, skipping that run's check and alert. Two failing runs
+# that overlap can at worst open a duplicate alert issue, which is visible.
 
 env:
   ALERT_TITLE: "Synthetic monitor: signed-out journey failing"
