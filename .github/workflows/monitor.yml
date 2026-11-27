@@ -1,0 +1,113 @@
+name: Synthetic monitor
+
+# Checks the signed-out journey on the production deployment every 30 minutes.
+# A failed run opens (or comments on) one alert issue, which notifies the
+# repository's watchers; the next passing run with the real assertion closes it.
+# See docs/synthetic-monitoring.md.
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+    inputs:
+      expect_app:
+        description: >-
+          OAuth app name GitHub must show. Keep "Ghostline" for a real check; any
+          other value is a controlled failure that exercises the alert route.
+        required: true
+        default: Ghostline
+
+permissions:
+  contents: read
+
+# No concurrency group: with one, GitHub keeps a single pending run and cancels
+# the one it replaces, skipping that run's check and alert. Two failing runs
+# that overlap can at worst open a duplicate alert issue, which is visible.
+
+env:
+  ALERT_TITLE: "Synthetic monitor: signed-out journey failing"
+
+jobs:
+  signin:
+    name: Signed-out journey
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out main
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Read the pinned release
+        id: release
+        run: |
+          version=$(grep -m1 -oE 'ghcr\.io/felixgeelhaar/ghostline:v[0-9A-Za-z.-]+@' .rollops/deploy-ghostline.yaml | sed -E 's/.*:(v[^@]+)@/\1/')
+          test -n "$version" || { echo "::error::no pinned ghostline image in .rollops/deploy-ghostline.yaml"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Check the signed-out journey
+        env:
+          EXPECT_VERSION: ${{ steps.release.outputs.version }}
+          EXPECT_APP: ${{ inputs.expect_app || 'Ghostline' }}
+        run: |
+          set -o pipefail
+          go run ./tools/signin-monitor -expect-version "$EXPECT_VERSION" -expect-app "$EXPECT_APP" 2>&1 | tee monitor.txt
+      - name: Record the result
+        if: always() && steps.release.outcome == 'success'
+        run: |
+          { echo '```text'; cat monitor.txt 2>/dev/null || echo "the check produced no output"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  # A separate job, so a check that hangs until its timeout, or fails before the
+  # monitor starts, still raises the alert. It quotes the check job's own log.
+  report:
+    name: Alert or recover
+    needs: signin
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Raise or close the alert
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.signin.result }}
+          EVENT: ${{ github.event_name }}
+          EXPECT_APP: ${{ inputs.expect_app || 'Ghostline' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          issue=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$ALERT_TITLE\" in:title" --json number,title \
+            --jq "[.[] | select(.title == env.ALERT_TITLE)][0].number // empty")
+          if [ "$RESULT" = success ]; then
+            if [ -n "$issue" ] && [ "$EXPECT_APP" = Ghostline ]; then
+              gh issue close "$issue" -R "$GITHUB_REPOSITORY" --comment "Passed again at $now on \`$GITHUB_SHA\`: $RUN_URL"
+            fi
+            exit 0
+          fi
+          kind="Scheduled check"
+          if [ "$EVENT" = workflow_dispatch ]; then
+            kind="Manual check (expect_app: \`$EXPECT_APP\`)"
+          fi
+          job=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+            --jq '[.jobs[] | select(.name == "Signed-out journey")][0].id // empty')
+          excerpt=""
+          if [ -n "$job" ]; then
+            excerpt=$(gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job/logs" 2>/dev/null \
+              | sed -E 's/^[0-9T:.-]+Z //' | grep -E '^(checking |PASS |FAIL |all checks|::error|##\[error\]|go: |# )|cannot|timed out|exceeded' | tail -n 30)
+          fi
+          {
+            echo "**$kind $RESULT** at $now on \`$GITHUB_SHA\`: $RUN_URL"
+            echo
+            echo '```text'
+            echo "${excerpt:-the check job left no readable log; open the run}"
+            echo '```'
+          } > alert.md
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" -R "$GITHUB_REPOSITORY" --body-file alert.md
+          else
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$ALERT_TITLE" --body-file alert.md
+          fi
