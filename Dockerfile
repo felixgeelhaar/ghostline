@@ -2,6 +2,12 @@
 # the build machine's platform; only the scratch runtime differs per target platform.
 FROM --platform=$BUILDPLATFORM node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS frontend-build
 WORKDIR /src/frontend
+# DLA-4941-1 / CVE-2025-6020: no node bookworm-slim digest ships pam 1.5.2-6+deb12u3 yet,
+# so upgrade it here and fail the build if the fixed version is not installed.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends --only-upgrade libpam0g libpam-modules libpam-modules-bin libpam-runtime \
+ && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libpam0g)" ge 1.5.2-6+deb12u3 \
+ && rm -rf /var/lib/apt/lists/*
 COPY --chown=65532:65532 frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY --chown=65532:65532 frontend/ ./

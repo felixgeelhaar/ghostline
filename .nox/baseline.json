@@ -312,6 +312,14 @@
       "severity": "medium",
       "reason": "Temporary release exception through 2026-12-01, approved by the maintainer on 2026-11-24, extending the OpenSSL 3.5.9 exception for the pinned Node image to CVE-2026-84785, which Nox reported on 2026-11-24 (https://github.com/felixgeelhaar/ghostline/issues/145). Tracked in https://github.com/felixgeelhaar/ghostline/issues/45. No supported Node release (22.23.5, 24.22.3, 26.13.1) ships OpenSSL 3.5.10 as of 2026-11-24. In the production Dockerfile, Node runs only in the frontend-build stage and the runtime image is FROM scratch; frontend/Dockerfile is the local Compose development image. Vulnerable code reachability is undetermined. This baseline records accepted interim risk and is not evidence the finding is fixed; remove it when the base image ships OpenSSL 3.5.10+.",
       "created_at": "2026-11-24T00:00:00Z"
+    },
+    {
+      "fingerprint": "1940a8b84eff1f41aadc1dcbf3b715486b636469277ec8f6a26b43cd812ac19c",
+      "rule_id": "VULN-001",
+      "file_path": "frontend/Dockerfile",
+      "severity": "high",
+      "reason": "Tracked in https://github.com/felixgeelhaar/ghostline/issues/159. DEBIAN-CVE-2025-6020 (pam 1.5.2-6+deb12u2, fixed in 1.5.2-6+deb12u3 by DLA-4941-1) is in the pinned node:26.13.1-bookworm-slim image of the Compose dev frontend. The Dockerfile upgrades libpam0g, libpam-modules, libpam-modules-bin and libpam-runtime and fails the build below deb12u3, but nox inventories the FROM image, not the built one. No node bookworm-slim digest ships deb12u3 yet. Maintainer decision 2026-11-27; review by 2026-12-01. Remove when the FROM digest includes pam >= 1.5.2-6+deb12u3.",
+      "created_at": "2026-11-27T00:00:00Z"
     }
   ]
 }
