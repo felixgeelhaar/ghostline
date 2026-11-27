@@ -66,8 +66,9 @@ jobs:
           fi
           { echo '```text'; cat monitor.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           # Handed to the report job, which cannot rely on this job's log being
-          # published yet when it runs. Left unset without output, so the report
-          # job reads the log for the setup or build error instead.
+          # published yet when it runs. Build errors are in monitor.txt too. It is
+          # left unset only when a step before the check failed (setup, release
+          # pin), and then the report job quotes the log instead.
           delimiter="EOF_$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
           { echo "excerpt<<$delimiter"; tail -n 30 monitor.txt; echo "$delimiter"; } >> "$GITHUB_OUTPUT"
 

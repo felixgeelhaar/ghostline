@@ -21,7 +21,7 @@ What it does not check: anything after sign-in (import, readiness, Qodo or Nox l
 
 ## Alerts
 
-When the check job fails, times out or is cancelled, a separate `report` job opens an issue titled **Synthetic monitor: signed-out journey failing**, or comments on the open one. The issue has the run link and the check's output. When the check job produced none, because it timed out or failed during setup, the issue quotes the job's log instead, so build errors show up too. The alert runs in its own job so that a hung check still raises it. GitHub notifies the repository's watchers. The next passing run with the real assertion comments and closes the issue.
+When the check job fails, times out or is cancelled, a separate `report` job opens an issue titled **Synthetic monitor: signed-out journey failing**, or comments on the open one. The issue has the run link and the check's output. That includes build errors. When the check never produced output, because it timed out or an earlier step such as setup failed, the issue quotes the job's log instead. The alert runs in its own job so that a hung check still raises it. GitHub notifies the repository's watchers. The next passing run with the real assertion comments and closes the issue.
 
 To test the alert route without touching the app, run the workflow manually with an `expect_app` name GitHub never shows:
 
