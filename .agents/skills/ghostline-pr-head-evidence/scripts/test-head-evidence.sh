@@ -212,6 +212,29 @@ make_case queued-rerun 0 "$(review_body "$head_sha" "$clean_groups")" success su
 fixture queued-rerun "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq '.check_runs |= (to_entries | map(.value + {id: (100 + .key)})) | .check_runs += [{"id":900,"name":"Go checks","status":"queued","conclusion":null,"started_at":null,"app":{"id":15368}}]')"
 expect queued-rerun 2 INCOMPLETE "Go checks: queued"
 
+# testdata/check-run-cases.json: the check-run table the Go domain tests run too
+# (TestClassifyCheckRunsMatchesTheSharedCases), so the script and the app reach the same outcome.
+shared_cases="$script_dir/../../../../testdata/check-run-cases.json"
+shared_check="$(jq -r '.check' "$shared_cases")"
+[[ "$shared_check" == "Go checks" ]] || { echo "FAIL shared cases: they must name Go checks, the check these fixtures require"; failures=$((failures + 1)); }
+shared_count="$(jq '.cases | length' "$shared_cases")"
+for ((i = 0; i < shared_count; i++)); do
+  shared="$(jq -c --argjson i "$i" '.cases[$i]' "$shared_cases")"
+  name="shared-$i"
+  make_case "$name" 0 "$(review_body "$head_sha" "$clean_groups")" success success
+  fixture "$name" "repos/$repo/commits/$head_sha/check-runs?per_page=100&filter=all" "$(checks_json success | jq --argjson case "$shared" '
+    .check_runs |= (map(select(.name != "Go checks")) | to_entries | map(.value + {id: (10 + .key)}))
+    | .check_runs += [$case.runs | to_entries[] | {id: (100 + .key), name: "Go checks", status: .value.status, conclusion: .value.conclusion, started_at: null, app: {id: 15368}}]')"
+  case "$(jq -r '.outcome' <<<"$shared")" in
+    pass) want_exit=0; want_verdict=PASS ;;
+    fail) want_exit=1; want_verdict=FAIL ;;
+    incomplete) want_exit=2; want_verdict=INCOMPLETE ;;
+    *) echo "FAIL $name: unknown outcome"; failures=$((failures + 1)); continue ;;
+  esac
+  echo "     $name: $(jq -r '.name' <<<"$shared")"
+  expect "$name" "$want_exit" "$want_verdict" "$(jq -r '.message' <<<"$shared")"
+done
+
 dotted="acme/widget.v2"
 mkdir -p "$tmp_dir/dotted"
 for f in "$tmp_dir/pass"/*.json; do
