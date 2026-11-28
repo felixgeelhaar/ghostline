@@ -31,6 +31,8 @@ jobs:
     name: Signed-out journey
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      excerpt: ${{ steps.record.outputs.excerpt }}
     steps:
       - name: Check out main
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -55,9 +57,20 @@ jobs:
           set -o pipefail
           go run ./tools/signin-monitor -expect-version "$EXPECT_VERSION" -expect-app "$EXPECT_APP" 2>&1 | tee monitor.txt
       - name: Record the result
-        if: always() && steps.release.outcome == 'success'
+        id: record
+        if: always()
         run: |
-          { echo '```text'; cat monitor.txt 2>/dev/null || echo "the check produced no output"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          if [ ! -s monitor.txt ]; then
+            echo "The check produced no output; see the run log." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          { echo '```text'; cat monitor.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # Handed to the report job, which cannot rely on this job's log being
+          # published yet when it runs. Build errors are in monitor.txt too. It is
+          # left unset only when a step before the check failed (setup, release
+          # pin), and then the report job quotes the log instead.
+          delimiter="EOF_$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+          { echo "excerpt<<$delimiter"; tail -n 30 monitor.txt; echo "$delimiter"; } >> "$GITHUB_OUTPUT"
 
   # A separate job, so a check that hangs until its timeout, or fails before the
   # monitor starts, still raises the alert. It quotes the check job's own log.
@@ -75,6 +88,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RESULT: ${{ needs.signin.result }}
+          CHECK_OUTPUT: ${{ needs.signin.outputs.excerpt }}
           EVENT: ${{ github.event_name }}
           EXPECT_APP: ${{ inputs.expect_app || 'Ghostline' }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -92,13 +106,17 @@ jobs:
           if [ "$EVENT" = workflow_dispatch ]; then
             kind="Manual check (expect_app: \`$EXPECT_APP\`)"
           fi
+          excerpt="$CHECK_OUTPUT"
+          # A job that timed out or was cancelled never sets the output; read its
+          # log instead, which GitHub can take a little while to publish.
           job=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
             --jq '[.jobs[] | select(.name == "Signed-out journey")][0].id // empty')
-          excerpt=""
-          if [ -n "$job" ]; then
+          for _ in 1 2 3 4 5 6; do
+            [ -z "$excerpt" ] && [ -n "$job" ] || break
+            sleep 10
             excerpt=$(gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job/logs" 2>/dev/null \
-              | sed -E 's/^[0-9T:.-]+Z //' | grep -E '^(checking |PASS |FAIL |all checks|::error|##\[error\]|go: |# )|cannot|timed out|exceeded' | tail -n 30)
-          fi
+              | sed -E 's/^[0-9T:.-]+Z //' | grep -E '^(checking |PASS |FAIL |all checks|::error|##\[error\]|go: |# )|cannot|timed out|exceeded' | tail -n 30 || true)
+          done
           {
             echo "**$kind $RESULT** at $now on \`$GITHUB_SHA\`: $RUN_URL"
             echo
