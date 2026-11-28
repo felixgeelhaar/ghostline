@@ -81,7 +81,9 @@ describe('published Qodo comments without a Qodo key', () => {
     expect(keyInput!.value).toBe('')
     expect(host!.querySelector('.qodo-structured')).toBeNull()
     expect(reviewCardTitles()).toEqual(['Guard concurrent retries', 'Keep revision links scoped'])
-    expect(host!.querySelector('.review-list a[href="https://github.com/acme/app/pull/7#issuecomment-21"]')?.textContent).toContain('SOURCE FINDING')
+    const sources = [...host!.querySelectorAll<HTMLAnchorElement>('.review-list .finding-list .review-source')]
+    expect(sources.map((link) => link.getAttribute('href'))).toEqual(['https://github.com/acme/app/pull/7#issuecomment-21', 'https://github.com/acme/app/pull/7#issuecomment-22'])
+    expect(sources.every((link) => link.textContent?.includes('SOURCE FINDING'))).toBe(true)
     expect(fetchQodoReviewSession).not.toHaveBeenCalled()
   })
 
