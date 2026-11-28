@@ -2,7 +2,7 @@
 
 **See the work. Trace the decisions. Take control.**
 
-[![CI](https://github.com/felixgeelhaar/ghostline/actions/workflows/ci.yml/badge.svg)](https://github.com/felixgeelhaar/ghostline/actions/workflows/ci.yml) [![Security](https://github.com/felixgeelhaar/ghostline/actions/workflows/nox.yml/badge.svg)](https://github.com/felixgeelhaar/ghostline/actions/workflows/nox.yml)
+[![CI](https://github.com/felixgeelhaar/ghostline/actions/workflows/ci.yml/badge.svg)](https://github.com/felixgeelhaar/ghostline/actions/workflows/ci.yml) [![Security](https://github.com/felixgeelhaar/ghostline/actions/workflows/nox.yml/badge.svg)](https://github.com/felixgeelhaar/ghostline/actions/workflows/nox.yml) [![nox security grade](.github/nox-badge.svg)](.github/workflows/nox.yml)
 
 Ghostline tells you whether a pull request is ready to merge. It uses only evidence about the pull request's exact current commit, and it explains every gap.
 
